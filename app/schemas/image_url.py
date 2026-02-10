@@ -54,7 +54,7 @@ def validate_image_url_or_base64_string(
 
     # image filesize
     if len(raw_image_bytes) > max_size:
-        raise ValueError(f"Maximum {field_name} size is {max_size/1024}kb")
+        raise ValueError(f"Maximum {field_name} size is {max_size / 1024}kb")
 
     # image formats
     if img.format.lower() not in ["jpg", "jpeg", "png"]:
