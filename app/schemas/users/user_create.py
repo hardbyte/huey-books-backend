@@ -23,15 +23,15 @@ class UserCreateAuth(BaseModel):
     def validate_user_creation(self):
         match self.type:
             case UserAccountType.STUDENT:
-                assert (
-                    self.school_id and self.class_join_code
-                ), "Student users must provide school_id and class_join_code."
+                assert self.school_id and self.class_join_code, (
+                    "Student users must provide school_id and class_join_code."
+                )
                 self.name = f"{self.first_name} {self.last_name_initial}"
 
             case UserAccountType.EDUCATOR:
-                assert (
-                    self.first_name and self.last_name_initial and self.school_id
-                ), "Educator users must provide school_id."
+                assert self.first_name and self.last_name_initial and self.school_id, (
+                    "Educator users must provide school_id."
+                )
             case UserAccountType.SCHOOL_ADMIN:
                 assert self.school_id, "SchoolAdmin users must provide school_id."
             case _:
@@ -94,11 +94,13 @@ class UserCreateIn(BaseModel):
                     and self.last_name_initial
                     and self.school_id
                     and self.class_group_id
-                ), "Student users must provide first_name, last_name_initial, school_id, and class_group_id."
+                ), (
+                    "Student users must provide first_name, last_name_initial, school_id, and class_group_id."
+                )
             case UserAccountType.EDUCATOR:
-                assert (
-                    self.first_name and self.last_name_initial and self.school_id
-                ), "Educator users must provide first_name, last_name_initial, and school_id."
+                assert self.first_name and self.last_name_initial and self.school_id, (
+                    "Educator users must provide first_name, last_name_initial, and school_id."
+                )
             case UserAccountType.SCHOOL_ADMIN:
                 assert self.school_id, "SchoolAdmin users must provide school_id."
             case _:
