@@ -61,7 +61,16 @@ class ChatRepository:
         trace_level: Optional[str] = None,
     ) -> ConversationSession:
         """Create a new conversation session with initial state."""
-        state = initial_state or {}
+        # Ensure standard scope namespaces always exist so CEL
+        # expressions like has(context.foo) don't throw when
+        # the top-level scope key is missing entirely.
+        state = {"context": {}, "temp": {}, "user": {}, "system": {}}
+        if initial_state:
+            for key, value in initial_state.items():
+                if key in state and isinstance(value, dict):
+                    state[key].update(value)
+                else:
+                    state[key] = value
         state_hash = self._calculate_state_hash(state)
 
         session = ConversationSession(
