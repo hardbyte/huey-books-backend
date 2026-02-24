@@ -421,6 +421,8 @@ class TestCelContextCreation:
             "flatten",
             "collect",
             "top_keys",
+            "days_since",
+            "random_choice",
         }
         assert set(CUSTOM_CEL_FUNCTIONS.keys()) == expected_functions
 

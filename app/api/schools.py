@@ -215,22 +215,30 @@ async def school_exists():
     return True
 
 
-@router.get("/school/{wriveted_identifier}/bot")
+@public_router.get("/school/{wriveted_identifier}/bot")
 async def get_school_bookbot_type(
-    school: School = Permission("read", get_school_from_wriveted_id),
+    school: School = Depends(get_school_from_wriveted_id),
 ):
     """
     Returns the Huey-relevant information for a school, i.e. whether they've opted for Huey's Collection,
     or their own, and which "experiments" the school has activated, if any.
     Used for the publicly-accessible Bookbot chat links.
     """
-    # dependency will automatically 404 if school doesn't exist
-    return {
+    result = {
         "name": school.name,
         "type": school.bookbot_type,
-        "experiments": school.info["experiments"],
+        "experiments": (school.info or {}).get("experiments", {}),
         "supporter": school.subscription is not None and school.subscription.is_active,
     }
+
+    if school.collection:
+        result["collection_updated_at"] = school.collection.updated_at.isoformat()
+        result["collection_book_count"] = school.collection.book_count
+    else:
+        result["collection_updated_at"] = None
+        result["collection_book_count"] = 0
+
+    return result
 
 
 @router.get("/school/{wriveted_identifier}/bookbot", response_model=SchoolBookbotInfo)

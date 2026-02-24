@@ -42,6 +42,8 @@ SUB_FLOWS = [
     {"file": "huey-profile-flow.json", "seed_key": "huey-profile", "name": "Huey Profile"},
     {"file": "huey-preferences-flow.json", "seed_key": "huey-preferences", "name": "Huey Preferences"},
     {"file": "huey-recommendation-flow.json", "seed_key": "huey-recommendation", "name": "Huey Recommendation"},
+    {"file": "huey-jokes-flow.json", "seed_key": "huey-jokes", "name": "Huey Jokes"},
+    {"file": "huey-spelling-flow.json", "seed_key": "huey-spelling", "name": "Huey Spelling"},
 ]
 
 
