@@ -1,5 +1,7 @@
 """CEL (Common Expression Language) evaluator service for safe expression evaluation."""
 
+import random
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Union
 
 from cel import Context, evaluate
@@ -108,6 +110,29 @@ def _cel_top_keys(d: Dict[str, Any], n: int = 5) -> List[str]:
     return [k for k, _ in numeric_items[:n]]
 
 
+def _cel_days_since(iso_date_str: str) -> int:
+    """Return number of days between an ISO datetime string and now.
+
+    Returns -1 if the input is empty/None or unparseable.
+    """
+    if not iso_date_str or not isinstance(iso_date_str, str):
+        return -1
+    try:
+        dt = datetime.fromisoformat(iso_date_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).days
+    except (ValueError, TypeError):
+        return -1
+
+
+def _cel_random_choice(items: List[Any]) -> Any:
+    """Pick a random item from a list."""
+    if not items:
+        return None
+    return random.choice(items)
+
+
 # Registry of custom functions available in CEL expressions
 CUSTOM_CEL_FUNCTIONS: Dict[str, Callable] = {
     "sum": _cel_sum,
@@ -122,6 +147,8 @@ CUSTOM_CEL_FUNCTIONS: Dict[str, Callable] = {
     "flatten": _cel_flatten,
     "collect": _cel_collect,
     "top_keys": _cel_top_keys,
+    "days_since": _cel_days_since,
+    "random_choice": _cel_random_choice,
 }
 
 

@@ -1,8 +1,8 @@
 {
   "seed_key": "huey-bookbot",
   "name": "Huey Bookbot",
-  "description": "Kid-friendly book recommendation chatbot. Asks age, reading ability, and preference questions, then recommends books.",
-  "version": "2.0.0",
+  "description": "Kid-friendly book recommendation chatbot. Asks age, reading ability, and preference questions, then recommends books. Optionally offers jokes and a spelling game.",
+  "version": "3.0.0",
   "entry_node_id": "welcome",
   "visibility": "wriveted",
   "trace_enabled": true,
@@ -56,7 +56,29 @@
           ],
           "variable": "temp.school_confirm"
         },
-        "position": {"x": 700, "y": 150}
+        "position": {"x": 700, "y": 100}
+      },
+      {
+        "id": "check_stale_collection",
+        "type": "condition",
+        "content": {
+          "conditions": [
+            {"if": "has(context.collection_updated_at) && days_since(context.collection_updated_at) > 1095", "then": "$0"}
+          ],
+          "default_path": "default"
+        },
+        "position": {"x": 900, "y": 100}
+      },
+      {
+        "id": "stale_collection_msg",
+        "type": "message",
+        "content": {
+          "messages": [
+            {"type": "text", "text": "Just a heads up \u2014 it looks like your school's book list hasn't been updated in a while, so my recommendations might not match what's on the shelves right now."},
+            {"type": "text", "text": "Your librarian can upload a new CSV at hueybooks.com to help me find the latest books! \ud83d\udcda"}
+          ]
+        },
+        "position": {"x": 1100, "y": 0}
       },
       {
         "id": "profile_composite",
@@ -64,7 +86,7 @@
         "content": {
           "composite_flow_seed_key": "huey-profile"
         },
-        "position": {"x": 900, "y": 300}
+        "position": {"x": 1100, "y": 300}
       },
       {
         "id": "preferences_composite",
@@ -72,7 +94,7 @@
         "content": {
           "composite_flow_seed_key": "huey-preferences"
         },
-        "position": {"x": 1100, "y": 300}
+        "position": {"x": 1300, "y": 300}
       },
       {
         "id": "recommendation_composite",
@@ -80,7 +102,34 @@
         "content": {
           "composite_flow_seed_key": "huey-recommendation"
         },
-        "position": {"x": 1300, "y": 300}
+        "position": {"x": 1500, "y": 300}
+      },
+      {
+        "id": "check_jokes_enabled",
+        "type": "condition",
+        "content": {
+          "conditions": [
+            {"if": "!(has(context.experiments) && has(context.experiments.no_jokes) && context.experiments.no_jokes == true)", "then": "$0"}
+          ],
+          "default_path": "default"
+        },
+        "position": {"x": 1700, "y": 300}
+      },
+      {
+        "id": "jokes_composite",
+        "type": "composite",
+        "content": {
+          "composite_flow_seed_key": "huey-jokes"
+        },
+        "position": {"x": 1900, "y": 200}
+      },
+      {
+        "id": "spelling_composite",
+        "type": "composite",
+        "content": {
+          "composite_flow_seed_key": "huey-spelling"
+        },
+        "position": {"x": 2100, "y": 300}
       },
       {
         "id": "end_msg",
@@ -90,7 +139,7 @@
             {"type": "text", "text": "Happy reading! Remember, the best book is the one YOU enjoy. \ud83d\ude0a"}
           ]
         },
-        "position": {"x": 1500, "y": 300}
+        "position": {"x": 2300, "y": 300}
       },
       {
         "id": "restart_choice",
@@ -104,7 +153,7 @@
           ],
           "variable": "temp.restart_choice"
         },
-        "position": {"x": 1700, "y": 300}
+        "position": {"x": 2500, "y": 300}
       },
       {
         "id": "goodbye",
@@ -114,7 +163,7 @@
             {"type": "text", "text": "Thanks for chatting with me! See you next time! \ud83d\udc4b"}
           ]
         },
-        "position": {"x": 1900, "y": 450}
+        "position": {"x": 2700, "y": 450}
       }
     ],
     "connections": [
@@ -122,10 +171,17 @@
       {"source": "greeting_response", "target": "check_school", "type": "default"},
       {"source": "check_school", "target": "school_confirm", "type": "$0"},
       {"source": "check_school", "target": "profile_composite", "type": "default"},
-      {"source": "school_confirm", "target": "profile_composite", "type": "default"},
+      {"source": "school_confirm", "target": "check_stale_collection", "type": "default"},
+      {"source": "check_stale_collection", "target": "stale_collection_msg", "type": "$0"},
+      {"source": "check_stale_collection", "target": "profile_composite", "type": "default"},
+      {"source": "stale_collection_msg", "target": "profile_composite", "type": "default"},
       {"source": "profile_composite", "target": "preferences_composite", "type": "default"},
       {"source": "preferences_composite", "target": "recommendation_composite", "type": "default"},
-      {"source": "recommendation_composite", "target": "end_msg", "type": "default"},
+      {"source": "recommendation_composite", "target": "check_jokes_enabled", "type": "default"},
+      {"source": "check_jokes_enabled", "target": "jokes_composite", "type": "$0"},
+      {"source": "check_jokes_enabled", "target": "spelling_composite", "type": "default"},
+      {"source": "jokes_composite", "target": "spelling_composite", "type": "default"},
+      {"source": "spelling_composite", "target": "end_msg", "type": "default"},
       {"source": "end_msg", "target": "restart_choice", "type": "default"},
       {"source": "restart_choice", "target": "welcome", "type": "$0", "conditions": {"if": {"var": "temp.restart_choice", "eq": "restart"}}},
       {"source": "restart_choice", "target": "goodbye", "type": "default"}

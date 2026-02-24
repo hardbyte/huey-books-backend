@@ -544,6 +544,8 @@
     {"flow_file": "huey-profile-flow.json"},
     {"flow_file": "huey-preferences-flow.json"},
     {"flow_file": "huey-recommendation-flow.json"},
+    {"flow_file": "huey-jokes-flow.json"},
+    {"flow_file": "huey-spelling-flow.json"},
     {
       "flow_file": "huey-bookbot-flow.json",
       "theme_seed_key": "huey-bookbot-theme"

@@ -1651,6 +1651,26 @@ class ChatRuntime:
         session = await self._refresh_session(db, session)
 
         if return_result:
+            # Check if the return node (or its auto-chained successor)
+            # produced a question — e.g. condition → composite → question.
+            if return_result.get("type") == "question":
+                node_id = return_result.get("node_id")
+                flow_id = _to_uuid(return_result.get("sub_flow_id"))
+                if node_id:
+                    result["current_node_id"] = node_id
+                    options = return_result.get("options", [])
+                    session = await chat_repo.update_session_state(
+                        db,
+                        session_id=session.id,
+                        state_updates={"system": {"_current_options": options}},
+                        current_node_id=node_id,
+                        current_flow_id=flow_id,
+                        expected_revision=session.revision,
+                    )
+                result["input_request"] = self._build_input_request(return_result)
+                result["awaiting_input"] = True
+                return result
+
             # Extract actual messages from the result
             if return_result.get("type") == "messages":
                 result["messages"].extend(return_result.get("messages", []))
@@ -1709,8 +1729,40 @@ class ChatRuntime:
                     ):
                         node_result = await self.process_node(db, next_node, session)
                         session = await self._refresh_session(db, session)
+                        self.logger.debug(
+                            "Return-chain processed node",
+                            node_id=next_node.node_id,
+                            node_type=str(next_node.node_type),
+                            result_type=node_result.get("type")
+                            if node_result
+                            else None,
+                            result_keys=list(node_result.keys()) if node_result else [],
+                        )
                         if node_result:
-                            if node_result.get("type") == "messages":
+                            if node_result.get("type") == "question":
+                                # Composite (or other node) returned a question
+                                # — treat it like the dict-question branch below
+                                node_id = node_result.get("node_id")
+                                flow_id = _to_uuid(node_result.get("sub_flow_id"))
+                                if node_id:
+                                    result["current_node_id"] = node_id
+                                    options = node_result.get("options", [])
+                                    session = await chat_repo.update_session_state(
+                                        db,
+                                        session_id=session.id,
+                                        state_updates={
+                                            "system": {"_current_options": options}
+                                        },
+                                        current_node_id=node_id,
+                                        current_flow_id=flow_id,
+                                        expected_revision=session.revision,
+                                    )
+                                result["input_request"] = self._build_input_request(
+                                    node_result
+                                )
+                                result["awaiting_input"] = True
+                                break
+                            elif node_result.get("type") == "messages":
                                 result["messages"].extend(
                                     node_result.get("messages", [])
                                 )

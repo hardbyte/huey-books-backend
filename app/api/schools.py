@@ -215,9 +215,9 @@ async def school_exists():
     return True
 
 
-@router.get("/school/{wriveted_identifier}/bot")
+@public_router.get("/school/{wriveted_identifier}/bot")
 async def get_school_bookbot_type(
-    school: School = Permission("read", get_school_from_wriveted_id),
+    school: School = Depends(get_school_from_wriveted_id),
 ):
     """
     Returns the Huey-relevant information for a school, i.e. whether they've opted for Huey's Collection,

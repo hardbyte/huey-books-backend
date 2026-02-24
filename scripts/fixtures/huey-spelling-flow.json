@@ -1,0 +1,239 @@
+{
+  "seed_key": "huey-spelling",
+  "name": "Huey Spelling",
+  "description": "Optional spelling mini-game. Shows 3 rounds of pick-the-correct-spelling questions, difficulty matched to reading ability.",
+  "version": "1.0.0",
+  "entry_node_id": "spelling_intro",
+  "visibility": "wriveted",
+  "flow_data": {
+    "nodes": [
+      {
+        "id": "spelling_intro",
+        "type": "question",
+        "content": {
+          "question": {"text": "Want to try a quick spelling game? \ud83d\udcdd"},
+          "input_type": "choice",
+          "options": [
+            {"label": "Sure! \ud83d\ude04", "value": "yes"},
+            {"label": "No thanks", "value": "no"}
+          ],
+          "variable": "temp.wants_spelling"
+        },
+        "position": {"x": 100, "y": 300}
+      },
+      {
+        "id": "check_wants_spelling",
+        "type": "condition",
+        "content": {
+          "conditions": [
+            {"if": "temp.wants_spelling.value == 'yes'", "then": "$0"}
+          ],
+          "default_path": "default"
+        },
+        "position": {"x": 300, "y": 300}
+      },
+      {
+        "id": "pick_difficulty",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "set_variable",
+              "variable": "temp.spelling_tag",
+              "value": "huey-spelling-easy",
+              "conditions": {"if": "user.reading_ability_key == 'SPOT' || user.reading_ability_key == 'CAT_HAT'"}
+            },
+            {
+              "type": "set_variable",
+              "variable": "temp.spelling_tag",
+              "value": "huey-spelling-medium",
+              "conditions": {"if": "user.reading_ability_key == 'TREEHOUSE'"}
+            },
+            {
+              "type": "set_variable",
+              "variable": "temp.spelling_tag",
+              "value": "huey-spelling-hard",
+              "conditions": {"if": "user.reading_ability_key == 'CHARLIE_CHOCOLATE' || user.reading_ability_key == 'HARRY_POTTER'"}
+            }
+          ]
+        },
+        "position": {"x": 500, "y": 200}
+      },
+      {
+        "id": "spelling_q_one",
+        "type": "question",
+        "content": {
+          "source": "random",
+          "source_config": {
+            "type": "question",
+            "tags": ["huey-spelling"],
+            "info_filters": {
+              "difficulty": "${temp.spelling_tag}"
+            },
+            "exclude_from": "temp.shown_spelling_ids"
+          },
+          "track_shown_in": "temp.shown_spelling_ids",
+          "variable": "temp.spelling_answer",
+          "input_type": "choice"
+        },
+        "position": {"x": 700, "y": 200}
+      },
+      {
+        "id": "check_spelling_one",
+        "type": "condition",
+        "content": {
+          "conditions": [
+            {"if": "temp.spelling_answer.value == 'correct'", "then": "$0"}
+          ],
+          "default_path": "default"
+        },
+        "position": {"x": 900, "y": 200}
+      },
+      {
+        "id": "correct_one",
+        "type": "message",
+        "content": {
+          "messages": [{"type": "text", "text": "That's right! \u2b50"}]
+        },
+        "position": {"x": 1100, "y": 100}
+      },
+      {
+        "id": "wrong_one",
+        "type": "message",
+        "content": {
+          "messages": [{"type": "text", "text": "Not quite! The correct spelling is: {{temp.spelling_answer.correct_word}}"}]
+        },
+        "position": {"x": 1100, "y": 300}
+      },
+      {
+        "id": "spelling_q_two",
+        "type": "question",
+        "content": {
+          "source": "random",
+          "source_config": {
+            "type": "question",
+            "tags": ["huey-spelling"],
+            "info_filters": {
+              "difficulty": "${temp.spelling_tag}"
+            },
+            "exclude_from": "temp.shown_spelling_ids"
+          },
+          "track_shown_in": "temp.shown_spelling_ids",
+          "variable": "temp.spelling_answer",
+          "input_type": "choice"
+        },
+        "position": {"x": 1300, "y": 200}
+      },
+      {
+        "id": "check_spelling_two",
+        "type": "condition",
+        "content": {
+          "conditions": [
+            {"if": "temp.spelling_answer.value == 'correct'", "then": "$0"}
+          ],
+          "default_path": "default"
+        },
+        "position": {"x": 1500, "y": 200}
+      },
+      {
+        "id": "correct_two",
+        "type": "message",
+        "content": {
+          "messages": [{"type": "text", "text": "Nice one! \ud83c\udf1f"}]
+        },
+        "position": {"x": 1700, "y": 100}
+      },
+      {
+        "id": "wrong_two",
+        "type": "message",
+        "content": {
+          "messages": [{"type": "text", "text": "Oops! It's actually: {{temp.spelling_answer.correct_word}}"}]
+        },
+        "position": {"x": 1700, "y": 300}
+      },
+      {
+        "id": "spelling_q_three",
+        "type": "question",
+        "content": {
+          "source": "random",
+          "source_config": {
+            "type": "question",
+            "tags": ["huey-spelling"],
+            "info_filters": {
+              "difficulty": "${temp.spelling_tag}"
+            },
+            "exclude_from": "temp.shown_spelling_ids"
+          },
+          "track_shown_in": "temp.shown_spelling_ids",
+          "variable": "temp.spelling_answer",
+          "input_type": "choice"
+        },
+        "position": {"x": 1900, "y": 200}
+      },
+      {
+        "id": "check_spelling_three",
+        "type": "condition",
+        "content": {
+          "conditions": [
+            {"if": "temp.spelling_answer.value == 'correct'", "then": "$0"}
+          ],
+          "default_path": "default"
+        },
+        "position": {"x": 2100, "y": 200}
+      },
+      {
+        "id": "correct_three",
+        "type": "message",
+        "content": {
+          "messages": [{"type": "text", "text": "You got it! \ud83c\udf89"}]
+        },
+        "position": {"x": 2300, "y": 100}
+      },
+      {
+        "id": "wrong_three",
+        "type": "message",
+        "content": {
+          "messages": [{"type": "text", "text": "Close! The correct spelling is: {{temp.spelling_answer.correct_word}}"}]
+        },
+        "position": {"x": 2300, "y": 300}
+      },
+      {
+        "id": "spelling_done",
+        "type": "message",
+        "content": {
+          "messages": [{"type": "text", "text": "Great job with the spelling game! \ud83c\udf1f"}]
+        },
+        "position": {"x": 2500, "y": 200}
+      },
+      {
+        "id": "spelling_skip",
+        "type": "message",
+        "content": {
+          "messages": [{"type": "text", "text": "No worries!"}]
+        },
+        "position": {"x": 300, "y": 450}
+      }
+    ],
+    "connections": [
+      {"source": "spelling_intro", "target": "check_wants_spelling", "type": "default"},
+      {"source": "check_wants_spelling", "target": "pick_difficulty", "type": "$0"},
+      {"source": "check_wants_spelling", "target": "spelling_skip", "type": "default"},
+      {"source": "pick_difficulty", "target": "spelling_q_one", "type": "default"},
+      {"source": "spelling_q_one", "target": "check_spelling_one", "type": "default"},
+      {"source": "check_spelling_one", "target": "correct_one", "type": "$0"},
+      {"source": "check_spelling_one", "target": "wrong_one", "type": "default"},
+      {"source": "correct_one", "target": "spelling_q_two", "type": "default"},
+      {"source": "wrong_one", "target": "spelling_q_two", "type": "default"},
+      {"source": "spelling_q_two", "target": "check_spelling_two", "type": "default"},
+      {"source": "check_spelling_two", "target": "correct_two", "type": "$0"},
+      {"source": "check_spelling_two", "target": "wrong_two", "type": "default"},
+      {"source": "correct_two", "target": "spelling_q_three", "type": "default"},
+      {"source": "wrong_two", "target": "spelling_q_three", "type": "default"},
+      {"source": "spelling_q_three", "target": "check_spelling_three", "type": "default"},
+      {"source": "check_spelling_three", "target": "correct_three", "type": "$0"},
+      {"source": "check_spelling_three", "target": "wrong_three", "type": "default"},
+      {"source": "correct_three", "target": "spelling_done", "type": "default"},
+      {"source": "wrong_three", "target": "spelling_done", "type": "default"}
+    ]
+  }
+}
