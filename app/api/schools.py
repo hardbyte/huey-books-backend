@@ -227,7 +227,7 @@ async def get_school_bookbot_type(
     result = {
         "name": school.name,
         "type": school.bookbot_type,
-        "experiments": school.info["experiments"],
+        "experiments": (school.info or {}).get("experiments", {}),
         "supporter": school.subscription is not None and school.subscription.is_active,
     }
 
