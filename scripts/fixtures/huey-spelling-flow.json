@@ -101,7 +101,7 @@
         "id": "wrong_one",
         "type": "message",
         "content": {
-          "messages": [{"type": "text", "text": "Not quite! The correct spelling is: {{temp.spelling_answer.correct_word}}"}]
+          "messages": [{"type": "text", "content": {"text": "Not quite! The correct spelling is: {{temp.spelling_answer.correct_word}}", "rich_text": "Not quite! The correct spelling is: <strong>{{temp.spelling_answer.correct_word}}</strong>"}}]
         },
         "position": {"x": 1100, "y": 300}
       },
@@ -147,7 +147,7 @@
         "id": "wrong_two",
         "type": "message",
         "content": {
-          "messages": [{"type": "text", "text": "Oops! It's actually: {{temp.spelling_answer.correct_word}}"}]
+          "messages": [{"type": "text", "content": {"text": "Oops! It's actually: {{temp.spelling_answer.correct_word}}", "rich_text": "Oops! It's actually: <strong>{{temp.spelling_answer.correct_word}}</strong>"}}]
         },
         "position": {"x": 1700, "y": 300}
       },
@@ -193,7 +193,7 @@
         "id": "wrong_three",
         "type": "message",
         "content": {
-          "messages": [{"type": "text", "text": "Close! The correct spelling is: {{temp.spelling_answer.correct_word}}"}]
+          "messages": [{"type": "text", "content": {"text": "Close! The correct spelling is: {{temp.spelling_answer.correct_word}}", "rich_text": "Close! The correct spelling is: <strong>{{temp.spelling_answer.correct_word}}</strong>"}}]
         },
         "position": {"x": 2300, "y": 300}
       },
