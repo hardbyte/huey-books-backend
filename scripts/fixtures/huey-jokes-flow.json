@@ -68,7 +68,7 @@
         "content": {
           "source": "random",
           "source_config": {
-            "type": "question",
+            "type": "joke",
             "tags": ["huey-joke"],
             "info_filters": {
               "min_age": "${user.age_number}",

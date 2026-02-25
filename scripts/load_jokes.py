@@ -58,7 +58,7 @@ def load_jokes(csv_path: Path) -> list[dict]:
             max_age = max(ages) if ages else 13
 
             jokes.append({
-                "type": "question",
+                "type": "joke",
                 "content": {
                     "question_text": question.strip(),
                     "min_age": min_age,
