@@ -465,7 +465,7 @@ class InteractionCreate(BaseModel):
     input: str
     input_type: str = Field(
         ...,
-        pattern="^(text|button|file|choice|number|email|date|slider|image_choice|carousel|multiple_choice|continue)$",
+        pattern="^(text|button|file|choice|number|email|phone|url|date|slider|image_choice|carousel|multiple_choice|continue)$",
     )
 
 
@@ -613,11 +613,18 @@ class WebhookTestResponse(BaseModel):
 
 
 # Content Type Specific Schemas
+class JokeAnswer(BaseModel):
+    text: str
+    value: str
+    punchline: Optional[str] = None
+    reward_url: Optional[str] = None
+
+
 class JokeContent(BaseModel):
-    setup: str
-    punchline: str
-    category: Optional[str] = None
-    age_group: Optional[List[str]] = []
+    question_text: str
+    answers: List[JokeAnswer]
+    min_age: Optional[int] = None
+    max_age: Optional[int] = None
 
 
 class FactContent(BaseModel):
@@ -720,6 +727,8 @@ class QuestionNodeContent(BaseModel):
     - text: Free text input
     - number: Numeric input with optional min/max
     - email: Email address input
+    - phone: Phone number input
+    - url: URL input
     - date: Date picker
     - choice: Single selection from options (buttons/radio)
     - multiple_choice: Multiple selection from options (checkboxes)
@@ -761,6 +770,8 @@ class ChatThemeColors(BaseModel):
     secondary: str = Field(default="#52c41a", pattern=r"^#[0-9a-fA-F]{6}$")
     background: str = Field(default="#ffffff", pattern=r"^#[0-9a-fA-F]{6}$")
     backgroundAlt: str = Field(default="#f5f5f5", pattern=r"^#[0-9a-fA-F]{6}$")
+    header: str = Field(default="#f5f5f5", pattern=r"^#[0-9a-fA-F]{6}$")
+    headerText: str = Field(default="#262626", pattern=r"^#[0-9a-fA-F]{6}$")
     userBubble: str = Field(default="#e6f7ff", pattern=r"^#[0-9a-fA-F]{6}$")
     userBubbleText: str = Field(default="#000000", pattern=r"^#[0-9a-fA-F]{6}$")
     botBubble: str = Field(default="#f0f0f0", pattern=r"^#[0-9a-fA-F]{6}$")
