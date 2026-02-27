@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from structlog import get_logger
 
 from app.models.cms import NodeType
+from app.schemas.cms import KNOWN_INPUT_TYPES
 
 logger = get_logger()
 
@@ -112,6 +113,7 @@ class QuestionContentSchema(BaseModel):
     input_type: str = Field(
         ...,
         pattern=r"^[a-z][a-z0-9_]{0,49}$",
+        json_schema_extra={"examples": sorted(KNOWN_INPUT_TYPES)},
     )
     options: Optional[List[Dict[str, Any]]] = None
     validation: Optional[Dict[str, Any]] = None

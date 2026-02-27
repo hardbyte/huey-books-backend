@@ -16,6 +16,27 @@ from app.models.cms import (
 from app.schemas.pagination import PaginatedResponse
 from app.schemas.recommendations import HueKeys
 
+# Known input types for question nodes. Flow authors can define custom types
+# without schema changes — unknown types fall back to text input on the frontend.
+KNOWN_INPUT_TYPES: frozenset[str] = frozenset(
+    {
+        "text",
+        "number",
+        "email",
+        "phone",
+        "url",
+        "date",
+        "choice",
+        "multiple_choice",
+        "button",
+        "slider",
+        "image_choice",
+        "carousel",
+        "book_feedback",
+        "continue",
+    }
+)
+
 
 # Content Schemas
 class ContentCreate(BaseModel):
@@ -466,6 +487,7 @@ class InteractionCreate(BaseModel):
     input_type: str = Field(
         ...,
         pattern=r"^[a-z][a-z0-9_]{0,49}$",
+        json_schema_extra={"examples": sorted(KNOWN_INPUT_TYPES)},
     )
 
 
