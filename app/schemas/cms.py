@@ -465,7 +465,7 @@ class InteractionCreate(BaseModel):
     input: str
     input_type: str = Field(
         ...,
-        pattern="^(text|button|file|choice|number|email|phone|url|date|slider|image_choice|carousel|multiple_choice|book_feedback|continue)$",
+        pattern=r"^[a-z][a-z0-9_]{0,49}$",
     )
 
 
