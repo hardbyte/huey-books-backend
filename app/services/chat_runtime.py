@@ -136,6 +136,15 @@ class MessageNodeProcessor(NodeProcessor):
                     message["delay"] = msg_config["delay"]
                 messages.append(message)
 
+        # Handle share_payload_variable: resolve variable and emit share_payload message
+        share_payload_var = node_content.get("share_payload_variable")
+        if share_payload_var:
+            payload = self.runtime.substitute_object(
+                f"{{{{{share_payload_var}}}}}", session_state
+            )
+            if payload and isinstance(payload, dict):
+                messages.append({"type": "share_payload", "content": payload})
+
         # Fallback: check for direct "text" or "rich_text" in node content
         if not messages:
             if node_content.get("rich_text"):
@@ -407,7 +416,7 @@ class QuestionNodeProcessor(NodeProcessor):
                 state_updates={"system": {"_current_options": options}},
             )
 
-        return {
+        result: Dict[str, Any] = {
             "type": "question",
             "question": question_message,
             "content_id": content_id,
@@ -417,6 +426,18 @@ class QuestionNodeProcessor(NodeProcessor):
             "variable": variable,
             "node_id": node.node_id,
         }
+
+        # For book_feedback questions, resolve the book source and include books
+        if input_type == "book_feedback":
+            book_source = node_content.get("book_source", "")
+            if book_source:
+                books = self.runtime.substitute_object(
+                    f"{{{{{book_source}}}}}", session_state
+                )
+                if books and isinstance(books, list):
+                    result["books"] = books
+
+        return result
 
     async def _fetch_random_content(
         self,
@@ -648,7 +669,15 @@ class QuestionNodeProcessor(NodeProcessor):
 
             # For choice-based inputs, try to store the full option object
             stored_value: Any = sanitized_input
-            if input_type in ("choice", "image_choice", "button"):
+            if input_type == "book_feedback":
+                # Book feedback arrives as JSON with liked/disliked/read arrays
+                import json
+
+                try:
+                    stored_value = json.loads(user_input)
+                except (json.JSONDecodeError, TypeError):
+                    stored_value = sanitized_input
+            elif input_type in ("choice", "image_choice", "button"):
                 options = (session.state or {}).get("system", {}).get(
                     "_current_options"
                 ) or []
@@ -1855,12 +1884,16 @@ class ChatRuntime:
     @staticmethod
     def _build_input_request(source: Dict[str, Any]) -> Dict[str, Any]:
         """Build an input_request dict from a question result or raw node content."""
-        return {
+        ir: Dict[str, Any] = {
             "input_type": source.get("input_type", "text"),
             "variable": source.get("variable", ""),
             "options": source.get("options", []),
             "question": source.get("question", {}),
         }
+        # Include books for book_feedback questions
+        if source.get("books"):
+            ir["books"] = source["books"]
+        return ir
 
     async def _resolve_question_node(
         self, db: AsyncSession, question_node: FlowNode, session: ConversationSession

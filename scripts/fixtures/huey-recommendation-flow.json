@@ -1,8 +1,8 @@
 {
   "seed_key": "huey-recommendation",
   "name": "Huey Recommendation",
-  "description": "Queries for book recommendations with fallback, displays results.",
-  "version": "1.0.0",
+  "description": "Queries for book recommendations with fallback, collects per-book feedback, and displays liked books.",
+  "version": "2.0.0",
   "entry_node_id": "good_choices_msg",
   "visibility": "wriveted",
   "flow_data": {
@@ -71,14 +71,60 @@
       },
       {
         "id": "show_books",
+        "type": "question",
+        "content": {
+          "question": {"text": "I found {{temp.book_count}} books for you! Swipe through and tell me what you think \ud83d\udcda"},
+          "input_type": "book_feedback",
+          "book_source": "temp.book_results",
+          "variable": "temp.book_feedback"
+        },
+        "position": {"x": 900, "y": 150}
+      },
+      {
+        "id": "build_share_payload",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "aggregate",
+              "expression": "size(has(temp.book_feedback.liked) ? temp.book_feedback.liked : [])",
+              "target": "temp.liked_count"
+            }
+          ]
+        },
+        "position": {"x": 1100, "y": 150}
+      },
+      {
+        "id": "check_liked",
+        "type": "condition",
+        "content": {
+          "conditions": [
+            {"if": "temp.liked_count > 0", "then": "$0"}
+          ],
+          "default_path": "default"
+        },
+        "position": {"x": 1300, "y": 150}
+      },
+      {
+        "id": "show_liked_msg",
         "type": "message",
         "content": {
           "messages": [
-            {"type": "text", "text": "I found {{temp.book_count}} books for you! \ud83d\udcda"},
-            {"type": "book_list", "source": "temp.book_results"}
+            {"type": "text", "text": "Great taste! Here are the books you liked \ud83c\udf1f"},
+            {"type": "book_list", "source": "temp.book_feedback.liked"}
           ]
         },
-        "position": {"x": 900, "y": 150}
+        "position": {"x": 1500, "y": 50}
+      },
+      {
+        "id": "no_liked_msg",
+        "type": "message",
+        "content": {
+          "messages": [
+            {"type": "text", "text": "No worries! Maybe next time we'll find something you love \ud83d\ude0a"}
+          ]
+        },
+        "position": {"x": 1500, "y": 250}
       },
       {
         "id": "fallback_query",
@@ -118,12 +164,12 @@
       },
       {
         "id": "show_fallback_books",
-        "type": "message",
+        "type": "question",
         "content": {
-          "messages": [
-            {"type": "text", "text": "I found {{temp.fallback_count}} books you might enjoy! \ud83d\udcda"},
-            {"type": "book_list", "source": "temp.fallback_results"}
-          ]
+          "question": {"text": "I found {{temp.fallback_count}} books you might enjoy! Swipe through and tell me what you think \ud83d\udcda"},
+          "input_type": "book_feedback",
+          "book_source": "temp.fallback_results",
+          "variable": "temp.book_feedback"
         },
         "position": {"x": 1300, "y": 350}
       },
@@ -144,8 +190,13 @@
       {"source": "book_query", "target": "check_results", "type": "default"},
       {"source": "check_results", "target": "show_books", "type": "$0"},
       {"source": "check_results", "target": "fallback_query", "type": "default"},
+      {"source": "show_books", "target": "build_share_payload", "type": "default"},
+      {"source": "build_share_payload", "target": "check_liked", "type": "default"},
+      {"source": "check_liked", "target": "show_liked_msg", "type": "$0"},
+      {"source": "check_liked", "target": "no_liked_msg", "type": "default"},
       {"source": "fallback_query", "target": "check_fallback", "type": "default"},
       {"source": "check_fallback", "target": "show_fallback_books", "type": "$0"},
+      {"source": "show_fallback_books", "target": "build_share_payload", "type": "default"},
       {"source": "check_fallback", "target": "no_books_msg", "type": "default"}
     ]
   }

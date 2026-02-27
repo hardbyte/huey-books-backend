@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from structlog import get_logger
 
 from app.models.cms import NodeType
+from app.schemas.cms import KNOWN_INPUT_TYPES
 
 logger = get_logger()
 
@@ -102,24 +103,17 @@ class MessageContentSchema(BaseModel):
 class QuestionContentSchema(BaseModel):
     """Validation schema for question node content.
 
-    Supported input types:
-    - text: Free text input
-    - number: Numeric input with optional min/max
-    - email: Email address input
-    - phone: Phone number input
-    - url: URL input
-    - date: Date picker
-    - choice: Single selection from options (buttons/radio)
-    - multiple_choice: Multiple selection from options (checkboxes)
-    - slider: Range slider (for age, ratings, scales)
-    - image_choice: Single selection from image-based options (for visual preference questions)
-    - carousel: Swipeable carousel for browsing items (e.g., books)
+    input_type must be a lowercase identifier (e.g. text, choice, book_feedback).
+    Common built-in types: text, number, email, phone, url, date, choice,
+    multiple_choice, slider, image_choice, carousel. Flow authors can define
+    custom input types without schema changes.
     """
 
     question: Dict[str, Any] = Field(...)
     input_type: str = Field(
         ...,
-        pattern=r"^(text|choice|multiple_choice|number|email|phone|url|date|slider|image_choice|carousel)$",
+        pattern=r"^[a-z][a-z0-9_]{0,49}$",
+        json_schema_extra={"examples": sorted(KNOWN_INPUT_TYPES)},
     )
     options: Optional[List[Dict[str, Any]]] = None
     validation: Optional[Dict[str, Any]] = None
