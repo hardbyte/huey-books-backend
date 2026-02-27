@@ -1355,8 +1355,9 @@ class ChatRuntime:
                         elif chained_next_node.node_type in (
                             NodeType.ACTION,
                             NodeType.CONDITION,
+                            NodeType.COMPOSITE,
                         ):
-                            # Process action/condition automatically
+                            # Process action/condition/composite automatically
                             auto_result = await self.process_node(
                                 db, chained_next_node, session
                             )
@@ -1366,10 +1367,50 @@ class ChatRuntime:
                                 result["messages"].extend(
                                     auto_result.get("messages", [])
                                 )
+
+                            # Check if result is a question (e.g., composite entered sub-flow)
+                            if auto_result and auto_result.get("type") == "question":
+                                awaiting_input = True
+                                session_position = auto_result.get(
+                                    "node_id", chained_next_node.node_id
+                                )
+                                sub_flow_id = _to_uuid(auto_result.get("sub_flow_id"))
+                                if sub_flow_id:
+                                    session_flow_id = sub_flow_id
+                                result["input_request"] = self._build_input_request(
+                                    auto_result
+                                )
+                                chained_next_node = None
+                                break
+
                             # Update position and continue
                             session_position = chained_next_node.node_id
                             session_flow_id = chained_next_node.flow_id
                             chained_next_node = auto_result.get("next_node")
+
+                            # Handle dict question results from composite sub-flows
+                            if (
+                                isinstance(chained_next_node, dict)
+                                and chained_next_node.get("type") == "question"
+                            ):
+                                awaiting_input = True
+                                session_position = chained_next_node.get(
+                                    "node_id", session_position
+                                )
+                                sub_flow_id = _to_uuid(
+                                    chained_next_node.get("sub_flow_id")
+                                    or (
+                                        auto_result.get("sub_flow_id")
+                                        if auto_result
+                                        else None
+                                    )
+                                )
+                                if sub_flow_id:
+                                    session_flow_id = sub_flow_id
+                                result["input_request"] = self._build_input_request(
+                                    chained_next_node
+                                )
+                                chained_next_node = None
 
                             # Update session position
                             session = await chat_repo.update_session_state(
@@ -1517,6 +1558,7 @@ class ChatRuntime:
                         elif chained_next.node_type in (
                             NodeType.ACTION,
                             NodeType.CONDITION,
+                            NodeType.COMPOSITE,
                         ):
                             auto_result = await self.process_node(
                                 db, chained_next, session
@@ -1526,9 +1568,49 @@ class ChatRuntime:
                                 result["messages"].extend(
                                     auto_result.get("messages", [])
                                 )
+
+                            # Check if result is a question (e.g., composite entered sub-flow)
+                            if auto_result and auto_result.get("type") == "question":
+                                awaiting_input = True
+                                session_position = auto_result.get(
+                                    "node_id", chained_next.node_id
+                                )
+                                sub_flow_id = _to_uuid(auto_result.get("sub_flow_id"))
+                                if sub_flow_id:
+                                    session_flow_id = sub_flow_id
+                                result["input_request"] = self._build_input_request(
+                                    auto_result
+                                )
+                                chained_next = None
+                                break
+
                             session_position = chained_next.node_id
                             session_flow_id = chained_next.flow_id
                             chained_next = auto_result.get("next_node")
+
+                            # Handle dict question results from composite sub-flows
+                            if (
+                                isinstance(chained_next, dict)
+                                and chained_next.get("type") == "question"
+                            ):
+                                awaiting_input = True
+                                session_position = chained_next.get(
+                                    "node_id", session_position
+                                )
+                                sub_flow_id = _to_uuid(
+                                    chained_next.get("sub_flow_id")
+                                    or (
+                                        auto_result.get("sub_flow_id")
+                                        if auto_result
+                                        else None
+                                    )
+                                )
+                                if sub_flow_id:
+                                    session_flow_id = sub_flow_id
+                                result["input_request"] = self._build_input_request(
+                                    chained_next
+                                )
+                                chained_next = None
 
                             session = await chat_repo.update_session_state(
                                 db,
