@@ -116,11 +116,11 @@ def test_interact_invalid_input_type(client, test_user_account_headers):
     client.cookies.set("csrf_token", csrf_token)
     headers = {**test_user_account_headers, "X-CSRF-Token": csrf_token}
 
-    # Try to interact with invalid input type
+    # Try to interact with input_type that violates the identifier pattern
     response = client.post(
         f"v1/chat/sessions/{session_token}/interact",
         json={
-            "input_type": "invalid_input_type",  # Invalid type
+            "input_type": "123-INVALID!",  # Not a valid identifier
             "input": "Hello",
         },
         headers=headers,
