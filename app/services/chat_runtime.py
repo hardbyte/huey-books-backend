@@ -1381,6 +1381,15 @@ class ChatRuntime:
                                     auto_result
                                 )
                                 chained_next_node = None
+                                # Persist session position before exiting loop
+                                session = await chat_repo.update_session_state(
+                                    db,
+                                    session_id=session.id,
+                                    state_updates={},
+                                    current_node_id=session_position,
+                                    current_flow_id=session_flow_id,
+                                    expected_revision=session.revision,
+                                )
                                 break
 
                             # Update position and continue
@@ -1582,6 +1591,15 @@ class ChatRuntime:
                                     auto_result
                                 )
                                 chained_next = None
+                                # Persist session position before exiting loop
+                                session = await chat_repo.update_session_state(
+                                    db,
+                                    session_id=session.id,
+                                    state_updates={},
+                                    current_node_id=session_position,
+                                    current_flow_id=session_flow_id,
+                                    expected_revision=session.revision,
+                                )
                                 break
 
                             session_position = chained_next.node_id
