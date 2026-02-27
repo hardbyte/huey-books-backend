@@ -115,7 +115,7 @@ class TestNodeInputValidator:
         """Test question node validation fails with invalid input type."""
         content = {
             "question": {"text": "Enter something"},
-            "input_type": "invalid_type",  # Not in allowed pattern
+            "input_type": "123-INVALID!",  # Not a valid identifier
         }
 
         report = self.validator.validate_node(self.node_id, NodeType.QUESTION, content)
