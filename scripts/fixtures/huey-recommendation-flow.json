@@ -87,7 +87,7 @@
           "actions": [
             {
               "type": "aggregate",
-              "expression": "size(has(temp.book_feedback, 'liked') ? temp.book_feedback.liked : [])",
+              "expression": "size(has(temp.book_feedback.liked) ? temp.book_feedback.liked : [])",
               "target": "temp.liked_count"
             }
           ]
