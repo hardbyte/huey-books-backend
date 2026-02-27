@@ -2,7 +2,7 @@
   "seed_key": "huey-bookbot",
   "name": "Huey Bookbot",
   "description": "Kid-friendly book recommendation chatbot. Asks age, reading ability, and preference questions, then recommends books. Optionally offers jokes and a spelling game.",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "entry_node_id": "welcome",
   "visibility": "wriveted",
   "trace_enabled": true,
@@ -33,6 +33,35 @@
           "variable": "temp.greeting"
         },
         "position": {"x": 300, "y": 300}
+      },
+      {
+        "id": "emit_chat_started",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "emit_event",
+              "title": "Huey: Chat started",
+              "description": "A user has started a chat session with Huey",
+              "service_account": "huey-events",
+              "info": {
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
+            },
+            {
+              "type": "emit_event",
+              "title": "Huey: Find a book",
+              "description": "A user wants to find a book",
+              "service_account": "huey-events",
+              "info": {
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
+            }
+          ]
+        },
+        "position": {"x": 400, "y": 300}
       },
       {
         "id": "check_school",
@@ -156,6 +185,25 @@
         "position": {"x": 2500, "y": 300}
       },
       {
+        "id": "emit_chat_ended",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "emit_event",
+              "title": "Huey: Chat ended",
+              "description": "A user has ended their chat session",
+              "service_account": "huey-events",
+              "info": {
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
+            }
+          ]
+        },
+        "position": {"x": 2600, "y": 450}
+      },
+      {
         "id": "goodbye",
         "type": "message",
         "content": {
@@ -168,7 +216,8 @@
     ],
     "connections": [
       {"source": "welcome", "target": "greeting_response", "type": "default"},
-      {"source": "greeting_response", "target": "check_school", "type": "default"},
+      {"source": "greeting_response", "target": "emit_chat_started", "type": "default"},
+      {"source": "emit_chat_started", "target": "check_school", "type": "default"},
       {"source": "check_school", "target": "school_confirm", "type": "$0"},
       {"source": "check_school", "target": "profile_composite", "type": "default"},
       {"source": "school_confirm", "target": "check_stale_collection", "type": "default"},
@@ -184,7 +233,8 @@
       {"source": "spelling_composite", "target": "end_msg", "type": "default"},
       {"source": "end_msg", "target": "restart_choice", "type": "default"},
       {"source": "restart_choice", "target": "welcome", "type": "$0", "conditions": {"if": {"var": "temp.restart_choice", "eq": "restart"}}},
-      {"source": "restart_choice", "target": "goodbye", "type": "default"}
+      {"source": "restart_choice", "target": "emit_chat_ended", "type": "default"},
+      {"source": "emit_chat_ended", "target": "goodbye", "type": "default"}
     ]
   }
 }

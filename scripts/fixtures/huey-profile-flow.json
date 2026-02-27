@@ -2,7 +2,7 @@
   "seed_key": "huey-profile",
   "name": "Huey Profile",
   "description": "Collects age and reading ability from the user.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "entry_node_id": "ask_age",
   "visibility": "wriveted",
   "flow_data": {
@@ -34,7 +34,18 @@
         "content": {
           "actions": [
             {"type": "set_variable", "variable": "user.age_number", "value": "{{temp.age_selection.age_number}}"},
-            {"type": "set_variable", "variable": "user.age_label", "value": "{{temp.age_selection.label}}"}
+            {"type": "set_variable", "variable": "user.age_label", "value": "{{temp.age_selection.label}}"},
+            {
+              "type": "emit_event",
+              "title": "Huey: Age collected",
+              "description": "A user has specified their age in a chat",
+              "service_account": "huey-events",
+              "info": {
+                "age": "{{temp.age_selection.age_number}}",
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
+            }
           ]
         },
         "position": {"x": 300, "y": 300}
@@ -91,7 +102,18 @@
         "type": "action",
         "content": {
           "actions": [
-            {"type": "set_variable", "variable": "user.reading_ability_key", "value": "{{temp.reading_selection.ability_key}}"}
+            {"type": "set_variable", "variable": "user.reading_ability_key", "value": "{{temp.reading_selection.ability_key}}"},
+            {
+              "type": "emit_event",
+              "title": "Huey: Reading ability collected",
+              "description": "A user has specified their reading ability in a chat",
+              "service_account": "huey-events",
+              "info": {
+                "reading_ability": "{{temp.reading_selection.ability_key}}",
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
+            }
           ]
         },
         "position": {"x": 700, "y": 300}

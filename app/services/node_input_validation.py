@@ -220,11 +220,15 @@ class ActionContentSchema(BaseModel):
         valid_action_types = {
             "set_variable",
             "increment",
+            "decrement",
+            "delete_variable",
             "append",
             "remove",
             "clear",
             "calculate",
             "aggregate",
+            "api_call",
+            "emit_event",
         }
 
         for i, action in enumerate(v):
@@ -298,6 +302,10 @@ class ActionContentSchema(BaseModel):
                 )
             if "target" not in params:
                 raise ValueError(f"Action {index} (aggregate) must have 'target' field")
+
+        elif action_type == "emit_event":
+            if "title" not in params:
+                raise ValueError(f"Action {index} (emit_event) must have 'title' field")
 
 
 class WebhookContentSchema(BaseModel):

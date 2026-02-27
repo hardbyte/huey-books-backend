@@ -115,7 +115,18 @@
           "actions": [
             {"type": "aggregate", "expression": "merge([temp.pref_one_hue, temp.pref_two_hue, temp.pref_three_hue])", "target": "user.hue_profile"},
             {"type": "aggregate", "expression": "top_keys(user.hue_profile, 5)", "target": "user.hue_keys"},
-            {"type": "set_variable", "variable": "user.reading_ability_keys", "value": ["{{user.reading_ability_key}}"]}
+            {"type": "set_variable", "variable": "user.reading_ability_keys", "value": ["{{user.reading_ability_key}}"]},
+            {
+              "type": "emit_event",
+              "title": "Huey: Hues collected",
+              "description": "A user's hue profile has been calculated from preference questions",
+              "service_account": "huey-events",
+              "info": {
+                "hue_keys": "{{user.hue_keys}}",
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
+            }
           ]
         },
         "position": {"x": 1500, "y": 300}

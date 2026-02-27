@@ -182,21 +182,6 @@ def walk_intro(session_token, csrf_token, token, label=""):
     return data
 
 
-def walk_recommendations(session_token, csrf_token, token, label=""):
-    """Walk through recommendation composite: handle book feedback or no-books path."""
-    prefix = f"[{label}] " if label else ""
-    node_id = get_node_id(walk_data) if (walk_data := None) else None  # noqa: F841
-
-    # After 3rd preference, flow enters recommendation_composite.
-    # First we see good_choices_msg + searching_msg (wait_for_ack).
-    # We don't directly interact here — the previous interact call returns
-    # wait_for_ack. This function is called after that continue.
-    # At this point we're past searching_msg and book_query has run.
-    # We're either at show_books/show_fallback_books (book_feedback) or
-    # the composite exited (no books → joke_intro/spelling_intro).
-    pass
-
-
 def walk_post_recommendation(session_token, csrf_token, token, data, label=""):
     """Walk from after recommendation through jokes, spelling, to restart_choice.
 
@@ -430,9 +415,11 @@ def main():
     data = walk_full_flow(session_token, csrf_token, TOKEN, "T1b")
 
     data = interact(session_token, csrf_token, TOKEN, "done", "choice")
+    # emit_chat_ended ACTION node sits before goodbye; ACTION recursively
+    # processes goodbye but current_node_id reflects the ACTION node.
     check(
-        "T1b goodbye: reached goodbye node",
-        get_node_id(data) == "goodbye",
+        "T1b goodbye: reached goodbye path",
+        get_node_id(data) in ("goodbye", "emit_chat_ended"),
         f"actual: {get_node_id(data)}",
     )
     check("T1b goodbye: session ended", data.get("session_ended") is True)
@@ -597,6 +584,59 @@ def main():
         if "hasn't been updated" in t.lower() or "book list" in t.lower():
             stale_warning = True
     check("T5 stale collection warning message present", stale_warning, f"messages: {msgs}")
+
+    # ========================================
+    # TEST 6: Verify emit_event analytics events
+    # ========================================
+    print("\n" + "=" * 60)
+    print("TEST 6: Verify emit_event analytics events in DB")
+    print("=" * 60)
+
+    import subprocess as _sp
+
+    event_result = _sp.run(
+        [
+            "psql",
+            "-h", "localhost",
+            "-U", "postgres",
+            "-d", "postgres",
+            "-t", "-A",
+            "-c",
+            "SELECT title, count(*) FROM events WHERE title LIKE 'Huey:%' GROUP BY title ORDER BY title;",
+        ],
+        capture_output=True,
+        text=True,
+        env={**__import__("os").environ, "PGPASSWORD": "password"},
+    )
+    event_rows = [
+        line.strip() for line in event_result.stdout.strip().split("\n") if line.strip()
+    ]
+    event_titles = {row.split("|")[0] for row in event_rows}
+    print(f"  Found event types: {event_titles}")
+    for row in event_rows:
+        print(f"    {row}")
+
+    # These events should exist from the complete flow walkthroughs above
+    expected_events = {
+        "Huey: Chat started",
+        "Huey: Find a book",
+        "Huey: Age collected",
+        "Huey: Reading ability collected",
+        "Huey: Hues collected",
+    }
+    for expected in sorted(expected_events):
+        check(
+            f"T6 event '{expected}' exists",
+            expected in event_titles,
+            f"found: {event_titles}",
+        )
+
+    # Chat ended should exist from T1b goodbye path
+    check(
+        "T6 event 'Huey: Chat ended' exists",
+        "Huey: Chat ended" in event_titles,
+        f"found: {event_titles}",
+    )
 
     # ========================================
     # SUMMARY
