@@ -340,6 +340,7 @@ Executes backend actions like setting variables or triggering events.
 | `delete_variable` | `variable` | - | Remove a variable from state |
 | `aggregate` | `expression`, `target` | - | Aggregate list values using CEL expressions |
 | `api_call` | `config.endpoint` | `config.method`, `config.headers`, `config.query_params`, `config.body`, `config.response_mapping`, `config.response_variable`, `config.error_variable` | Make an internal API call |
+| `emit_event` | `title` | `description`, `info`, `iterate_over`, `item_alias`, `service_account` | Fire-and-forget analytics event |
 
 Note: `config.endpoint` is relative to the `WRIVETED_INTERNAL_API` base URL.
 
@@ -391,6 +392,49 @@ The `aggregate` action type evaluates CEL (Common Expression Language) expressio
   "target": "user.hue_profile"
 }
 ```
+
+### Emit Event Action
+
+The `emit_event` action creates application events for analytics and monitoring. Events are fire-and-forget — errors are logged but never break the chat flow.
+
+**Single Event**
+```json
+{
+  "type": "emit_event",
+  "title": "Book Recommended: {{ temp.book_title }}",
+  "description": "User received a book recommendation",
+  "info": {
+    "book_id": "{{ temp.book_id }}",
+    "session_id": "{{ context.session_id }}"
+  }
+}
+```
+
+**Iterated Events** — creates one event per item in a list:
+```json
+{
+  "type": "emit_event",
+  "title": "Book Viewed: {{ temp.book.title }}",
+  "iterate_over": "temp.book_results",
+  "item_alias": "book",
+  "info": {
+    "isbn": "{{ temp.book.isbn }}"
+  }
+}
+```
+
+**Fields**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `title` | string | **Yes** | - | Event title (supports variable substitution) |
+| `description` | string | No | - | Event description (supports variable substitution) |
+| `info` | object | No | `{}` | Arbitrary metadata attached to the event |
+| `iterate_over` | string | No | - | Variable path to a list; emits one event per item |
+| `item_alias` | string | No | `"item"` | Name for the loop variable in `temp.<alias>` |
+| `service_account` | string | No | - | Service account name to associate with event |
+
+Events are created with `commit=False` and committed as part of the session state transaction.
 
 ### Path Routing
 - Returns `success` on completion

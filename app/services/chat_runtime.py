@@ -2,7 +2,7 @@ import html
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Type, cast
+from typing import Any, Dict, List, Optional, Tuple, Type, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1328,96 +1328,23 @@ class ChatRuntime:
                 # until we hit a question node or the flow ends.
                 # Skip if awaiting_input is already True (question was handled above).
                 while chained_next_node and not awaiting_input:
-                    # If next node is a FlowNode
-                    if isinstance(chained_next_node, FlowNode):
-                        if chained_next_node.node_type == NodeType.QUESTION:
-                            session_position = chained_next_node.node_id
-                            session_flow_id = chained_next_node.flow_id
-                            (
-                                result["input_request"],
-                                q_options,
-                                session,
-                            ) = await self._resolve_question_node(
-                                db, chained_next_node, session
-                            )
-                            q_state = {"system": {"_current_options": q_options}}
-                            session = await self._refresh_session(db, session)
-                            session = await chat_repo.update_session_state(
-                                db,
-                                session_id=session.id,
-                                state_updates=q_state,
-                                current_node_id=session_position,
-                                current_flow_id=session_flow_id,
-                                expected_revision=session.revision,
-                            )
-                            awaiting_input = True
-                            break
-                        elif chained_next_node.node_type in (
-                            NodeType.ACTION,
-                            NodeType.CONDITION,
-                        ):
-                            # Process action/condition automatically
-                            auto_result = await self.process_node(
-                                db, chained_next_node, session
-                            )
-                            session = await self._refresh_session(db, session)
-                            # Collect any messages from the auto-processed result
-                            if auto_result and auto_result.get("type") == "messages":
-                                result["messages"].extend(
-                                    auto_result.get("messages", [])
-                                )
-                            # Update position and continue
-                            session_position = chained_next_node.node_id
-                            session_flow_id = chained_next_node.flow_id
-                            chained_next_node = auto_result.get("next_node")
-
-                            # Update session position
-                            session = await chat_repo.update_session_state(
-                                db,
-                                session_id=session.id,
-                                state_updates={},
-                                current_node_id=session_position,
-                                current_flow_id=session_flow_id,
-                                expected_revision=session.revision,
-                            )
-                        elif chained_next_node.node_type == NodeType.MESSAGE:
-                            # Process message and check what comes after
-                            msg_result = await self.process_node(
-                                db, chained_next_node, session
-                            )
-                            session = await self._refresh_session(db, session)
-                            # Extract and append actual messages from the result
-                            if msg_result and msg_result.get("type") == "messages":
-                                result["messages"].extend(
-                                    msg_result.get("messages", [])
-                                )
-                            elif msg_result:
-                                result["messages"].append(msg_result)
-                            session_position = chained_next_node.node_id
-                            session_flow_id = chained_next_node.flow_id
-                            chained_next_node = (
-                                msg_result.get("next_node") if msg_result else None
-                            )
-
-                            # Update session position
-                            session = await chat_repo.update_session_state(
-                                db,
-                                session_id=session.id,
-                                state_updates={},
-                                current_node_id=session_position,
-                                current_flow_id=session_flow_id,
-                                expected_revision=session.revision,
-                            )
-
-                            # Pause if message requests acknowledgment
-                            if msg_result and msg_result.get("wait_for_acknowledgment"):
-                                result["wait_for_acknowledgment"] = True
-                                break
-                        else:
-                            # Unknown node type, stop processing
-                            break
-                    else:
-                        # Dict result (like from composite) - already handled
+                    if not isinstance(chained_next_node, FlowNode):
+                        break
+                    (
+                        chained_next_node,
+                        session_position,
+                        session_flow_id,
+                        awaiting_input,
+                        session,
+                    ) = await self._process_chained_node(
+                        db,
+                        chained_next_node,
+                        session,
+                        result,
+                        session_position,
+                        session_flow_id,
+                    )
+                    if result.get("wait_for_acknowledgment"):
                         break
 
                 result["current_node_id"] = session_position
@@ -1490,86 +1417,21 @@ class ChatRuntime:
                     while chained_next and not awaiting_input:
                         if not isinstance(chained_next, FlowNode):
                             break
-
-                        if chained_next.node_type == NodeType.QUESTION:
-                            session_position = chained_next.node_id
-                            session_flow_id = chained_next.flow_id
-                            awaiting_input = True
-                            (
-                                result["input_request"],
-                                q_options,
-                                session,
-                            ) = await self._resolve_question_node(
-                                db, chained_next, session
-                            )
-                            q_state = {"system": {"_current_options": q_options}}
-                            session = await self._refresh_session(db, session)
-                            session = await chat_repo.update_session_state(
-                                db,
-                                session_id=session.id,
-                                state_updates=q_state,
-                                current_node_id=session_position,
-                                current_flow_id=session_flow_id,
-                                expected_revision=session.revision,
-                            )
-                            break
-
-                        elif chained_next.node_type in (
-                            NodeType.ACTION,
-                            NodeType.CONDITION,
-                        ):
-                            auto_result = await self.process_node(
-                                db, chained_next, session
-                            )
-                            session = await self._refresh_session(db, session)
-                            if auto_result and auto_result.get("type") == "messages":
-                                result["messages"].extend(
-                                    auto_result.get("messages", [])
-                                )
-                            session_position = chained_next.node_id
-                            session_flow_id = chained_next.flow_id
-                            chained_next = auto_result.get("next_node")
-
-                            session = await chat_repo.update_session_state(
-                                db,
-                                session_id=session.id,
-                                state_updates={},
-                                current_node_id=session_position,
-                                current_flow_id=session_flow_id,
-                                expected_revision=session.revision,
-                            )
-
-                        elif chained_next.node_type == NodeType.MESSAGE:
-                            msg_result = await self.process_node(
-                                db, chained_next, session
-                            )
-                            session = await self._refresh_session(db, session)
-                            if msg_result and msg_result.get("type") == "messages":
-                                result["messages"].extend(
-                                    msg_result.get("messages", [])
-                                )
-                            elif msg_result:
-                                result["messages"].append(msg_result)
-                            session_position = chained_next.node_id
-                            session_flow_id = chained_next.flow_id
-                            chained_next = (
-                                msg_result.get("next_node") if msg_result else None
-                            )
-
-                            session = await chat_repo.update_session_state(
-                                db,
-                                session_id=session.id,
-                                state_updates={},
-                                current_node_id=session_position,
-                                current_flow_id=session_flow_id,
-                                expected_revision=session.revision,
-                            )
-
-                            if msg_result and msg_result.get("wait_for_acknowledgment"):
-                                result["wait_for_acknowledgment"] = True
-                                break
-
-                        else:
+                        (
+                            chained_next,
+                            session_position,
+                            session_flow_id,
+                            awaiting_input,
+                            session,
+                        ) = await self._process_chained_node(
+                            db,
+                            chained_next,
+                            session,
+                            result,
+                            session_position,
+                            session_flow_id,
+                        )
+                        if result.get("wait_for_acknowledgment"):
                             break
 
                     result["current_node_id"] = session_position
@@ -1880,6 +1742,136 @@ class ChatRuntime:
             return self._serialize_node_result(result)
 
         return None
+
+    async def _process_chained_node(
+        self,
+        db: AsyncSession,
+        chained_node: FlowNode,
+        session: ConversationSession,
+        result: Dict[str, Any],
+        session_position: str,
+        session_flow_id: Optional[UUID],
+    ) -> Tuple[Optional[Any], str, Optional[UUID], bool, ConversationSession]:
+        """Process a single chained node during interaction chaining.
+
+        Handles QUESTION, ACTION/CONDITION/COMPOSITE, and MESSAGE nodes uniformly.
+
+        Returns:
+            (next_node_or_none, session_position, session_flow_id, awaiting_input, session)
+        """
+        if chained_node.node_type == NodeType.QUESTION:
+            session_position = chained_node.node_id
+            session_flow_id = chained_node.flow_id
+            (
+                result["input_request"],
+                q_options,
+                session,
+            ) = await self._resolve_question_node(db, chained_node, session)
+            q_state = {"system": {"_current_options": q_options}}
+            session = await self._refresh_session(db, session)
+            session = await chat_repo.update_session_state(
+                db,
+                session_id=session.id,
+                state_updates=q_state,
+                current_node_id=session_position,
+                current_flow_id=session_flow_id,
+                expected_revision=session.revision,
+            )
+            return None, session_position, session_flow_id, True, session
+
+        if chained_node.node_type in (
+            NodeType.ACTION,
+            NodeType.CONDITION,
+            NodeType.COMPOSITE,
+        ):
+            auto_result = await self.process_node(db, chained_node, session)
+            session = await self._refresh_session(db, session)
+
+            if auto_result and auto_result.get("type") == "messages":
+                result["messages"].extend(auto_result.get("messages", []))
+
+            # Top-level question result (e.g. composite entered sub-flow)
+            if auto_result and auto_result.get("type") == "question":
+                session_position = auto_result.get("node_id", chained_node.node_id)
+                sub_flow_id = _to_uuid(auto_result.get("sub_flow_id"))
+                if sub_flow_id:
+                    session_flow_id = sub_flow_id
+                result["input_request"] = self._build_input_request(auto_result)
+                session = await chat_repo.update_session_state(
+                    db,
+                    session_id=session.id,
+                    state_updates={},
+                    current_node_id=session_position,
+                    current_flow_id=session_flow_id,
+                    expected_revision=session.revision,
+                )
+                return None, session_position, session_flow_id, True, session
+
+            session_position = chained_node.node_id
+            session_flow_id = chained_node.flow_id
+            next_node = auto_result.get("next_node")
+
+            # Dict question result from composite sub-flows
+            if isinstance(next_node, dict) and next_node.get("type") == "question":
+                session_position = next_node.get("node_id", session_position)
+                sub_flow_id = _to_uuid(
+                    next_node.get("sub_flow_id")
+                    or (auto_result.get("sub_flow_id") if auto_result else None)
+                )
+                if sub_flow_id:
+                    session_flow_id = sub_flow_id
+                result["input_request"] = self._build_input_request(next_node)
+                next_node = None
+                session = await chat_repo.update_session_state(
+                    db,
+                    session_id=session.id,
+                    state_updates={},
+                    current_node_id=session_position,
+                    current_flow_id=session_flow_id,
+                    expected_revision=session.revision,
+                )
+                return None, session_position, session_flow_id, True, session
+
+            session = await chat_repo.update_session_state(
+                db,
+                session_id=session.id,
+                state_updates={},
+                current_node_id=session_position,
+                current_flow_id=session_flow_id,
+                expected_revision=session.revision,
+            )
+            return next_node, session_position, session_flow_id, False, session
+
+        if chained_node.node_type == NodeType.MESSAGE:
+            msg_result = await self.process_node(db, chained_node, session)
+            session = await self._refresh_session(db, session)
+
+            if msg_result and msg_result.get("type") == "messages":
+                result["messages"].extend(msg_result.get("messages", []))
+            elif msg_result:
+                result["messages"].append(msg_result)
+
+            session_position = chained_node.node_id
+            session_flow_id = chained_node.flow_id
+            next_node = msg_result.get("next_node") if msg_result else None
+
+            session = await chat_repo.update_session_state(
+                db,
+                session_id=session.id,
+                state_updates={},
+                current_node_id=session_position,
+                current_flow_id=session_flow_id,
+                expected_revision=session.revision,
+            )
+
+            if msg_result and msg_result.get("wait_for_acknowledgment"):
+                result["wait_for_acknowledgment"] = True
+                return None, session_position, session_flow_id, False, session
+
+            return next_node, session_position, session_flow_id, False, session
+
+        # Unknown node type — stop chaining
+        return None, session_position, session_flow_id, False, session
 
     @staticmethod
     def _build_input_request(source: Dict[str, Any]) -> Dict[str, Any]:

@@ -38,6 +38,7 @@ from app.models.public_reader import PublicReader
 from app.models.reading_ability import ReadingAbility
 from app.models.school import School, SchoolBookbotType, SchoolState
 from app.models.school_admin import SchoolAdmin
+from app.models.service_account import ServiceAccount, ServiceAccountType
 from app.models.student import Student
 from app.models.supporter import Supporter
 from app.models.user import User
@@ -214,6 +215,21 @@ def _ensure_user(
     session.add(user)
     session.flush()
     return user
+
+
+def _ensure_service_account(
+    session, name: str, account_type: ServiceAccountType = ServiceAccountType.KIOSK
+) -> ServiceAccount:
+    sa = (
+        session.query(ServiceAccount)
+        .filter(ServiceAccount.name == name)
+        .one_or_none()
+    )
+    if sa is None:
+        sa = ServiceAccount(name=name, type=account_type)
+        session.add(sa)
+        session.flush()
+    return sa
 
 
 def _ensure_hue(session, config: dict) -> Hue:
@@ -845,6 +861,9 @@ def main() -> None:
         q_count = _seed_airtable_questions(session, questions_csv)
         if q_count:
             print(f"  Seeded {q_count} preference questions from CSV")
+
+        # Seed service accounts used by flow emit_event actions
+        _ensure_service_account(session, "huey-events", ServiceAccountType.KIOSK)
 
         # Seed themes
         themes_by_seed_key: dict[str, ChatTheme] = {}

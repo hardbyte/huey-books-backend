@@ -176,6 +176,12 @@ graph TD
 - **Storage**: `events` table
 - **Delivery**: Direct Slack API calls, or via Event Outbox for reliability
 
+#### Flow-Driven Events (`emit_event` action)
+
+Chat flows can create application events via the `emit_event` action type (see `ActionNodeProcessor._handle_emit_event`). These events are written with `commit=False` into the same database transaction as session state updates, ensuring atomicity — if the session update rolls back, the event is also discarded. This avoids orphaned analytics records.
+
+The `iterate_over` option creates one event per item in a list variable, useful for recording per-book or per-recommendation events without separate action nodes.
+
 ### 2. Chat Flow Events (Real-time)
 
 - **Files**: `app/services/event_listener.py`, database triggers (`notify_flow_event`)

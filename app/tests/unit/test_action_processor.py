@@ -1,8 +1,9 @@
 """
 Unit tests for action_processor helpers and API call handling.
 
-Tests _strip_unresolved_templates (pure function) and the internal handler
-fallback_response mechanism without database dependencies.
+Tests _strip_unresolved_templates (pure function), the internal handler
+fallback_response mechanism, and emit_event action type without database
+dependencies.
 """
 
 import uuid
@@ -287,3 +288,277 @@ class TestInternalHandlerFallback:
         assert result["success"] is True
         assert captured_args["body"] == {"name": "resolved", "school_id": None}
         assert captured_args["params"] == {"limit": 10, "filter": None}
+
+
+# ---------------------------------------------------------------------------
+# emit_event action type
+# ---------------------------------------------------------------------------
+
+
+class TestEmitEvent:
+    """Test the emit_event action type."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.chat_runtime.chat_repo")
+    @patch("app.services.action_processor.chat_repo")
+    @patch("app.services.action_processor.event_repository", create=True)
+    async def test_emit_event_basic(
+        self,
+        mock_event_repo,
+        mock_action_chat_repo,
+        mock_runtime_chat_repo,
+        action_processor,
+        mock_db,
+    ):
+        """Basic emit_event creates an event via event_repository.acreate."""
+        _setup_chat_repo(mock_action_chat_repo)
+        _setup_chat_repo(mock_runtime_chat_repo)
+
+        mock_acreate = AsyncMock()
+
+        session = MockSession()
+        node = _make_action_node(
+            session.flow_id,
+            {
+                "actions": [
+                    {
+                        "type": "emit_event",
+                        "title": "Huey: Chat started",
+                        "description": "User started a chat",
+                        "info": {"chatbot": "Huey"},
+                    }
+                ]
+            },
+        )
+
+        with patch(
+            "app.repositories.event_repository.event_repository"
+        ) as patched_repo:
+            patched_repo.acreate = mock_acreate
+            result = await action_processor.process(
+                mock_db, node, session, {"db": mock_db}
+            )
+
+        assert result["success"] is True
+        mock_acreate.assert_called_once()
+        call_kwargs = mock_acreate.call_args
+        assert call_kwargs.kwargs["title"] == "Huey: Chat started"
+        assert call_kwargs.kwargs["description"] == "User started a chat"
+        assert call_kwargs.kwargs["commit"] is False
+
+    @pytest.mark.asyncio
+    @patch("app.services.chat_runtime.chat_repo")
+    @patch("app.services.action_processor.chat_repo")
+    async def test_emit_event_with_template_resolution(
+        self,
+        mock_action_chat_repo,
+        mock_runtime_chat_repo,
+        mock_db,
+    ):
+        """Verify template substitution is applied to title, description, and info."""
+        _setup_chat_repo(mock_action_chat_repo)
+        _setup_chat_repo(mock_runtime_chat_repo)
+
+        def sub_vars(template, state):
+            if "{{user.age}}" in template:
+                return template.replace("{{user.age}}", "9")
+            return template
+
+        def sub_obj(obj, state):
+            if isinstance(obj, dict):
+                return {k: sub_vars(v, state) if isinstance(v, str) else v for k, v in obj.items()}
+            if isinstance(obj, str):
+                return sub_vars(obj, state)
+            return obj
+
+        runtime = Mock()
+        runtime.substitute_variables = Mock(side_effect=sub_vars)
+        runtime.substitute_object = Mock(side_effect=sub_obj)
+        runtime.process_node = AsyncMock()
+        processor = ActionNodeProcessor(runtime)
+
+        session = MockSession(state={"user": {"age": 9}})
+        node = _make_action_node(
+            session.flow_id,
+            {
+                "actions": [
+                    {
+                        "type": "emit_event",
+                        "title": "Age: {{user.age}}",
+                        "info": {"age": "{{user.age}}"},
+                    }
+                ]
+            },
+        )
+
+        mock_acreate = AsyncMock()
+        with patch(
+            "app.repositories.event_repository.event_repository"
+        ) as patched_repo:
+            patched_repo.acreate = mock_acreate
+            result = await processor.process(
+                mock_db, node, session, {"db": mock_db}
+            )
+
+        assert result["success"] is True
+        call_kwargs = mock_acreate.call_args.kwargs
+        assert call_kwargs["title"] == "Age: 9"
+        assert call_kwargs["info"]["age"] == "9"
+
+    @pytest.mark.asyncio
+    @patch("app.services.chat_runtime.chat_repo")
+    @patch("app.services.action_processor.chat_repo")
+    async def test_emit_event_iterate_over(
+        self,
+        mock_action_chat_repo,
+        mock_runtime_chat_repo,
+        action_processor,
+        mock_db,
+    ):
+        """iterate_over creates one event per list item."""
+        _setup_chat_repo(mock_action_chat_repo)
+        _setup_chat_repo(mock_runtime_chat_repo)
+
+        books = [
+            {"isbn": "111", "title": "Book A"},
+            {"isbn": "222", "title": "Book B"},
+        ]
+        session = MockSession(state={"temp": {"book_results": books}})
+        node = _make_action_node(
+            session.flow_id,
+            {
+                "actions": [
+                    {
+                        "type": "emit_event",
+                        "title": "Huey: Book reviewed",
+                        "iterate_over": "temp.book_results",
+                        "item_alias": "book",
+                        "info": {"isbn": "{{temp.book.isbn}}"},
+                    }
+                ]
+            },
+        )
+
+        mock_acreate = AsyncMock()
+        with patch(
+            "app.repositories.event_repository.event_repository"
+        ) as patched_repo:
+            patched_repo.acreate = mock_acreate
+            result = await action_processor.process(
+                mock_db, node, session, {"db": mock_db}
+            )
+
+        assert result["success"] is True
+        assert mock_acreate.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("app.services.chat_runtime.chat_repo")
+    @patch("app.services.action_processor.chat_repo")
+    async def test_emit_event_fire_and_forget(
+        self,
+        mock_action_chat_repo,
+        mock_runtime_chat_repo,
+        action_processor,
+        mock_db,
+    ):
+        """Errors in emit_event are logged but don't fail the action node."""
+        _setup_chat_repo(mock_action_chat_repo)
+        _setup_chat_repo(mock_runtime_chat_repo)
+
+        session = MockSession()
+        node = _make_action_node(
+            session.flow_id,
+            {
+                "actions": [
+                    {
+                        "type": "emit_event",
+                        "title": "Huey: Chat started",
+                        "info": {},
+                    }
+                ]
+            },
+        )
+
+        mock_acreate = AsyncMock(side_effect=RuntimeError("DB unavailable"))
+        with patch(
+            "app.repositories.event_repository.event_repository"
+        ) as patched_repo:
+            patched_repo.acreate = mock_acreate
+            result = await action_processor.process(
+                mock_db, node, session, {"db": mock_db}
+            )
+
+        # emit_event errors are caught — action should still succeed
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_emit_event_missing_db(
+        self,
+        action_processor,
+    ):
+        """emit_event gracefully skips when no db session is in context."""
+        mock_acreate = AsyncMock()
+        with patch(
+            "app.repositories.event_repository.event_repository"
+        ) as patched_repo:
+            patched_repo.acreate = mock_acreate
+            # Call _handle_emit_event directly with no db in context
+            await action_processor._handle_emit_event(
+                {"type": "emit_event", "title": "Test", "info": {}},
+                {},  # state
+                {},  # updates
+                {},  # context — no "db" key
+            )
+
+        mock_acreate.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("app.services.chat_runtime.chat_repo")
+    @patch("app.services.action_processor.chat_repo")
+    async def test_emit_event_school_resolution(
+        self,
+        mock_action_chat_repo,
+        mock_runtime_chat_repo,
+        action_processor,
+        mock_db,
+    ):
+        """_resolve_school looks up a School by wriveted_identifier."""
+        _setup_chat_repo(mock_action_chat_repo)
+        _setup_chat_repo(mock_runtime_chat_repo)
+
+        school_uuid = "84a5ade6-7f75-4155-831a-1d84c6256fc3"
+        mock_school = Mock()
+        mock_school.id = uuid.UUID(school_uuid)
+
+        session = MockSession(
+            state={"context": {"school_wriveted_id": school_uuid}}
+        )
+        node = _make_action_node(
+            session.flow_id,
+            {
+                "actions": [
+                    {
+                        "type": "emit_event",
+                        "title": "Huey: Test",
+                        "info": {},
+                    }
+                ]
+            },
+        )
+
+        mock_acreate = AsyncMock()
+        mock_result = Mock()
+        mock_result.scalars.return_value.first.return_value = mock_school
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "app.repositories.event_repository.event_repository"
+        ) as patched_repo:
+            patched_repo.acreate = mock_acreate
+            result = await action_processor.process(
+                mock_db, node, session, {"db": mock_db}
+            )
+
+        assert result["success"] is True
+        call_kwargs = mock_acreate.call_args.kwargs
+        assert call_kwargs["school"] is mock_school

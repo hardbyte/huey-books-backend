@@ -2,7 +2,7 @@
   "seed_key": "huey-recommendation",
   "name": "Huey Recommendation",
   "description": "Queries for book recommendations with fallback, collects per-book feedback, and displays liked books.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "entry_node_id": "good_choices_msg",
   "visibility": "wriveted",
   "flow_data": {
@@ -70,6 +70,26 @@
         "position": {"x": 700, "y": 300}
       },
       {
+        "id": "emit_showing_recs",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "emit_event",
+              "title": "Huey: Showing recommendations",
+              "description": "Showing book recommendations to the user",
+              "service_account": "huey-events",
+              "info": {
+                "book_count": "{{temp.book_count}}",
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
+            }
+          ]
+        },
+        "position": {"x": 800, "y": 150}
+      },
+      {
         "id": "show_books",
         "type": "question",
         "content": {
@@ -89,6 +109,49 @@
               "type": "aggregate",
               "expression": "size(has(temp.book_feedback.liked) ? temp.book_feedback.liked : [])",
               "target": "temp.liked_count"
+            },
+            {
+              "type": "emit_event",
+              "title": "Huey: Books judged",
+              "description": "A user has finished judging recommended books",
+              "service_account": "huey-events",
+              "info": {
+                "liked_count": "{{temp.liked_count}}",
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
+            },
+            {
+              "type": "emit_event",
+              "title": "Huey: Book reviewed",
+              "description": "A user reviewed a recommended book (liked)",
+              "service_account": "huey-events",
+              "iterate_over": "temp.book_feedback.liked",
+              "item_alias": "book",
+              "info": {
+                "isbn": "{{temp.book.isbn}}",
+                "title": "{{temp.book.display_title}}",
+                "liked": true,
+                "read": false,
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
+            },
+            {
+              "type": "emit_event",
+              "title": "Huey: Book reviewed",
+              "description": "A user reviewed a recommended book (disliked)",
+              "service_account": "huey-events",
+              "iterate_over": "temp.book_feedback.disliked",
+              "item_alias": "book",
+              "info": {
+                "isbn": "{{temp.book.isbn}}",
+                "title": "{{temp.book.display_title}}",
+                "liked": false,
+                "read": false,
+                "school_name": "{{context.school_name}}",
+                "chatbot": "Huey Bookbot"
+              }
             }
           ]
         },
@@ -188,7 +251,8 @@
       {"source": "good_choices_msg", "target": "searching_msg", "type": "default"},
       {"source": "searching_msg", "target": "book_query", "type": "default"},
       {"source": "book_query", "target": "check_results", "type": "default"},
-      {"source": "check_results", "target": "show_books", "type": "$0"},
+      {"source": "check_results", "target": "emit_showing_recs", "type": "$0"},
+      {"source": "emit_showing_recs", "target": "show_books", "type": "default"},
       {"source": "check_results", "target": "fallback_query", "type": "default"},
       {"source": "show_books", "target": "build_share_payload", "type": "default"},
       {"source": "build_share_payload", "target": "check_liked", "type": "default"},
