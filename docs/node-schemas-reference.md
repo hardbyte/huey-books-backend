@@ -304,6 +304,47 @@ Aggregate values from a list using CEL (Common Expression Language) expressions.
 - `target`: Variable path to store the result
 - `merge_strategy`: For merge operation - `sum` (default), `max`, `last`
 
+#### 6. `emit_event`
+Create application events for analytics and monitoring. Fire-and-forget — errors are logged but never break the chat flow.
+
+**Single Event**
+```json
+{
+  "type": "emit_event",
+  "title": "Book Recommended: {{temp.book_title}}",
+  "description": "User received a book recommendation",
+  "info": {
+    "book_id": "{{temp.book_id}}",
+    "session_id": "{{context.session_id}}"
+  }
+}
+```
+
+**Iterated Events** — one event per item in a list:
+```json
+{
+  "type": "emit_event",
+  "title": "Book Viewed: {{temp.book.title}}",
+  "iterate_over": "temp.book_results",
+  "item_alias": "book",
+  "info": {
+    "isbn": "{{temp.book.isbn}}"
+  }
+}
+```
+
+**Fields:**
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `title` | string | **Yes** | - | Event title (supports variable substitution) |
+| `description` | string | No | - | Event description (supports variable substitution) |
+| `info` | object | No | `{}` | Arbitrary metadata attached to the event |
+| `iterate_over` | string | No | - | Variable path to a list; emits one event per item |
+| `item_alias` | string | No | `"item"` | Loop variable name injected into `temp.<alias>` |
+| `service_account` | string | No | - | Service account name to associate with event |
+
+Events are created with `commit=False` — they are committed atomically with the session state transaction, so events are never orphaned.
+
 ### Fields for Custom Panel
 - **Actions Array** (required): List of actions to execute
 - **Action Type Selector**: Dropdown for each action
