@@ -24,7 +24,7 @@ from app.services.labelling.providers import get_provider
 logger = get_logger()
 
 
-def label_work(work: Work, prompt: str = None, retries: int = 2):
+def label_work(work: Work, prompt: str | None = None, retries: int = 2):
     target_prompt = prompt or system_prompt
     all_usages = []
 
