@@ -19,6 +19,7 @@ from app.api.hydration import router as hydration_router
 from app.api.illustrators import router as illustrator_router
 from app.api.labelset import router as labelset_router
 from app.api.recommendations import router as recommendations_router
+from app.api.reviews import router as reviews_router
 from app.api.schools import public_router as school_router_public
 from app.api.schools import router as school_router
 from app.api.search import router as search_router
@@ -58,4 +59,5 @@ api_router.include_router(supporter_router)
 api_router.include_router(version_router)
 api_router.include_router(work_router)
 api_router.include_router(recommendations_router)
+api_router.include_router(reviews_router)
 api_router.include_router(search_router)

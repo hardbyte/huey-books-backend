@@ -6,11 +6,15 @@ collection_frequency_view = PGMaterializedView(
     definition="""
 SELECT
     e.work_id,
-    SUM(ci.copies_total) AS collection_frequency
+    SUM(ci.copies_total) AS collection_frequency,
+    COUNT(DISTINCT c.school_id)
+        FILTER (WHERE c.school_id IS NOT NULL) AS school_count
 FROM
     public.editions e
 JOIN
     public.collection_items ci ON ci.edition_isbn = e.isbn
+JOIN
+    public.collections c ON c.id = ci.collection_id
 GROUP BY
     e.work_id
     """,
