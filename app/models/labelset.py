@@ -23,7 +23,6 @@ from app.models.labelset_reading_ability_association import LabelSetReadingAbili
 from app.schemas import CaseInsensitiveStringEnum
 
 if TYPE_CHECKING:
-    from app.models.labelset_review import LabelSetReview
     from app.models.reading_ability import ReadingAbility
     from app.models.work import Work
 
@@ -61,10 +60,6 @@ class LabelSet(Base):
         ForeignKey("works.id", name="fk_labelset_work"), nullable=True, index=True
     )
     work: Mapped[Optional["Work"]] = relationship("Work", back_populates="labelset")
-
-    reviews: Mapped[List["LabelSetReview"]] = relationship(
-        "LabelSetReview", back_populates="labelset", cascade="all, delete-orphan"
-    )
 
     # Create an index used to find the most recent labelsets for a work
     Index(

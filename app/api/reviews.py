@@ -50,21 +50,22 @@ def get_work(
 
 
 def _review_to_detail(review) -> LabelSetReviewDetail:
-    """Convert a LabelSetReview ORM object to a LabelSetReviewDetail schema."""
+    """Convert a Review ORM object to a LabelSetReviewDetail schema."""
+    assessment = review.assessment or {}
     return LabelSetReviewDetail(
         id=review.id,
-        labelset_id=review.labelset_id,
+        labelset_id=int(review.reviewable_id),
         reviewer_user_id=review.reviewer_user_id,
         reviewer_name=review.reviewer.name if review.reviewer else None,
-        hue_primary_key=review.hue_primary_key,
-        hue_secondary_key=review.hue_secondary_key,
-        hue_tertiary_key=review.hue_tertiary_key,
-        min_age=review.min_age,
-        max_age=review.max_age,
-        reading_ability_key=review.reading_ability_key,
-        recommend_status=review.recommend_status,
+        hue_primary_key=assessment.get("hue_primary_key"),
+        hue_secondary_key=assessment.get("hue_secondary_key"),
+        hue_tertiary_key=assessment.get("hue_tertiary_key"),
+        min_age=assessment.get("min_age"),
+        max_age=assessment.get("max_age"),
+        reading_ability_key=assessment.get("reading_ability_key"),
+        recommend_status=assessment.get("recommend_status"),
         notes=review.notes,
-        confirmed_existing=review.confirmed_existing,
+        confirmed_existing=assessment.get("confirmed_existing"),
         created_at=review.created_at,
         updated_at=review.updated_at,
     )

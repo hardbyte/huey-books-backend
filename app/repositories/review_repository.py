@@ -1,5 +1,5 @@
 """
-Review repository - domain-focused data access for LabelSet reviews.
+Review repository - domain-focused data access for reviews.
 """
 
 import uuid
@@ -15,7 +15,7 @@ from app.models.author_work_association import author_work_association_table
 from app.models.hue import Hue
 from app.models.labelset import LabelOrigin, LabelSet
 from app.models.labelset_hue_association import LabelSetHue, Ordinal
-from app.models.labelset_review import LabelSetReview
+from app.models.review import Review, ReviewableType
 from app.models.user import User
 from app.models.work import Work
 from app.models.work_collection_frequency import work_collection_frequency
@@ -38,7 +38,7 @@ AI_ORIGINS = [
 
 
 class ReviewRepositoryImpl:
-    """Repository for labelset review operations."""
+    """Repository for review operations."""
 
     def upsert_review(
         self,
@@ -47,46 +47,50 @@ class ReviewRepositoryImpl:
         reviewer_user_id: uuid.UUID,
         data: LabelSetReviewIn,
         commit: bool = True,
-    ) -> LabelSetReview:
+    ) -> Review:
         """Create or update a review for a labelset by a specific reviewer."""
-        values = {
-            "labelset_id": labelset_id,
-            "reviewer_user_id": reviewer_user_id,
-            **data.model_dump(exclude_none=True),
-        }
-
-        # Fields that should be explicitly set to None if not provided
-        # (so a reviewer can clear a previous assessment)
-        all_review_fields = [
+        assessment = {}
+        assessment_fields = [
             "hue_primary_key",
             "hue_secondary_key",
             "hue_tertiary_key",
             "min_age",
             "max_age",
             "reading_ability_key",
-            "recommend_status",
-            "notes",
             "confirmed_existing",
         ]
-        for field in all_review_fields:
-            if field not in values:
-                values[field] = None
+        input_data = data.model_dump(exclude_none=True)
+        for field in assessment_fields:
+            assessment[field] = input_data.get(field)
+
+        # Store recommend_status as its string value for JSON serialization
+        if data.recommend_status is not None:
+            assessment["recommend_status"] = data.recommend_status.value
+        else:
+            assessment["recommend_status"] = None
+
+        values = {
+            "reviewable_type": ReviewableType.LABELSET,
+            "reviewable_id": str(labelset_id),
+            "reviewer_user_id": reviewer_user_id,
+            "notes": data.notes,
+            "assessment": assessment,
+        }
 
         update_values = {
-            k: v
-            for k, v in values.items()
-            if k not in ("labelset_id", "reviewer_user_id")
+            "notes": data.notes,
+            "assessment": assessment,
+            "updated_at": func.current_timestamp(),
         }
-        update_values["updated_at"] = func.current_timestamp()
 
         stmt = (
-            pg_insert(LabelSetReview)
+            pg_insert(Review)
             .values(**values)
             .on_conflict_do_update(
-                constraint="uq_labelset_reviews_labelset_reviewer",
+                constraint="uq_reviews_type_entity_reviewer",
                 set_=update_values,
             )
-            .returning(LabelSetReview.id)
+            .returning(Review.id)
         )
 
         result = db.execute(stmt)
@@ -95,7 +99,7 @@ class ReviewRepositoryImpl:
         if commit:
             db.commit()
 
-        review = db.get(LabelSetReview, review_id)
+        review = db.get(Review, review_id)
         if commit:
             db.refresh(review)
         return review
@@ -104,12 +108,15 @@ class ReviewRepositoryImpl:
         self,
         db: Session,
         labelset_id: int,
-    ) -> list[LabelSetReview]:
+    ) -> list[Review]:
         """Get all reviews for a specific labelset."""
         stmt = (
-            select(LabelSetReview)
-            .where(LabelSetReview.labelset_id == labelset_id)
-            .order_by(LabelSetReview.updated_at.desc())
+            select(Review)
+            .where(
+                Review.reviewable_type == ReviewableType.LABELSET,
+                Review.reviewable_id == str(labelset_id),
+            )
+            .order_by(Review.updated_at.desc())
         )
         return db.execute(stmt).scalars().all()
 
@@ -117,13 +124,17 @@ class ReviewRepositoryImpl:
         self,
         db: Session,
         work_id: int,
-    ) -> list[LabelSetReview]:
+    ) -> list[Review]:
         """Get all reviews for a work (via its labelset)."""
         stmt = (
-            select(LabelSetReview)
-            .join(LabelSet, LabelSetReview.labelset_id == LabelSet.id)
+            select(Review)
+            .join(
+                LabelSet,
+                (Review.reviewable_id == cast(LabelSet.id, String))
+                & (Review.reviewable_type == ReviewableType.LABELSET),
+            )
             .where(LabelSet.work_id == work_id)
-            .order_by(LabelSetReview.updated_at.desc())
+            .order_by(Review.updated_at.desc())
         )
         return db.execute(stmt).scalars().all()
 
@@ -132,11 +143,12 @@ class ReviewRepositoryImpl:
         db: Session,
         labelset_id: int,
         reviewer_user_id: uuid.UUID,
-    ) -> Optional[LabelSetReview]:
+    ) -> Optional[Review]:
         """Get a specific review by labelset and reviewer."""
-        stmt = select(LabelSetReview).where(
-            LabelSetReview.labelset_id == labelset_id,
-            LabelSetReview.reviewer_user_id == reviewer_user_id,
+        stmt = select(Review).where(
+            Review.reviewable_type == ReviewableType.LABELSET,
+            Review.reviewable_id == str(labelset_id),
+            Review.reviewer_user_id == reviewer_user_id,
         )
         return db.execute(stmt).scalar_one_or_none()
 
@@ -156,15 +168,16 @@ class ReviewRepositoryImpl:
         awa = author_work_association_table
         cf = work_collection_frequency
 
-        # Subquery for review aggregation per labelset
+        # Subquery for review aggregation per entity
         review_agg = (
             select(
-                LabelSetReview.labelset_id,
-                func.count(LabelSetReview.id).label("review_count"),
+                Review.reviewable_id.label("entity_id"),
+                func.count(Review.id).label("review_count"),
                 func.array_agg(User.name).label("reviewer_names"),
             )
-            .join(User, LabelSetReview.reviewer_user_id == User.id)
-            .group_by(LabelSetReview.labelset_id)
+            .join(User, Review.reviewer_user_id == User.id)
+            .where(Review.reviewable_type == ReviewableType.LABELSET)
+            .group_by(Review.reviewable_id)
             .subquery("review_agg")
         )
 
@@ -207,7 +220,10 @@ class ReviewRepositoryImpl:
             .select_from(Work)
             .outerjoin(LabelSet, LabelSet.work_id == Work.id)
             .outerjoin(cf, cf.c.work_id == Work.id)
-            .outerjoin(review_agg, review_agg.c.labelset_id == LabelSet.id)
+            .outerjoin(
+                review_agg,
+                review_agg.c.entity_id == cast(LabelSet.id, String),
+            )
             .outerjoin(author_agg, author_agg.c.work_id == Work.id)
         )
 
@@ -308,18 +324,23 @@ class ReviewRepositoryImpl:
             )
         ).one()
 
-        total_reviews = db.execute(select(func.count(LabelSetReview.id))).scalar_one()
+        total_reviews = db.execute(
+            select(func.count(Review.id)).where(
+                Review.reviewable_type == ReviewableType.LABELSET
+            )
+        ).scalar_one()
 
         # Top reviewers leaderboard
         reviewer_stmt = (
             select(
-                LabelSetReview.reviewer_user_id,
+                Review.reviewer_user_id,
                 User.name,
-                func.count(LabelSetReview.id).label("review_count"),
+                func.count(Review.id).label("review_count"),
             )
-            .join(User, LabelSetReview.reviewer_user_id == User.id)
-            .group_by(LabelSetReview.reviewer_user_id, User.name)
-            .order_by(func.count(LabelSetReview.id).desc())
+            .join(User, Review.reviewer_user_id == User.id)
+            .where(Review.reviewable_type == ReviewableType.LABELSET)
+            .group_by(Review.reviewer_user_id, User.name)
+            .order_by(func.count(Review.id).desc())
             .limit(20)
         )
         top_reviewers = [
