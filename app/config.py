@@ -52,10 +52,13 @@ class Settings(BaseSettings):
     SHOPIFY_HMAC_SECRET: str
 
     OPENAI_API_KEY: str = ""
-    # See https://platform.openai.com/docs/models/model-endpoint-compatibility
-    # e.g. "gpt-3.5-turbo", "gpt-4", "gpt-4-1106-preview"
-    OPENAI_MODEL: str = "gpt-4"
+    OPENAI_MODEL: str = "gpt-5-mini"
     OPENAI_TIMEOUT: float = 60.0
+
+    # "openai" or "gemini"
+    LABELLING_PROVIDER: str = "openai"
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3-flash-preview"
 
     LABEL_AFTER_HYDRATION: bool = True
 

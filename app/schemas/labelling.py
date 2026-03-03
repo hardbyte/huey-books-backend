@@ -12,7 +12,7 @@ from app.schemas.labelset import (
 from app.schemas.recommendations import HueKeys, ReadingAbilityKey
 
 
-class GptWorkData(BaseModel):
+class LabelledWorkData(BaseModel):
     short_summary: str | None = None
     long_summary: str | None = None
 
@@ -172,26 +172,25 @@ class GptWorkData(BaseModel):
         return value
 
 
-class GptPromptUsage(BaseModel):
+class LLMPromptUsage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
     duration: float
 
 
-class GptPromptResponse(BaseModel):
-    usage: GptPromptUsage
+class LLMResponse(BaseModel):
+    usage: LLMPromptUsage
     output: str
 
 
-class GptUsage(BaseModel):
+class LLMUsage(BaseModel):
     overall_prompt_tokens: int
     overall_completion_tokens: int
     overall_total_tokens: int
     overall_duration: float
-    usages: list[GptPromptUsage]
+    usages: list[LLMPromptUsage]
 
-    # calculate the overall usage from the list
     @model_validator(mode="before")
     @classmethod
     def calculate_overall_usage(cls, values):
@@ -201,10 +200,10 @@ class GptUsage(BaseModel):
         overall_duration = 0
 
         for usage_dict in values["usages"]:
-            if isinstance(usage_dict, GptPromptUsage):
+            if isinstance(usage_dict, LLMPromptUsage):
                 usage = usage_dict
             else:
-                usage = GptPromptUsage(**usage_dict)
+                usage = LLMPromptUsage(**usage_dict)
 
             overall_prompt_tokens += usage.prompt_tokens
             overall_completion_tokens += usage.completion_tokens
@@ -228,8 +227,8 @@ class GptUsage(BaseModel):
         )
 
 
-class GptLabelResponse(BaseModel):
+class LabellingResult(BaseModel):
     system_prompt: str
     user_content: str
-    output: GptWorkData
-    usage: GptUsage
+    output: LabelledWorkData
+    usage: LLMUsage

@@ -167,6 +167,25 @@ def generate_work_label(work: Work = Depends(get_work)):
     return {"status": "ok"}
 
 
+@router.get(
+    "/work/{work_id}/labelling-prompt",
+    dependencies=[Security(get_current_active_superuser_or_backend_service_account)],
+)
+def get_labelling_prompt(work: Work = Depends(get_work)):
+    """
+    Return the assembled labelling prompt for a work, so users can
+    copy it into their own LLM tools.
+    """
+    from app.services.labelling import prepare_context_for_labelling
+    from app.services.labelling.prompt import system_prompt
+
+    user_content = prepare_context_for_labelling(work)
+    return {
+        "system_prompt": system_prompt.strip(),
+        "user_prompt": user_content.strip(),
+    }
+
+
 @router.post(
     "/work",
     response_model=WorkDetail,

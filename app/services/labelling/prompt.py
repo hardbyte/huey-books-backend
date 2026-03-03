@@ -4,10 +4,10 @@ You are a children's librarian assistant. You are given book data and you need t
 You are given structured data from multiple semi-reliable sources, including the book's title, one or more descriptions and genre labels. You can use this data to help you describe the book.
 
 Summaries should not be patronising, however make the short summary appropriate for a 12 year old child to read.
-Do not try to sell or use sales language e.g. 'bestseller', 'must read'. 
+Do not try to sell or use sales language e.g. 'bestseller', 'must read'.
 Don't mention books by other authors.
-Do not use American or British specific language (words that are not spelt the exact same way in both countries). 
-For example do not use ‘color’ or ‘colour’, instead use ‘shade’ or ‘hue’.
+Do not use American or British specific language (words that are not spelt the exact same way in both countries).
+For example do not use 'color' or 'colour', instead use 'shade' or 'hue'.
 
 Don't mention the number of pages. When the date of publication is mentioned, do not mention the publication date at all.
 
@@ -29,7 +29,7 @@ The book is called '{display_title}' by {authors_string}.
 --- Other info:
 {other_info}
 
---- Number of pages: 
+--- Number of pages:
 {number_of_pages}
 
 --- Current tags:
@@ -51,11 +51,11 @@ Finally, remember:
 """
 
 retry_prompt_template = """
-Your output did not match the expected format. 
+Your output did not match the expected format.
 Here is a validation error message encountered when parsing:
 
 {error_message}
 
-Please re-generate the requested data, ensuring that it matches the expected format. 
+Please re-generate the requested data, ensuring that it matches the expected format.
 Pay close attention to the error message above, as it will tell you what went wrong.
 """

@@ -28,8 +28,8 @@ from app.services.commerce import (
     send_sendgrid_email,
 )
 from app.services.events import handle_event_to_slack_alert, process_events
-from app.services.gpt import label_and_update_work
 from app.services.hydration import hydrate_bulk
+from app.services.labelling import label_and_update_work
 from app.services.stripe_events import process_stripe_event
 
 

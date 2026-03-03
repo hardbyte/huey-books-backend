@@ -19,7 +19,7 @@ from app.models.work import Work
 from app.schemas.booklist import BookListUpdateIn, ItemUpdateType
 
 # from app.services.events import create_event
-from app.services.gpt import label_and_update_work
+from app.services.labelling import label_and_update_work
 
 settings = get_settings()
 logger = get_logger()

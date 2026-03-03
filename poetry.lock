@@ -1592,6 +1592,7 @@ files = [
 [package.dependencies]
 cryptography = ">=38.0.3"
 pyasn1-modules = ">=0.2.1"
+requests = {version = ">=2.20.0,<3.0.0", optional = true, markers = "extra == \"requests\""}
 rsa = ">=3.1.4,<5"
 
 [package.extras]
@@ -1763,6 +1764,33 @@ files = [
     {file = "google_crc32c-1.8.0-pp311-pypy311_pp73-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:f639065ea2042d5c034bf258a9f085eaa7af0cd250667c0635a3118e8f92c69c"},
     {file = "google_crc32c-1.8.0.tar.gz", hash = "sha256:a428e25fb7691024de47fecfbff7ff957214da51eddded0da0ae0e0f03a2cf79"},
 ]
+
+[[package]]
+name = "google-genai"
+version = "1.65.0"
+description = "GenAI Python SDK"
+optional = false
+python-versions = ">=3.10"
+files = [
+    {file = "google_genai-1.65.0-py3-none-any.whl", hash = "sha256:68c025205856919bc03edb0155c11b4b833810b7ce17ad4b7a9eeba5158f6c44"},
+    {file = "google_genai-1.65.0.tar.gz", hash = "sha256:d470eb600af802d58a79c7f13342d9ea0d05d965007cae8f76c7adff3d7a4750"},
+]
+
+[package.dependencies]
+anyio = ">=4.8.0,<5.0.0"
+distro = ">=1.7.0,<2"
+google-auth = {version = ">=2.47.0,<3.0.0", extras = ["requests"]}
+httpx = ">=0.28.1,<1.0.0"
+pydantic = ">=2.9.0,<3.0.0"
+requests = ">=2.28.1,<3.0.0"
+sniffio = "*"
+tenacity = ">=8.2.3,<9.2.0"
+typing-extensions = ">=4.11.0,<5.0.0"
+websockets = ">=13.0.0,<17.0"
+
+[package.extras]
+aiohttp = ["aiohttp (>=3.10.11,<4.0.0)"]
+local-tokenizer = ["protobuf", "sentencepiece (>=0.2.0)"]
 
 [[package]]
 name = "google-resumable-media"
@@ -5598,4 +5626,4 @@ testing = ["coverage[toml]", "zope.event", "zope.testing"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.14"
-content-hash = "0ce239486f80fde9e53f0bfe65ceabf181a4966e4c5ac4deb8392631e661323c"
+content-hash = "5cbe037c08e5311942af269a560be50bd4ec42549d5d177494b1f0c27b5592c4"

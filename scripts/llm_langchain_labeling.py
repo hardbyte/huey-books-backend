@@ -25,7 +25,7 @@ from app.repositories.labelset_repository import labelset_repository
 from app.repositories.work_repository import work_repository
 from app.schemas.labelset import ControversialThemeKey
 from app.schemas.recommendations import HueKeys, ReadingAbilityKey
-from app.services.gpt import (
+from app.services.labelling import (
     create_labelset_from_ml_labelled_work,
     prepare_context_for_labelling,
     system_prompt,
