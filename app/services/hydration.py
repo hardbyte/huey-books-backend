@@ -407,7 +407,7 @@ async def hydrate_bulk(session, isbns_to_hydrate: list[str] = []):
                     image_log = "(+ OpenLibrary image)"
 
             logger.info(
-                f"Hydrated {current} / {total} ({int((current/total)*100)} %) (Batch size: {len(book_batch)}) {image_log or ''} {'(+labelset)'}",
+                f"Hydrated {current} / {total} ({int((current / total) * 100)} %) (Batch size: {len(book_batch)}) {image_log or ''} {'(+labelset)'}",
                 isbn=isbn,
             )
             book_batch.append(book_data)

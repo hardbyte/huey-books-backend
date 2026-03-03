@@ -194,7 +194,8 @@ async def get_events(
     filtered_events = [e for e in events if has_permission(principals, "read", e)]
     if len(filtered_events) != len(events):
         logger.info(
-            f"Filtering out {len(events)-len(filtered_events)} events", account=account
+            f"Filtering out {len(events) - len(filtered_events)} events",
+            account=account,
         )
 
     return EventListsResponse(

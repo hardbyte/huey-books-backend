@@ -426,7 +426,7 @@ class AnalyticsService:
                     if previous_visitors > 0
                     else 0.0
                 )
-                drop_off_points[f"{funnel_steps[i-1]['step']}_to_{node.node_id}"] = (
+                drop_off_points[f"{funnel_steps[i - 1]['step']}_to_{node.node_id}"] = (
                     drop_off_rate
                 )
 

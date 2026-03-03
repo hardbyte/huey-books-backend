@@ -36,9 +36,9 @@ def check_database_ready(config: Settings) -> None:
         current_version = res.fetchall()[0][0]
         logger.info(f"Current Alembic database schema version: {current_version}")
         logger.info(f"Expected database schema version: {expected_database_version}")
-        assert (
-            current_version == expected_database_version
-        ), "Unexpected database revision"
+        assert current_version == expected_database_version, (
+            "Unexpected database revision"
+        )
     except Exception as e:
         logger.error(e)
         raise e
