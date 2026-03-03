@@ -34,6 +34,7 @@ from .illustrator import Illustrator
 from .labelset import LabelSet
 from .labelset_hue_association import LabelSetHue
 from .labelset_reading_ability_association import LabelSetReadingAbility
+from .labelset_review import LabelSetReview
 from .parent import Parent
 from .product import Product
 from .public_reader import PublicReader

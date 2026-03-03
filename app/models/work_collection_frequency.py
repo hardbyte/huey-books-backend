@@ -7,4 +7,5 @@ work_collection_frequency = Table(
     Base.metadata,
     Column("work_id", Integer, primary_key=True),
     Column("collection_frequency", BigInteger),
+    Column("school_count", BigInteger),
 )
