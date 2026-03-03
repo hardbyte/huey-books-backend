@@ -77,6 +77,7 @@ class ReviewRepositoryImpl:
             for k, v in values.items()
             if k not in ("labelset_id", "reviewer_user_id")
         }
+        update_values["updated_at"] = func.current_timestamp()
 
         stmt = (
             pg_insert(LabelSetReview)
