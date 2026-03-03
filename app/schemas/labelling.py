@@ -149,6 +149,9 @@ class LabelledWorkData(BaseModel):
         except ValueError:
             return None
 
+    min_age: int | None = None
+    max_age: int | None = None
+
     awards: list[str] | None = []
     notes: str | None = None
     recommend_status: RecommendStatus
@@ -185,10 +188,10 @@ class LLMResponse(BaseModel):
 
 
 class LLMUsage(BaseModel):
-    overall_prompt_tokens: int
-    overall_completion_tokens: int
-    overall_total_tokens: int
-    overall_duration: float
+    overall_prompt_tokens: int = 0
+    overall_completion_tokens: int = 0
+    overall_total_tokens: int = 0
+    overall_duration: float = 0.0
     usages: list[LLMPromptUsage]
 
     @model_validator(mode="before")

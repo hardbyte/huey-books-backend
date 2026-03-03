@@ -1,6 +1,8 @@
 import json
 from statistics import median
 from textwrap import dedent
+from typing import Any
+from uuid import UUID
 
 from pydantic import ValidationError
 from structlog import get_logger
@@ -116,21 +118,21 @@ def prepare_context_for_labelling(work, extra: str | None = None):
         if work.labelset and work.labelset.huey_summary
         else ""
     )
-    genre_data = set()
-    short_summaries = set()
-    page_numbers = set()
+    genre_data_set: set[str] = set()
+    short_summary_set: set[str | None] = set()
+    page_numbers: set[int] = set()
     for e in editions[:20]:
         if e.info is not None:
             for g in e.info.get("genres", []):
-                genre_data.add(f"{g['name']}")
+                genre_data_set.add(f"{g['name']}")
 
-            short_summaries.add(e.info.get("summary_short"))
+            short_summary_set.add(e.info.get("summary_short"))
 
             if pages := e.info.get("pages"):
                 page_numbers.add(pages)
-    genre_data = "\n".join(genre_data)
+    genre_data = "\n".join(genre_data_set)
     median_page_number = median(page_numbers) if page_numbers else "unknown"
-    short_summaries = "\n".join(f"- {s}" for s in short_summaries if s is not None)
+    short_summaries = "\n".join(f"- {s}" for s in short_summary_set if s is not None)
     display_title = work.get_display_title()
     authors_string = work.get_authors_string()
     long_summary = main_edition.info.get("summary_long", "") or ""
@@ -163,13 +165,9 @@ def work_to_labelset_update(work: Work):
     return create_labelset_from_ml_labelled_work(label_data.output)
 
 
-def create_labelset_from_ml_labelled_work(labelled_work: LabelledWorkData):
-    labelset_data = {}
-    # reading abilities
-    labelset_data["reading_ability_keys"] = labelled_work.reading_ability
-    labelset_data["reading_ability_origin"] = LabelOrigin.VERTEXAI
-
-    # hues
+def create_labelset_from_ml_labelled_work(
+    labelled_work: LabelledWorkData,
+) -> LabelSetCreateIn:
     hues = (
         [
             k
@@ -182,6 +180,35 @@ def create_labelset_from_ml_labelled_work(labelled_work: LabelledWorkData):
         else labelled_work.hues
     )
 
+    labelset_info: dict[str, Any] = {
+        "long_summary": labelled_work.long_summary,
+        "genres": labelled_work.genres,
+        "styles": labelled_work.styles,
+        "characters": labelled_work.characters,
+        "hue_map": labelled_work.hue_map,
+        "series": labelled_work.series,
+        "series_number": labelled_work.series_number,
+        "gender": labelled_work.gender,
+        "awards": labelled_work.awards,
+        "notes": labelled_work.notes,
+        "controversial_themes": labelled_work.controversial_themes,
+    }
+
+    labelset_data: dict[str, Any] = {
+        "reading_ability_keys": labelled_work.reading_ability,
+        "reading_ability_origin": LabelOrigin.VERTEXAI,
+        "hue_origin": LabelOrigin.VERTEXAI,
+        "age_origin": LabelOrigin.VERTEXAI,
+        "min_age": labelled_work.min_age,
+        "max_age": labelled_work.max_age,
+        "huey_summary": labelled_work.short_summary,
+        "summary_origin": LabelOrigin.VERTEXAI,
+        "info": labelset_info,
+        "checked": True,
+        "recommend_status": labelled_work.recommend_status,
+        "recommend_status_origin": LabelOrigin.VERTEXAI,
+    }
+
     if len(hues) > 0:
         labelset_data["hue_primary_key"] = hues[0]
     if len(hues) > 1:
@@ -189,38 +216,7 @@ def create_labelset_from_ml_labelled_work(labelled_work: LabelledWorkData):
     if len(hues) > 2:
         labelset_data["hue_tertiary_key"] = hues[2]
 
-    labelset_data["hue_origin"] = LabelOrigin.VERTEXAI
-
-    # Age
-    labelset_data["age_origin"] = LabelOrigin.VERTEXAI
-    labelset_data["min_age"] = labelled_work.min_age
-    labelset_data["max_age"] = labelled_work.max_age
-
-    # summary
-    labelset_data["huey_summary"] = labelled_work.short_summary
-    labelset_data["summary_origin"] = LabelOrigin.VERTEXAI
-    # other
-    labelset_info = {}
-    labelset_info["long_summary"] = labelled_work.long_summary
-    labelset_info["genres"] = labelled_work.genres
-    labelset_info["styles"] = labelled_work.styles
-    labelset_info["characters"] = labelled_work.characters
-    labelset_info["hue_map"] = labelled_work.hue_map
-    labelset_info["series"] = labelled_work.series
-    labelset_info["series_number"] = labelled_work.series_number
-    labelset_info["gender"] = (
-        labelled_work.gender if hasattr(labelled_work, "gender") else None
-    )
-    labelset_info["awards"] = labelled_work.awards
-    labelset_info["notes"] = labelled_work.notes
-    labelset_info["controversial_themes"] = labelled_work.controversial_themes
-    labelset_data["info"] = labelset_info
-
-    labelset_data["checked"] = True
-    labelset_data["recommend_status"] = labelled_work.recommend_status
-    labelset_data["recommend_status_origin"] = LabelOrigin.VERTEXAI
-    labelset_create = LabelSetCreateIn(**labelset_data)
-    return labelset_create
+    return LabelSetCreateIn(**labelset_data)
 
 
 async def label_and_update_work(work: Work, session):
@@ -228,11 +224,11 @@ async def label_and_update_work(work: Work, session):
     labelset_update = work_to_labelset_update(work)
     changes = WorkUpdateIn(labelset=labelset_update)
 
-    gpt = service_account_repository.get_or_404(
-        db=session, id=settings.GPT_SERVICE_ACCOUNT_ID
+    service_account = service_account_repository.get_or_404(
+        db=session, id=UUID(settings.GPT_SERVICE_ACCOUNT_ID)
     )
 
     await app.api.works.update_work(
-        changes=changes, work_orm=work, account=gpt, session=session
+        changes=changes, work_orm=work, account=service_account, session=session
     )
     logger.info(f"Updated labelset for {work.title}")
