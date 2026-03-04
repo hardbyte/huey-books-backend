@@ -10,7 +10,7 @@ packages = [
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
 fastapi = ">=0.115,<1.0"
-uvicorn = {extras = ["standard"], version = "^0.34"}
+uvicorn = {extras = ["standard"], version = "^0.41"}
 alembic = "^1.11"
 structlog = ">=24.1,<26"
 psycopg2-binary = "^2.9.6"
