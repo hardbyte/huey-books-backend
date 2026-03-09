@@ -161,6 +161,17 @@ steps:
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
     id: Deploy-internal-api
     entrypoint: gcloud
+  - name: "gcr.io/cloud-builders/docker"
+    id: PgrolesValidate
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker run -i \
+        --volume $(pwd)/pgroles.yaml:/app/pgroles.yaml \
+        --entrypoint bash \
+        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
+        -c 'cd /app && curl -sL "https://github.com/hardbyte/pgroles/releases/download/v0.1.5/pgroles-v0.1.5-x86_64-unknown-linux-musl.tar.gz" | tar xz --strip-components=1 && chmod +x pgroles && ./pgroles validate --file pgroles.yaml'
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
     entrypoint: "bash"
     args: ["-c", "./.cloudbuild/scripts/slack-send.sh $_PR_NUMBER"]

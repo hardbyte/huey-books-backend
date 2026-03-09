@@ -47,3 +47,23 @@ jobs:
     - name: ⚡ Retest forward migrations
       run: |
         poetry run alembic upgrade head
+    - name: Install pgroles
+      env:
+        PGROLES_VERSION: "0.1.5"
+      run: |
+        curl -sL "https://github.com/hardbyte/pgroles/releases/download/v${PGROLES_VERSION}/pgroles-v${PGROLES_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz --strip-components=1
+        chmod +x pgroles
+        ./pgroles --version
+    - name: Validate pgroles manifest
+      run: ./pgroles validate --file pgroles.yaml
+    - name: Check role drift (dry run)
+      run: |
+        ./pgroles diff \
+          --database-url "postgresql://postgres:secret@localhost:5432" \
+          --file pgroles.yaml \
+          --format summary
+        ./pgroles diff \
+          --database-url "postgresql://postgres:secret@localhost:5432" \
+          --file pgroles.yaml \
+          --format sql \
+          --no-exit-code
