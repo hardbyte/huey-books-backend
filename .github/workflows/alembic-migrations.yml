@@ -61,7 +61,8 @@ jobs:
         ./pgroles diff \
           --database-url "postgresql://postgres:secret@localhost:5432" \
           --file pgroles.yaml \
-          --format summary
+          --format summary \
+          --no-exit-code
         ./pgroles diff \
           --database-url "postgresql://postgres:secret@localhost:5432" \
           --file pgroles.yaml \
