@@ -9,15 +9,18 @@ PGROLES_VERSION="${PGROLES_VERSION:-0.1.5}"
 CLOUD_SQL_INSTANCE="${CLOUD_SQL_INSTANCE:-wriveted-api:australia-southeast1:wriveted}"
 POSTGRES_PORT="5432"
 
-# Download pgroles if not present
-if [[ ! -x ./pgroles ]]; then
+# Download pgroles to a writable location (app image runs as non-root)
+PGROLES_DIR="/tmp/pgroles-bin"
+mkdir -p "${PGROLES_DIR}"
+if [[ ! -x "${PGROLES_DIR}/pgroles" ]]; then
   echo "Downloading pgroles v${PGROLES_VERSION}"
   curl -sL "https://github.com/hardbyte/pgroles/releases/download/v${PGROLES_VERSION}/pgroles-v${PGROLES_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-    | tar xz --strip-components=1
-  chmod +x pgroles
+    | tar xz --strip-components=1 -C "${PGROLES_DIR}"
+  chmod +x "${PGROLES_DIR}/pgroles"
 fi
+PGROLES="${PGROLES_DIR}/pgroles"
 
-./pgroles --version
+"${PGROLES}" --version
 
 # Start cloud_sql_proxy if DATABASE_URL is not already set
 if [[ -z "${DATABASE_URL}" ]]; then
@@ -37,18 +40,18 @@ if [[ -z "${DATABASE_URL}" ]]; then
 fi
 
 echo "=== pgroles manifest validation ==="
-./pgroles validate --file pgroles.yaml
+"${PGROLES}" validate --file pgroles.yaml
 
 echo ""
 echo "=== pgroles role drift check (dry run) ==="
-./pgroles diff \
+"${PGROLES}" diff \
   --database-url "${DATABASE_URL}" \
   --file pgroles.yaml \
   --format summary \
   --no-exit-code
 
 echo ""
-./pgroles diff \
+"${PGROLES}" diff \
   --database-url "${DATABASE_URL}" \
   --file pgroles.yaml \
   --format sql \
