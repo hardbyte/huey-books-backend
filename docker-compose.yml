@@ -53,6 +53,7 @@ services:
     environment:
       - SQLALCHEMY_DATABASE_URI=postgresql://cloudrun:cloudrun@db/postgres
       - SQLALCHEMY_ASYNC_URI=postgresql+asyncpg://cloudrun:cloudrun@db/postgres
+      - POSTGRESQL_USER=cloudrun
       - POSTGRESQL_PASSWORD=cloudrun
       - POSTGRESQL_SERVER=db
       - DATABASE_POOL_SIZE=${DATABASE_POOL_SIZE-10}
@@ -92,6 +93,7 @@ services:
       - db
     environment:
       - SQLALCHEMY_DATABASE_URI=postgresql://cloudrun:cloudrun@db/postgres
+      - POSTGRESQL_USER=cloudrun
       - POSTGRESQL_PASSWORD=cloudrun
       - POSTGRESQL_SERVER=db
       - SQLALCHEMY_ASYNC_URI=postgresql+asyncpg://cloudrun:cloudrun@db/postgres
