@@ -139,8 +139,8 @@ def prepare_context_for_labelling(work, extra: str | None = None):
     keywords = main_edition.info.get("keywords", "") or ""
     other_info = dedent(
         f"""
-    - {main_edition.info.get('cbmctext')}
-    - {main_edition.info.get('prodct')}
+    - {main_edition.info.get("cbmctext")}
+    - {main_edition.info.get("prodct")}
     """
     )
     extra = extra or ""

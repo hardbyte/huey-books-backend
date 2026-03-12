@@ -77,6 +77,15 @@ docker compose "${COMPOSE_FILES[@]}" up -d db migration
 docker compose "${COMPOSE_FILES[@]}" logs migration
 sleep 5
 
+# Integration tests run as postgres (superuser) since they need full DDL/DML
+# access for fixture setup and teardown. The cloudrun role is for runtime only.
+TEST_DB_ENV=(
+  -e SQLALCHEMY_DATABASE_URI=postgresql://postgres:password@db/postgres
+  -e SQLALCHEMY_ASYNC_URI=postgresql+asyncpg://postgres:password@db/postgres
+  -e POSTGRESQL_USER=postgres
+  -e POSTGRESQL_PASSWORD=password
+)
+
 # Now start the integration tests
-docker compose "${COMPOSE_FILES[@]}" run --rm --entrypoint python api app/db/check_can_connect_to_db.py
-docker compose "${COMPOSE_FILES[@]}" run --rm --entrypoint bash api /app/scripts/start-tests.sh "$@"
+docker compose "${COMPOSE_FILES[@]}" run --rm "${TEST_DB_ENV[@]}" --entrypoint python api app/db/check_can_connect_to_db.py
+docker compose "${COMPOSE_FILES[@]}" run --rm "${TEST_DB_ENV[@]}" --entrypoint bash api /app/scripts/start-tests.sh "$@"

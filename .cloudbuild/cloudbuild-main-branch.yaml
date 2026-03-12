@@ -196,6 +196,22 @@ steps:
         $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
         -c '/scripts/database_migrate.sh'
     secretEnv: ["POSTGRESQL_PASSWORD"]
+  - name: "gcr.io/cloud-builders/docker"
+    id: PgrolesCheck
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker run -i \
+        --network=cloudbuild \
+        -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
+        -e CLOUD_SQL_INSTANCE=wriveted-api:australia-southeast1:wriveted \
+        --entrypoint bash \
+        --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
+        --volume $(pwd)/pgroles.yaml:/app/pgroles.yaml \
+        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
+        -c 'cd /app && /scripts/pgroles-check.sh'
+    secretEnv: ["POSTGRESQL_PASSWORD"]
 availableSecrets:
   secretManager:
     - versionName: projects/wriveted-api/secrets/wriveted-api-cloud-sql-root-password/versions/latest
