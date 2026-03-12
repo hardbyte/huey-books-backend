@@ -1,15 +1,16 @@
 # pgroles manifest for wriveted-api
 #
-# Roles:
-#   postgres      — superuser, owns all objects, runs migrations (not managed by pgroles)
-#   cloudrun      — application runtime (API + internal services)
-#   readonly      — read-only access for debugging/analytics
+# Expand/contract rollout (see #607):
+#   Phase 1 (this) — additive only. Create new group roles and grant
+#     memberships. Existing direct grants on `cloudrun` are untouched
+#     because `cloudrun` is not in the `roles` section (treated as
+#     external). The `readonly` login role is new.
+#   Phase 2 — apply to prod.
+#   Phase 3 — update apps to use new role structure.
+#   Phase 4 — retire direct grants on `cloudrun`, manage it via pgroles.
 #
 # The `postgres` user runs migrations and owns all objects, so it is the
-# default_owner for default-privilege grants. pgroles doesn't manage
-# postgres itself (it's a superuser), but we set default privileges so
-# that objects created by postgres are automatically accessible to the
-# profile roles.
+# default_owner for default-privilege grants.
 
 default_owner: postgres
 
@@ -54,14 +55,15 @@ schemas:
   - name: public
     profiles: [app, readonly]
 
+# Only new roles here. `cloudrun` already exists in prod and is not
+# managed by pgroles yet — its existing direct grants stay untouched.
 roles:
-  - name: cloudrun
-    login: true
-    comment: "Application runtime user for API and internal services"
   - name: readonly
     login: true
     comment: "Read-only access for debugging and analytics"
 
+# `cloudrun` is referenced as an external member — pgroles only manages
+# the membership edge, not the role or its existing grants.
 memberships:
   - role: public-app
     members:
