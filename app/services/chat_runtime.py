@@ -677,7 +677,7 @@ class QuestionNodeProcessor(NodeProcessor):
                     stored_value = json.loads(user_input)
                 except (json.JSONDecodeError, TypeError):
                     stored_value = sanitized_input
-            elif input_type in ("choice", "image_choice", "button"):
+            elif input_type in ("choice", "image_choice", "button", "carousel"):
                 options = (session.state or {}).get("system", {}).get(
                     "_current_options"
                 ) or []
@@ -733,7 +733,7 @@ class QuestionNodeProcessor(NodeProcessor):
         next_connection = None
 
         # For choice-based inputs, try option-index routing first
-        if input_type in ("choice", "image_choice", "button"):
+        if input_type in ("choice", "image_choice", "button", "carousel"):
             options = (session.state or {}).get("system", {}).get(
                 "_current_options"
             ) or node_content.get("options", [])
