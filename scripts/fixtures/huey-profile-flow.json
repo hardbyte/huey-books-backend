@@ -14,7 +14,7 @@
           "question": {"text": "How old are you?"},
           "input_type": "choice",
           "options": [
-            {"label": "5", "value": "5", "age_number": 5},
+            {"label": "5 or under", "value": "5", "age_number": 5},
             {"label": "6", "value": "6", "age_number": 6},
             {"label": "7", "value": "7", "age_number": 7},
             {"label": "8", "value": "8", "age_number": 8},
@@ -22,7 +22,7 @@
             {"label": "10", "value": "10", "age_number": 10},
             {"label": "11", "value": "11", "age_number": 11},
             {"label": "12", "value": "12", "age_number": 12},
-            {"label": "13", "value": "13", "age_number": 13}
+            {"label": "13 or over", "value": "13", "age_number": 13}
           ],
           "variable": "temp.age_selection"
         },
