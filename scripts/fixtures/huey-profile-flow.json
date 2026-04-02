@@ -55,7 +55,7 @@
         "type": "question",
         "content": {
           "question": {"text": "Which of these books is closest to what you can read by yourself?"},
-          "input_type": "choice",
+          "input_type": "carousel",
           "options": [
             {
               "label": "Spot the Dog",
