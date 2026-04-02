@@ -409,7 +409,7 @@ class QuestionNodeProcessor(NodeProcessor):
         # Store resolved options in session for process_response() to match against.
         # Both CMS-sourced and inline options need to be stored so _match_option
         # can return the full option object (with fields like age_number, hue_map).
-        if options and input_type in ("choice", "image_choice", "button"):
+        if options and input_type in ("choice", "image_choice", "button", "carousel"):
             await chat_repo.update_session_state(
                 db,
                 session_id=session.id,
@@ -426,6 +426,21 @@ class QuestionNodeProcessor(NodeProcessor):
             "variable": variable,
             "node_id": node.node_id,
         }
+
+        # Include carousel config with resolved template variables
+        carousel_config = node_content.get("carousel_config")
+        if carousel_config:
+            resolved_config = {}
+            for key, val in carousel_config.items():
+                if isinstance(val, str):
+                    resolved = self.runtime.substitute_variables(val, session_state)
+                    try:
+                        resolved_config[key] = int(resolved)
+                    except (ValueError, TypeError):
+                        resolved_config[key] = resolved
+                else:
+                    resolved_config[key] = val
+            result["carousel_config"] = resolved_config
 
         # For book_feedback questions, resolve the book source and include books
         if input_type == "book_feedback":
@@ -677,7 +692,7 @@ class QuestionNodeProcessor(NodeProcessor):
                     stored_value = json.loads(user_input)
                 except (json.JSONDecodeError, TypeError):
                     stored_value = sanitized_input
-            elif input_type in ("choice", "image_choice", "button"):
+            elif input_type in ("choice", "image_choice", "button", "carousel"):
                 options = (session.state or {}).get("system", {}).get(
                     "_current_options"
                 ) or []
@@ -733,7 +748,7 @@ class QuestionNodeProcessor(NodeProcessor):
         next_connection = None
 
         # For choice-based inputs, try option-index routing first
-        if input_type in ("choice", "image_choice", "button"):
+        if input_type in ("choice", "image_choice", "button", "carousel"):
             options = (session.state or {}).get("system", {}).get(
                 "_current_options"
             ) or node_content.get("options", [])
@@ -1882,7 +1897,8 @@ class ChatRuntime:
             "options": source.get("options", []),
             "question": source.get("question", {}),
         }
-        # Include books for book_feedback questions
+        if source.get("carousel_config"):
+            ir["carousel_config"] = source["carousel_config"]
         if source.get("books"):
             ir["books"] = source["books"]
         return ir

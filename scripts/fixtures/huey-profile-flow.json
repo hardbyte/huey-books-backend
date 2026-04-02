@@ -2,7 +2,7 @@
   "seed_key": "huey-profile",
   "name": "Huey Profile",
   "description": "Collects age and reading ability from the user.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "entry_node_id": "ask_age",
   "visibility": "wriveted",
   "flow_data": {
@@ -14,7 +14,7 @@
           "question": {"text": "How old are you?"},
           "input_type": "choice",
           "options": [
-            {"label": "5", "value": "5", "age_number": 5},
+            {"label": "5 or under", "value": "5", "age_number": 5},
             {"label": "6", "value": "6", "age_number": 6},
             {"label": "7", "value": "7", "age_number": 7},
             {"label": "8", "value": "8", "age_number": 8},
@@ -22,7 +22,7 @@
             {"label": "10", "value": "10", "age_number": 10},
             {"label": "11", "value": "11", "age_number": 11},
             {"label": "12", "value": "12", "age_number": 12},
-            {"label": "13", "value": "13", "age_number": 13}
+            {"label": "13 or over", "value": "13", "age_number": 13}
           ],
           "variable": "temp.age_selection"
         },
@@ -51,45 +51,62 @@
         "position": {"x": 300, "y": 300}
       },
       {
+        "id": "set_reading_start",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "aggregate",
+              "target": "temp.reading_start_index",
+              "expression": "user.age_number <= 5 ? 0 : user.age_number <= 7 ? 1 : user.age_number <= 9 ? 2 : user.age_number <= 11 ? 3 : 4"
+            }
+          ]
+        },
+        "position": {"x": 400, "y": 300}
+      },
+      {
         "id": "ask_reading_ability",
         "type": "question",
         "content": {
-          "question": {"text": "Which of these books is closest to what you can read by yourself?"},
+          "question": {"text": "Here is a page from a book. Which of these is closest to what you can read by yourself?"},
           "input_type": "carousel",
+          "carousel_config": {
+            "default_index": "{{temp.reading_start_index}}"
+          },
           "options": [
             {
               "label": "Spot the Dog",
               "value": "Spot the Dog",
               "ability_key": "SPOT",
-              "description": "Simple picture books",
+              "description": "by Eric Hill — Simple picture books",
               "image_url": "https://storage.googleapis.com/wriveted-huey-media/booklevels/wheres_spot.png"
             },
             {
               "label": "The Cat in the Hat",
               "value": "The Cat in the Hat",
               "ability_key": "CAT_HAT",
-              "description": "Rhyming stories with pictures",
+              "description": "by Dr. Seuss — Rhyming stories with pictures",
               "image_url": "https://storage.googleapis.com/wriveted-huey-media/booklevels/cat_page.png"
             },
             {
               "label": "The 13-Storey Treehouse",
               "value": "The 13-Storey Treehouse",
               "ability_key": "TREEHOUSE",
-              "description": "Short chapters with illustrations",
+              "description": "by Andy Griffiths — Short chapters with illustrations",
               "image_url": "https://storage.googleapis.com/wriveted-huey-media/booklevels/treehouse2.png"
             },
             {
               "label": "Charlie and the Chocolate Factory",
               "value": "Charlie and the Chocolate Factory",
               "ability_key": "CHARLIE_CHOCOLATE",
-              "description": "Chapter books",
+              "description": "by Roald Dahl — Chapter books",
               "image_url": "https://storage.googleapis.com/wriveted-huey-media/booklevels/charlie_page_BW.png"
             },
             {
               "label": "Harry Potter",
               "value": "Harry Potter",
               "ability_key": "HARRY_POTTER",
-              "description": "Longer novels",
+              "description": "by J.K. Rowling — Longer novels",
               "image_url": "https://storage.googleapis.com/wriveted-huey-media/booklevels/harry_page_BW.png"
             }
           ],
@@ -121,7 +138,8 @@
     ],
     "connections": [
       {"source": "ask_age", "target": "store_age", "type": "default"},
-      {"source": "store_age", "target": "ask_reading_ability", "type": "default"},
+      {"source": "store_age", "target": "set_reading_start", "type": "default"},
+      {"source": "set_reading_start", "target": "ask_reading_ability", "type": "default"},
       {"source": "ask_reading_ability", "target": "store_reading_ability", "type": "default"}
     ]
   }
