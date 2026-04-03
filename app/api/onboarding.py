@@ -215,7 +215,7 @@ async def _promote_to_school_admin(
     # Update the user type and insert the school_admin row
     await db.execute(
         text("UPDATE users SET type = :new_type WHERE id = :uid"),
-        {"new_type": UserAccountType.SCHOOL_ADMIN.value, "uid": user_id},
+        {"new_type": UserAccountType.SCHOOL_ADMIN.value.upper(), "uid": user_id},
     )
 
     # Insert into educators (parent of school_admins in inheritance)
