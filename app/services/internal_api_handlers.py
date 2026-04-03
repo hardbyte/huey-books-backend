@@ -76,28 +76,38 @@ async def handle_family_onboarding(
 ) -> Dict[str, Any]:
     """Direct service call for family onboarding from chatflow.
 
-    Since chatflow sessions are anonymous, this creates the child readers
-    without promoting a user. The parent account linkage happens when
-    the user signs in on the frontend and claims the session.
+    Creates child reader profiles. Since chatflow sessions are anonymous,
+    these readers are unlinked (no parent_id) until the user signs in
+    and claims them via the authenticated onboarding endpoint.
     """
     from app.models.public_reader import PublicReader
 
+    children = body.get("children", [])
+    if not isinstance(children, list):
+        return {"children_created": 0, "message": "Invalid children data"}
+
+    # Cap at 10 children per request
+    children = children[:10]
+
     children_created = 0
-    for child in body.get("children", []):
+    for child in children:
         if not isinstance(child, dict) or not child.get("name"):
             continue
+        name = str(child["name"])[:200]
         age = child.get("age")
         if isinstance(age, str):
             try:
                 age = int(age)
             except ValueError:
                 age = None
+        if age is not None and (age < 2 or age > 18):
+            age = None
         reader = PublicReader(
-            name=child["name"],
-            first_name=child["name"],
+            name=name,
+            first_name=name,
             huey_attributes={
                 "age": age,
-                "reading_ability": child.get("reading_ability"),
+                "reading_ability": str(child.get("reading_ability", ""))[:50] or None,
             },
         )
         db.add(reader)

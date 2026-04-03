@@ -4,11 +4,12 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, StringConstraints
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from starlette import status
 from structlog import get_logger
+from typing_extensions import Annotated
 
 from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.security import get_current_active_user
@@ -25,23 +26,40 @@ router = APIRouter(
     tags=["Onboarding"],
 )
 
+# Types that can be safely promoted — any other type is rejected
+_PROMOTABLE_TO_SCHOOL_ADMIN = {
+    UserAccountType.PUBLIC,
+    UserAccountType.STUDENT,
+    UserAccountType.SUPPORTER,
+}
+_PROMOTABLE_TO_PARENT = {
+    UserAccountType.PUBLIC,
+    UserAccountType.STUDENT,
+    UserAccountType.SUPPORTER,
+}
+
+
+class SchoolLocationInput(BaseModel):
+    state: Optional[str] = Field(None, max_length=100)
+    postcode: Optional[str] = Field(None, max_length=20)
+    suburb: Optional[str] = Field(None, max_length=200)
+
 
 class SchoolOnboardingRequest(BaseModel):
-    # Option A: select existing school
     school_wriveted_id: Optional[UUID] = None
 
-    # Option B: create new school
-    school_name: Optional[str] = None
-    country_code: Optional[str] = None
-    location: Optional[dict] = None
+    school_name: Optional[str] = Field(None, max_length=300)
+    country_code: Optional[
+        Annotated[str, StringConstraints(min_length=3, max_length=3)]
+    ] = None
+    location: Optional[SchoolLocationInput] = None
 
-    # Contact details
-    contact_name: str
+    contact_name: str = Field(max_length=200)
     contact_email: EmailStr
-    contact_role: str
-    contact_phone: Optional[str] = None
-    student_count_estimate: Optional[int] = None
-    message: Optional[str] = None
+    contact_role: str = Field(max_length=100)
+    contact_phone: Optional[str] = Field(None, max_length=50)
+    student_count_estimate: Optional[int] = Field(None, ge=1, le=100000)
+    message: Optional[str] = Field(None, max_length=2000)
 
 
 class SchoolOnboardingResponse(BaseModel):
@@ -81,6 +99,15 @@ async def onboard_school(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This school is already active. Contact us if you need access.",
             )
+        # Prevent hijacking a school that already has an admin
+        admin_result = await db.execute(
+            select(SchoolAdmin).where(SchoolAdmin.school_id == school.id)
+        )
+        if admin_result.scalars().first() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This school already has an administrator. Contact us for access.",
+            )
     else:
         if not request.school_name or not request.country_code:
             raise HTTPException(
@@ -94,7 +121,9 @@ async def onboard_school(
                 state=SchoolState.PENDING,
                 bookbot_type=SchoolBookbotType.HUEY_BOOKS,
                 info={
-                    "location": request.location or {},
+                    "location": request.location.model_dump()
+                    if request.location
+                    else {},
                     "experiments": get_experiments({}),
                 },
             )
@@ -128,26 +157,22 @@ async def onboard_school(
     # Promote user to SchoolAdmin if needed
     if current_user.type != UserAccountType.SCHOOL_ADMIN:
         await _promote_to_school_admin(db, current_user, school)
-    else:
-        # Already a SchoolAdmin — just bind to this school
-        current_user.school_id = school.id
-        db.add(current_user)
 
-    # Set the admin relationship on the school
-    result = await db.execute(
-        select(SchoolAdmin).where(SchoolAdmin.id == current_user.id)
+    # Bind user to school via educators table
+    await db.execute(
+        text(
+            "INSERT INTO educators (id, school_id) VALUES (:uid, :school_id) "
+            "ON CONFLICT (id) DO UPDATE SET school_id = :school_id"
+        ),
+        {"uid": current_user.id, "school_id": school.id},
     )
-    school_admin = result.scalars().first()
-    if school_admin:
-        school.admin = school_admin
-
     await db.flush()
 
     # Create an event for admin visibility
     await event_repository.acreate(
         session=db,
         title="School onboarding request",
-        description=f"{request.contact_name} ({request.contact_role}) requested onboarding for {school.name}",
+        description=f"Onboarding request for {school.name}",
         info={
             "school_name": school.name,
             "school_wriveted_id": str(school.wriveted_identifier),
@@ -183,6 +208,12 @@ async def _promote_to_school_admin(
     school: School,
 ) -> None:
     """Promote a user to SchoolAdmin type, preserving their identity."""
+    if user.type not in _PROMOTABLE_TO_SCHOOL_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Your account type ({user.type.value}) cannot be converted to school admin. Contact support.",
+        )
+
     user_id = user.id
 
     logger.info(
@@ -192,10 +223,7 @@ async def _promote_to_school_admin(
         school=school.name,
     )
 
-    # Delete from the current type's subclass table.
-    # Parent is excluded — deleting from parents would cascade-fail
-    # due to foreign keys from readers. Parents wanting to become
-    # SchoolAdmins need manual admin intervention.
+    # Delete from the current type's subclass table
     safe_type_table_map = {
         UserAccountType.PUBLIC: "public_readers",
         UserAccountType.STUDENT: "students",
@@ -208,41 +236,35 @@ async def _promote_to_school_admin(
             text(f"DELETE FROM {subclass_table} WHERE id = :uid"),
             {"uid": user_id},
         )
-    elif user.type == UserAccountType.PARENT:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Parent accounts cannot be converted to school admin. Please contact support.",
-        )
 
-    # Update the user type and insert the school_admin row
+    # Also remove from readers if present (PUBLIC/STUDENT inherit from Reader)
+    await db.execute(
+        text("DELETE FROM readers WHERE id = :uid"),
+        {"uid": user_id},
+    )
+
+    # Update the user type
     await db.execute(
         text("UPDATE users SET type = :new_type WHERE id = :uid"),
         {"new_type": UserAccountType.SCHOOL_ADMIN.value.upper(), "uid": user_id},
     )
 
     # Insert into educators (parent of school_admins in inheritance)
-    try:
-        await db.execute(
-            text(
-                "INSERT INTO educators (id, school_id) VALUES (:uid, :school_id) "
-                "ON CONFLICT (id) DO UPDATE SET school_id = :school_id"
-            ),
-            {"uid": user_id, "school_id": school.id},
-        )
-    except IntegrityError:
-        pass
+    await db.execute(
+        text(
+            "INSERT INTO educators (id, school_id) VALUES (:uid, :school_id) "
+            "ON CONFLICT (id) DO UPDATE SET school_id = :school_id"
+        ),
+        {"uid": user_id, "school_id": school.id},
+    )
 
     # Insert into school_admins
-    try:
-        await db.execute(
-            text(
-                "INSERT INTO school_admins (id) VALUES (:uid) "
-                "ON CONFLICT (id) DO NOTHING"
-            ),
-            {"uid": user_id},
-        )
-    except IntegrityError:
-        pass
+    await db.execute(
+        text(
+            "INSERT INTO school_admins (id) VALUES (:uid) ON CONFLICT (id) DO NOTHING"
+        ),
+        {"uid": user_id},
+    )
 
     await db.flush()
 
@@ -251,15 +273,15 @@ async def _promote_to_school_admin(
 
 
 class ChildInfo(BaseModel):
-    name: str
-    age: Optional[int] = None
-    reading_ability: Optional[str] = None
-    interests: Optional[list[str]] = None
+    name: str = Field(max_length=200)
+    age: Optional[int] = Field(None, ge=2, le=18)
+    reading_ability: Optional[str] = Field(None, max_length=50)
+    interests: Optional[list[str]] = Field(None, max_length=20)
 
 
 class FamilyOnboardingRequest(BaseModel):
-    parent_name: str
-    children: list[ChildInfo]
+    parent_name: str = Field(max_length=200)
+    children: list[ChildInfo] = Field(min_length=1, max_length=10)
 
 
 class FamilyOnboardingResponse(BaseModel):
@@ -285,10 +307,10 @@ async def onboard_family(
 
     # Promote to Parent if needed
     if current_user.type != UserAccountType.PARENT:
-        if current_user.type == UserAccountType.SCHOOL_ADMIN:
+        if current_user.type not in _PROMOTABLE_TO_PARENT:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="School admin accounts cannot be converted to parent accounts.",
+                detail=f"Your account type ({current_user.type.value}) cannot be converted to a parent account. Contact support.",
             )
 
         safe_type_table_map = {
@@ -303,7 +325,7 @@ async def onboard_family(
                 {"uid": user_id},
             )
 
-        # Also remove from readers if present (PUBLIC/STUDENT inherit from Reader)
+        # Also remove from readers if present
         await db.execute(
             text("DELETE FROM readers WHERE id = :uid"),
             {"uid": user_id},
@@ -319,15 +341,10 @@ async def onboard_family(
         )
 
         # Insert into parents table
-        try:
-            await db.execute(
-                text(
-                    "INSERT INTO parents (id) VALUES (:uid) ON CONFLICT (id) DO NOTHING"
-                ),
-                {"uid": user_id},
-            )
-        except IntegrityError:
-            pass
+        await db.execute(
+            text("INSERT INTO parents (id) VALUES (:uid) ON CONFLICT (id) DO NOTHING"),
+            {"uid": user_id},
+        )
 
         await db.flush()
 
@@ -351,7 +368,7 @@ async def onboard_family(
     await event_repository.acreate(
         session=db,
         title="Family onboarding",
-        description=f"{request.parent_name} signed up with {children_created} child(ren)",
+        description=f"Family onboarding with {children_created} child(ren)",
         info={
             "parent_name": request.parent_name,
             "children": [c.model_dump() for c in request.children],
