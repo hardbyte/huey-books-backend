@@ -66,3 +66,47 @@ async def handle_recommend(
         "query": query_parameters,
         "books": [book.model_dump(mode="json") for book in recommended_books],
     }
+
+
+@internal_handler("/v1/onboarding/family")
+async def handle_family_onboarding(
+    db: AsyncSession,
+    body: Dict[str, Any],
+    query_params: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Direct service call for family onboarding from chatflow.
+
+    Since chatflow sessions are anonymous, this creates the child readers
+    without promoting a user. The parent account linkage happens when
+    the user signs in on the frontend and claims the session.
+    """
+    from app.models.public_reader import PublicReader
+
+    children_created = 0
+    for child in body.get("children", []):
+        if not isinstance(child, dict) or not child.get("name"):
+            continue
+        age = child.get("age")
+        if isinstance(age, str):
+            try:
+                age = int(age)
+            except ValueError:
+                age = None
+        reader = PublicReader(
+            name=child["name"],
+            first_name=child["name"],
+            huey_attributes={
+                "age": age,
+                "reading_ability": child.get("reading_ability"),
+            },
+        )
+        db.add(reader)
+        children_created += 1
+
+    if children_created > 0:
+        await db.flush()
+
+    return {
+        "children_created": children_created,
+        "message": f"{children_created} reader profile(s) created.",
+    }

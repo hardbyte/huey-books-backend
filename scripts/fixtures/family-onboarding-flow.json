@@ -1,0 +1,166 @@
+{
+  "seed_key": "family-onboarding",
+  "name": "Family Signup",
+  "description": "Collects parent and child info for family onboarding.",
+  "version": "1.0.0",
+  "entry_node_id": "welcome",
+  "visibility": "wriveted",
+  "flow_data": {
+    "nodes": [
+      {
+        "id": "welcome",
+        "type": "message",
+        "content": {
+          "messages": [
+            {"text": "Welcome to Huey Books! I'm here to help you set up your family account.", "type": "text"},
+            {"type": "image", "content": {"alt": "Huey the Bookbot", "url": "https://storage.googleapis.com/wriveted-huey-media/chat/gifs/Robot(640x640).gif"}},
+            {"text": "I just need a few details about you and your child.", "type": "text"}
+          ]
+        },
+        "position": {"x": 100, "y": 300}
+      },
+      {
+        "id": "ask_parent_name",
+        "type": "question",
+        "content": {
+          "question": {"text": "What's your name?"},
+          "input_type": "text",
+          "variable": "temp.parent_name",
+          "validation": {"required": true, "min_length": 1}
+        },
+        "position": {"x": 300, "y": 300}
+      },
+      {
+        "id": "greet_parent",
+        "type": "message",
+        "content": {
+          "messages": [
+            {"text": "Nice to meet you, {{temp.parent_name}}! Now tell me about your young reader.", "type": "text"}
+          ]
+        },
+        "position": {"x": 500, "y": 300}
+      },
+      {
+        "id": "ask_child_name",
+        "type": "question",
+        "content": {
+          "question": {"text": "What's your child's name?"},
+          "input_type": "text",
+          "variable": "temp.child_name",
+          "validation": {"required": true, "min_length": 1}
+        },
+        "position": {"x": 700, "y": 300}
+      },
+      {
+        "id": "ask_child_age",
+        "type": "question",
+        "content": {
+          "question": {"text": "How old is {{temp.child_name}}?"},
+          "input_type": "choice",
+          "options": [
+            {"label": "5 or under", "value": "5", "age_number": 5},
+            {"label": "6", "value": "6", "age_number": 6},
+            {"label": "7", "value": "7", "age_number": 7},
+            {"label": "8", "value": "8", "age_number": 8},
+            {"label": "9", "value": "9", "age_number": 9},
+            {"label": "10", "value": "10", "age_number": 10},
+            {"label": "11", "value": "11", "age_number": 11},
+            {"label": "12", "value": "12", "age_number": 12},
+            {"label": "13 or over", "value": "13", "age_number": 13}
+          ],
+          "variable": "temp.child_age_selection"
+        },
+        "position": {"x": 900, "y": 300}
+      },
+      {
+        "id": "store_child_age",
+        "type": "action",
+        "content": {
+          "actions": [
+            {"type": "set_variable", "variable": "temp.child_age", "value": "{{temp.child_age_selection.age_number}}"}
+          ]
+        },
+        "position": {"x": 1050, "y": 300}
+      },
+      {
+        "id": "ask_reading_level",
+        "type": "question",
+        "content": {
+          "question": {"text": "What best describes {{temp.child_name}}'s reading?"},
+          "input_type": "choice",
+          "options": [
+            {"label": "Just starting out", "value": "SPOT", "description": "Picture books and simple words"},
+            {"label": "Learning to read", "value": "CAT_HAT", "description": "Short sentences with pictures"},
+            {"label": "Reading independently", "value": "TREEHOUSE", "description": "Short chapters with illustrations"},
+            {"label": "Confident reader", "value": "CHARLIE_CHOCOLATE", "description": "Chapter books"},
+            {"label": "Avid reader", "value": "HARRY_POTTER", "description": "Longer novels"}
+          ],
+          "variable": "temp.reading_level"
+        },
+        "position": {"x": 1200, "y": 300}
+      },
+      {
+        "id": "store_child",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "set_variable",
+              "variable": "temp.children",
+              "value": [{"name": "{{temp.child_name}}", "age": "{{temp.child_age}}", "reading_ability": "{{temp.reading_level.value}}"}]
+            }
+          ]
+        },
+        "position": {"x": 1400, "y": 300}
+      },
+      {
+        "id": "submit_onboarding",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "api_call",
+              "config": {
+                "method": "POST",
+                "endpoint": "/v1/onboarding/family",
+                "body": {
+                  "parent_name": "{{temp.parent_name}}",
+                  "children": "{{temp.children}}"
+                },
+                "response_mapping": {
+                  "children_created": "temp.children_created"
+                },
+                "fallback_response": {
+                  "children_created": 0
+                }
+              }
+            }
+          ]
+        },
+        "position": {"x": 1600, "y": 300}
+      },
+      {
+        "id": "success_msg",
+        "type": "message",
+        "content": {
+          "messages": [
+            {"text": "You're all set, {{temp.parent_name}}! I've created a reader profile for {{temp.child_name}}.", "type": "text"},
+            {"text": "You can now use Huey to find books your child will love. Happy reading!", "type": "text"}
+          ]
+        },
+        "position": {"x": 1800, "y": 300}
+      }
+    ],
+    "connections": [
+      {"source": "welcome", "target": "ask_parent_name", "type": "default"},
+      {"source": "ask_parent_name", "target": "greet_parent", "type": "default"},
+      {"source": "greet_parent", "target": "ask_child_name", "type": "default"},
+      {"source": "ask_child_name", "target": "ask_child_age", "type": "default"},
+      {"source": "ask_child_age", "target": "store_child_age", "type": "default"},
+      {"source": "store_child_age", "target": "ask_reading_level", "type": "default"},
+      {"source": "ask_reading_level", "target": "store_child", "type": "default"},
+      {"source": "store_child", "target": "submit_onboarding", "type": "default"},
+      {"source": "submit_onboarding", "target": "success_msg", "type": "default"}
+    ]
+  }
+}
