@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from starlette import status
 from structlog import get_logger
@@ -183,8 +183,6 @@ async def _promote_to_school_admin(
     school: School,
 ) -> None:
     """Promote a user to SchoolAdmin type, preserving their identity."""
-    from sqlalchemy import text
-
     user_id = user.id
 
     logger.info(
@@ -247,3 +245,130 @@ async def _promote_to_school_admin(
         pass
 
     await db.flush()
+
+
+# ── Family onboarding ─────────────────────────────────────────────────
+
+
+class ChildInfo(BaseModel):
+    name: str
+    age: Optional[int] = None
+    reading_ability: Optional[str] = None
+    interests: Optional[list[str]] = None
+
+
+class FamilyOnboardingRequest(BaseModel):
+    parent_name: str
+    children: list[ChildInfo]
+
+
+class FamilyOnboardingResponse(BaseModel):
+    parent_id: UUID
+    children_created: int
+    message: str
+
+
+@router.post("/family", response_model=FamilyOnboardingResponse)
+async def onboard_family(
+    request: FamilyOnboardingRequest,
+    db: DBSessionDep,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Self-service family onboarding.
+
+    Promotes the authenticated user to Parent type and creates
+    child reader accounts linked to them.
+    """
+    from app.models.public_reader import PublicReader
+
+    user_id = current_user.id
+
+    # Promote to Parent if needed
+    if current_user.type != UserAccountType.PARENT:
+        if current_user.type == UserAccountType.SCHOOL_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="School admin accounts cannot be converted to parent accounts.",
+            )
+
+        safe_type_table_map = {
+            UserAccountType.PUBLIC: "public_readers",
+            UserAccountType.STUDENT: "students",
+            UserAccountType.SUPPORTER: "supporters",
+        }
+        subclass_table = safe_type_table_map.get(current_user.type)
+        if subclass_table:
+            await db.execute(
+                text(f"DELETE FROM {subclass_table} WHERE id = :uid"),
+                {"uid": user_id},
+            )
+
+        # Also remove from readers if present (PUBLIC/STUDENT inherit from Reader)
+        await db.execute(
+            text("DELETE FROM readers WHERE id = :uid"),
+            {"uid": user_id},
+        )
+
+        await db.execute(
+            text("UPDATE users SET type = :new_type, name = :name WHERE id = :uid"),
+            {
+                "new_type": UserAccountType.PARENT.value.upper(),
+                "name": request.parent_name,
+                "uid": user_id,
+            },
+        )
+
+        # Insert into parents table
+        try:
+            await db.execute(
+                text(
+                    "INSERT INTO parents (id) VALUES (:uid) ON CONFLICT (id) DO NOTHING"
+                ),
+                {"uid": user_id},
+            )
+        except IntegrityError:
+            pass
+
+        await db.flush()
+
+    # Create child readers
+    children_created = 0
+    for child in request.children:
+        child_reader = PublicReader(
+            name=child.name,
+            first_name=child.name,
+            parent_id=user_id,
+            huey_attributes={
+                "age": child.age,
+                "reading_ability": child.reading_ability,
+                "interests": child.interests,
+            },
+        )
+        db.add(child_reader)
+        children_created += 1
+
+    # Create event
+    await event_repository.acreate(
+        session=db,
+        title="Family onboarding",
+        description=f"{request.parent_name} signed up with {children_created} child(ren)",
+        info={
+            "parent_name": request.parent_name,
+            "children": [c.model_dump() for c in request.children],
+        },
+        commit=False,
+    )
+
+    await db.commit()
+
+    logger.info(
+        "Family onboarding completed",
+        user_id=str(user_id),
+        children=children_created,
+    )
+
+    return FamilyOnboardingResponse(
+        parent_id=user_id,
+        children_created=children_created,
+        message=f"Welcome! {children_created} reader profile(s) created.",
+    )

@@ -1,9 +1,71 @@
-"""Integration tests for the self-service school onboarding endpoint."""
+"""Integration tests for the self-service onboarding endpoints."""
 
 import secrets
 
 from app.models import SchoolState
 from app.models.user import UserAccountType
+
+# ── Family onboarding ─────────────────────────────────────────────────
+
+
+def test_onboard_family(client, test_user_account, test_user_account_token):
+    """A public user can become a parent with child readers."""
+    response = client.post(
+        "/v1/onboarding/family",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json={
+            "parent_name": "Test Parent",
+            "children": [
+                {"name": "Alice", "age": 8, "reading_ability": "TREEHOUSE"},
+                {"name": "Bob", "age": 11},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["children_created"] == 2
+    assert data["parent_id"] is not None
+
+
+def test_onboard_family_promotes_to_parent(
+    client, session_factory, test_user_account_token
+):
+    """The user's type is promoted from PUBLIC to PARENT."""
+    from app.models.user import User
+    from app.services.security import get_payload_from_access_token
+
+    payload = get_payload_from_access_token(test_user_account_token)
+    user_id = payload.sub.split(":")[-1]
+
+    response = client.post(
+        "/v1/onboarding/family",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json={
+            "parent_name": "Promoted Parent",
+            "children": [{"name": "Charlie", "age": 6}],
+        },
+    )
+    assert response.status_code == 200
+
+    with session_factory() as fresh_session:
+        user = fresh_session.get(User, user_id)
+        assert user is not None
+        assert user.type == UserAccountType.PARENT
+
+
+def test_onboard_family_unauthenticated(client):
+    """Unauthenticated requests are rejected."""
+    response = client.post(
+        "/v1/onboarding/family",
+        json={
+            "parent_name": "Test",
+            "children": [{"name": "Kid"}],
+        },
+    )
+    assert response.status_code in (401, 403)
+
+
+# ── School onboarding ─────────────────────────────────────────────────
 
 
 def test_onboard_new_school(client, test_user_account, test_user_account_token):
