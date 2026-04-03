@@ -430,17 +430,9 @@ class QuestionNodeProcessor(NodeProcessor):
         # Include carousel config with resolved template variables
         carousel_config = node_content.get("carousel_config")
         if carousel_config:
-            resolved_config = {}
-            for key, val in carousel_config.items():
-                if isinstance(val, str):
-                    resolved = self.runtime.substitute_variables(val, session_state)
-                    try:
-                        resolved_config[key] = int(resolved)
-                    except (ValueError, TypeError):
-                        resolved_config[key] = resolved
-                else:
-                    resolved_config[key] = val
-            result["carousel_config"] = resolved_config
+            result["carousel_config"] = self.runtime.substitute_object(
+                carousel_config, session_state
+            )
 
         # For book_feedback questions, resolve the book source and include books
         if input_type == "book_feedback":
