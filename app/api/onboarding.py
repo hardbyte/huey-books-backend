@@ -183,6 +183,8 @@ async def _promote_to_school_admin(
     school: School,
 ) -> None:
     """Promote a user to SchoolAdmin type, preserving their identity."""
+    from sqlalchemy import text
+
     user_id = user.id
 
     logger.info(
@@ -192,24 +194,26 @@ async def _promote_to_school_admin(
         school=school.name,
     )
 
-    # Delete from the current type's table (e.g. public_readers)
-    # The joined-table inheritance means we need to delete the subclass row
-    # then the base user row, then re-insert as SchoolAdmin
-    type_table_map = {
+    # Delete from the current type's subclass table.
+    # Parent is excluded — deleting from parents would cascade-fail
+    # due to foreign keys from readers. Parents wanting to become
+    # SchoolAdmins need manual admin intervention.
+    safe_type_table_map = {
         UserAccountType.PUBLIC: "public_readers",
         UserAccountType.STUDENT: "students",
-        UserAccountType.EDUCATOR: "educators",
-        UserAccountType.PARENT: "parents",
         UserAccountType.SUPPORTER: "supporters",
     }
 
-    subclass_table = type_table_map.get(user.type)
+    subclass_table = safe_type_table_map.get(user.type)
     if subclass_table:
-        from sqlalchemy import text
-
         await db.execute(
             text(f"DELETE FROM {subclass_table} WHERE id = :uid"),
             {"uid": user_id},
+        )
+    elif user.type == UserAccountType.PARENT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Parent accounts cannot be converted to school admin. Please contact support.",
         )
 
     # Update the user type and insert the school_admin row

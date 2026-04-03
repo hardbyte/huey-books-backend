@@ -156,10 +156,13 @@ def test_onboard_creates_event(
 
 
 def test_onboard_promotes_user_to_school_admin(
-    client, session, test_user_account, test_user_account_token
+    client, session_factory, test_user_account_token
 ):
     """The user's account type is promoted from PUBLIC to SCHOOL_ADMIN."""
-    assert test_user_account.type == UserAccountType.PUBLIC
+    from app.services.security import get_payload_from_access_token
+
+    payload = get_payload_from_access_token(test_user_account_token)
+    user_id = payload.sub.split(":")[-1]
 
     school_name = f"Promotion Test School {secrets.token_hex(4)}"
     response = client.post(
@@ -176,9 +179,10 @@ def test_onboard_promotes_user_to_school_admin(
     )
     assert response.status_code == 200
 
-    # Refresh user from DB
-    session.expire_all()
-    from app.models.user import User
+    # Query in a fresh session to see the promoted type
+    with session_factory() as fresh_session:
+        from app.models.user import User
 
-    user = session.query(User).get(test_user_account.id)
-    assert user.type == UserAccountType.SCHOOL_ADMIN
+        user = fresh_session.query(User).get(user_id)
+        assert user is not None
+        assert user.type == UserAccountType.SCHOOL_ADMIN
