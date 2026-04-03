@@ -232,7 +232,7 @@
       {"source": "jokes_composite", "target": "spelling_composite", "type": "default"},
       {"source": "spelling_composite", "target": "end_msg", "type": "default"},
       {"source": "end_msg", "target": "restart_choice", "type": "default"},
-      {"source": "restart_choice", "target": "welcome", "type": "$0", "conditions": {"if": {"var": "temp.restart_choice", "eq": "restart"}}},
+      {"source": "restart_choice", "target": "preferences_composite", "type": "$0", "conditions": {"if": {"var": "temp.restart_choice", "eq": "restart"}}},
       {"source": "restart_choice", "target": "emit_chat_ended", "type": "default"},
       {"source": "emit_chat_ended", "target": "goodbye", "type": "default"}
     ]
