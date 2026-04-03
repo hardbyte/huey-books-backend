@@ -66,3 +66,57 @@ async def handle_recommend(
         "query": query_parameters,
         "books": [book.model_dump(mode="json") for book in recommended_books],
     }
+
+
+@internal_handler("/v1/onboarding/family")
+async def handle_family_onboarding(
+    db: AsyncSession,
+    body: Dict[str, Any],
+    query_params: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Direct service call for family onboarding from chatflow.
+
+    Creates child reader profiles. Since chatflow sessions are anonymous,
+    these readers are unlinked (no parent_id) until the user signs in
+    and claims them via the authenticated onboarding endpoint.
+    """
+    from app.models.public_reader import PublicReader
+
+    children = body.get("children", [])
+    if not isinstance(children, list):
+        return {"children_created": 0, "message": "Invalid children data"}
+
+    # Cap at 10 children per request
+    children = children[:10]
+
+    children_created = 0
+    for child in children:
+        if not isinstance(child, dict) or not child.get("name"):
+            continue
+        name = str(child["name"])[:200]
+        age = child.get("age")
+        if isinstance(age, str):
+            try:
+                age = int(age)
+            except ValueError:
+                age = None
+        if age is not None and (age < 2 or age > 18):
+            age = None
+        reader = PublicReader(
+            name=name,
+            first_name=name,
+            huey_attributes={
+                "age": age,
+                "reading_ability": str(child.get("reading_ability", ""))[:50] or None,
+            },
+        )
+        db.add(reader)
+        children_created += 1
+
+    if children_created > 0:
+        await db.flush()
+
+    return {
+        "children_created": children_created,
+        "message": f"{children_created} reader profile(s) created.",
+    }

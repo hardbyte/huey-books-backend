@@ -549,6 +549,7 @@
     {
       "flow_file": "huey-bookbot-flow.json",
       "theme_seed_key": "huey-bookbot-theme"
-    }
+    },
+    {"flow_file": "family-onboarding-flow.json"}
   ]
 }
