@@ -39,6 +39,7 @@ from .product import Product
 from .public_reader import PublicReader
 from .reader import Reader
 from .reading_ability import ReadingAbility
+from .review import Review, ReviewableType
 from .school import School, SchoolState
 from .school_admin import SchoolAdmin
 from .series import Series
