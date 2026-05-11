@@ -46,17 +46,25 @@ GROUP BY
     e.work_id
 """
 
+reviewable_type_enum = postgresql.ENUM(
+    "LABELSET",
+    "CMS_CONTENT",
+    "FLOW_DEFINITION",
+    name="reviewabletype",
+    create_type=False,
+)
+
 
 def upgrade():
+    reviewable_type_enum.create(op.get_bind(), checkfirst=True)
+
     # Create the generic reviews table
     op.create_table(
         "reviews",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column(
             "reviewable_type",
-            sa.Enum(
-                "LABELSET", "CMS_CONTENT", "FLOW_DEFINITION", name="reviewabletype"
-            ),
+            reviewable_type_enum,
             nullable=False,
         ),
         sa.Column("reviewable_id", sa.String(), nullable=False),
@@ -134,3 +142,4 @@ def downgrade():
 
     op.drop_index("ix_reviews_type_entity", table_name="reviews")
     op.drop_table("reviews")
+    reviewable_type_enum.drop(op.get_bind(), checkfirst=True)
