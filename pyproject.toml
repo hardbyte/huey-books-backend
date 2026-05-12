@@ -60,7 +60,7 @@ bleach = "^6.2.0"
 
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8"
+pytest = ">=8,<10"
 pytest-cov = "^7.0.0"
 google-api-python-client = "^2.191"
 google-auth-httplib2 = "^0.2"
