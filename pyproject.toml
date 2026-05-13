@@ -20,7 +20,7 @@ fastapi-cloudauth = "^0.4.3"
 cryptography = "^46.0.7"
 pydantic = {extras = ["email"], version = "^2.7"}
 fastapi_permissions = "^0.2.7"
-gunicorn = "^23.0"
+gunicorn = ">=23,<27"
 tenacity = "^9.0"
 sendgrid = "^6.10"
 mock = "^5.0.1"
