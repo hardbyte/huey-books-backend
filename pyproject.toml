@@ -74,7 +74,7 @@ pytest-timeout = "^2.3.1"
 ruff = ">=0.4.10,<1.0"
 mypy = "^1.16.0"
 types-setuptools = "^80.9.0.20250529"
-psutil = "^6.0"
+psutil = ">=6,<8"
 
 
 
