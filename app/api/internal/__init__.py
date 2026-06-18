@@ -16,6 +16,7 @@ from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.internal.tasks import router as tasks_router
 from app.db.session import get_session
 from app.models.event import EventSlackChannel
+from app.repositories.chat_repository import chat_repo
 from app.repositories.service_account_repository import service_account_repository
 from app.repositories.work_repository import work_repository
 from app.schemas.feedback import SendEmailPayload, SendSmsPayload
@@ -236,3 +237,30 @@ async def handle_update_search_index(session: DBSessionDep):
     await search.update_search_view_v1(session)
     logger.info("Processing search data updated event")
     return {"msg": "ok"}
+
+
+class CleanupAbandonedSessionsPayload(BaseModel):
+    inactive_hours: int = 24
+
+
+@router.post("/maintenance/cleanup-abandoned-sessions")
+async def handle_cleanup_abandoned_sessions(
+    session: DBSessionDep,
+    payload: CleanupAbandonedSessionsPayload | None = None,
+):
+    """
+    Mark conversation sessions that have been ACTIVE but inactive beyond a
+    threshold as ABANDONED. Intended to be invoked on a schedule (Cloud
+    Scheduler) so the bookbot funnel can be measured: without this sweep,
+    sessions remain ACTIVE indefinitely and never reflect drop-off.
+    """
+    inactive_hours = payload.inactive_hours if payload else 24
+    count = await chat_repo.cleanup_abandoned_sessions(
+        session, inactive_hours=inactive_hours
+    )
+    logger.info(
+        "Cleaned up abandoned sessions",
+        abandoned=count,
+        inactive_hours=inactive_hours,
+    )
+    return {"msg": "ok", "abandoned": count, "inactive_hours": inactive_hours}
