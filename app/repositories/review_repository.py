@@ -12,10 +12,14 @@ from structlog import get_logger
 
 from app.models.author import Author
 from app.models.author_work_association import author_work_association_table
+from app.models.collection import Collection
+from app.models.collection_item import CollectionItem
+from app.models.edition import Edition
 from app.models.hue import Hue
 from app.models.labelset import LabelOrigin, LabelSet
 from app.models.labelset_hue_association import LabelSetHue, Ordinal
 from app.models.review import Review, ReviewableType
+from app.models.school import School
 from app.models.user import User
 from app.models.work import Work
 from app.models.work_collection_frequency import work_collection_frequency
@@ -159,9 +163,14 @@ class ReviewRepositoryImpl:
         min_school_count: int = 0,
         skip: int = 0,
         limit: int = 100,
+        school_id: Optional[int] = None,
     ) -> tuple[list[dict], int]:
         """
         Get a prioritized review queue of works, sorted by popularity.
+
+        When ``school_id`` is set, the queue is restricted to works present in
+        that school's collection, so a teacher reviews the books their own
+        students actually read. ``None`` returns the global queue.
 
         Returns (items, total_count).
         """
@@ -240,6 +249,17 @@ class ReviewRepositoryImpl:
         # Minimum school count filter
         if min_school_count > 0:
             stmt = stmt.where(func.coalesce(cf.c.school_count, 0) >= min_school_count)
+
+        # Scope to a specific school's collection (a teacher's own books)
+        if school_id is not None:
+            school_work_ids = (
+                select(Edition.work_id)
+                .join(CollectionItem, CollectionItem.edition_isbn == Edition.isbn)
+                .join(Collection, Collection.id == CollectionItem.collection_id)
+                .join(School, School.wriveted_identifier == Collection.school_id)
+                .where(School.id == school_id, Edition.work_id.isnot(None))
+            )
+            stmt = stmt.where(Work.id.in_(school_work_ids))
 
         # Get total count before pagination
         count_stmt = select(func.count()).select_from(stmt.subquery())

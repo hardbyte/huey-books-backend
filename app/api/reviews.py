@@ -168,19 +168,32 @@ def get_review_queue(
     ),
     min_school_count: int = Query(0, ge=0, description="Minimum school count"),
     pagination: PaginatedQueryParams = Depends(),
+    account: Union[User, ServiceAccount] = Depends(
+        get_current_active_user_or_service_account
+    ),
     session: Session = Depends(get_session),
 ):
     """
     Prioritized review queue sorted by popularity (school_count DESC).
 
-    Accessible to admins, educators, and school admins.
+    Teachers (educators / school admins) see only books in their own school's
+    collection — the ones their students actually read; Wriveted staff and
+    service accounts see the global queue.
     """
+    school_id = None
+    if isinstance(account, User) and account.type in (
+        UserAccountType.EDUCATOR,
+        UserAccountType.SCHOOL_ADMIN,
+    ):
+        school_id = getattr(account, "school_id", None)
+
     items, total = review_repository.get_review_queue(
         db=session,
         status=status,
         min_school_count=min_school_count,
         skip=pagination.skip,
         limit=pagination.limit,
+        school_id=school_id,
     )
     return PaginatedResponse(
         data=[ReviewQueueItem(**item) for item in items],
