@@ -88,7 +88,8 @@ def submit_review(
     Submit or update a review for a work's labelset.
 
     Each reviewer gets one review per labelset (upserted on conflict).
-    Admin reviews also update the canonical labelset with HUMAN origin.
+    Reviews also update the canonical labelset: Wriveted staff with HUMAN
+    origin (and mark it checked), teachers with EDUCATOR origin.
     """
     if not isinstance(account, User):
         logger.warning("Service accounts cannot submit reviews")
@@ -106,15 +107,35 @@ def submit_review(
         commit=True,
     )
 
-    # Admin reviews auto-promote to canonical labelset
+    # Promote the review into the canonical labelset so it influences
+    # recommendations. Wriveted staff carry HUMAN authority and mark the
+    # labelset as staff-checked; teachers carry EDUCATOR authority (above AI,
+    # below staff) and leave the staff-confirmation flag untouched, so their
+    # input improves recommendations immediately without bypassing QA.
     if account.type == UserAccountType.WRIVETED:
-        _promote_review_to_canonical(session, labelset, review_data, account)
+        _promote_review_to_canonical(
+            session,
+            labelset,
+            review_data,
+            account,
+            origin=LabelOrigin.HUMAN,
+            mark_checked=True,
+        )
+    elif account.type in (UserAccountType.EDUCATOR, UserAccountType.SCHOOL_ADMIN):
+        _promote_review_to_canonical(
+            session,
+            labelset,
+            review_data,
+            account,
+            origin=LabelOrigin.EDUCATOR,
+            mark_checked=False,
+        )
 
     logger.info(
         "Review submitted",
         work_id=work.id,
         reviewer=account.id,
-        is_admin=account.type == UserAccountType.WRIVETED,
+        reviewer_type=account.type.value,
     )
 
     return _review_to_detail(review)
@@ -191,28 +212,41 @@ def _promote_review_to_canonical(
     labelset,
     review_data: LabelSetReviewIn,
     account: User,
+    *,
+    origin: LabelOrigin,
+    mark_checked: bool,
 ) -> None:
-    """Apply an admin's review assessment to the canonical labelset."""
+    """Apply a reviewer's assessment to the canonical labelset.
+
+    `origin` sets the authority weight used by the labelset repository, which
+    only overwrites a field when its existing origin has equal-or-lower weight
+    (so EDUCATOR beats AI but never overrides Wriveted HUMAN labels).
+    `mark_checked` records Wriveted staff confirmation; teacher promotions
+    preserve the existing checked flag rather than clearing it.
+    """
     patch_data = LabelSetCreateIn(
         hue_primary_key=review_data.hue_primary_key,
         hue_secondary_key=review_data.hue_secondary_key,
         hue_tertiary_key=review_data.hue_tertiary_key,
-        hue_origin=LabelOrigin.HUMAN if review_data.hue_primary_key else None,
+        hue_origin=origin if review_data.hue_primary_key else None,
         min_age=review_data.min_age,
         max_age=review_data.max_age,
-        age_origin=LabelOrigin.HUMAN
+        age_origin=origin
         if review_data.min_age is not None or review_data.max_age is not None
         else None,
-        recommend_status=review_data.recommend_status,
-        recommend_status_origin=LabelOrigin.HUMAN
-        if review_data.recommend_status
+        reading_ability_keys=[review_data.reading_ability_key]
+        if review_data.reading_ability_key
         else None,
-        checked=True,
+        reading_ability_origin=origin if review_data.reading_ability_key else None,
+        recommend_status=review_data.recommend_status,
+        recommend_status_origin=origin if review_data.recommend_status else None,
+        checked=True if mark_checked else bool(labelset.checked),
         labelled_by_user_id=account.id,
     )
 
     labelset_repository.patch(session, labelset, patch_data, commit=True)
 
-    labelset.checked = True
-    labelset.checked_at = datetime.utcnow()
-    session.commit()
+    if mark_checked:
+        labelset.checked = True
+        labelset.checked_at = datetime.utcnow()
+        session.commit()

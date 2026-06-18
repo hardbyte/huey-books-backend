@@ -22,6 +22,7 @@ from app.utils.dict_utils import deep_merge_dicts
 
 ORIGIN_WEIGHTS = {
     "HUMAN": 5,
+    "EDUCATOR": 4.5,
     "VERTEXAI": 4,
     "GPT4": 4,
     "CLUSTER_RELEVANCE": 3,
