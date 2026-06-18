@@ -114,12 +114,16 @@ steps:
       - "--platform=managed"
       - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
       - "--region=$_DEPLOY_REGION"
+      - "--concurrency=20"
+      - "--max-instances=6"
       - "--quiet"
       - >-
         --set-env-vars=
         POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
         POSTGRESQL_USER=cloudrun,
         LOG_AS_JSON=True,
+        DATABASE_POOL_SIZE=5,
+        DATABASE_MAX_OVERFLOW=5,
         GCP_CLOUD_TASKS_NAME=background-tasks,
         WRIVETED_INTERNAL_API=https://wriveted-api-internal-lg5ntws4da-ts.a.run.app,
         NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,
@@ -151,6 +155,8 @@ steps:
       - "--platform=managed"
       - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
       - "--region=$_DEPLOY_REGION"
+      - "--concurrency=8"
+      - "--max-instances=4"
       - "--quiet"
       - "--args=app.internal_api:internal_app"
       - >-
@@ -158,6 +164,8 @@ steps:
         POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
         POSTGRESQL_USER=cloudrun,
         LOG_AS_JSON=True,
+        DATABASE_POOL_SIZE=3,
+        DATABASE_MAX_OVERFLOW=3,
         GCP_CLOUD_TASKS_NAME=background-tasks,
         WRIVETED_INTERNAL_API=https://wriveted-api-internal-lg5ntws4da-ts.a.run.app,
         NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,

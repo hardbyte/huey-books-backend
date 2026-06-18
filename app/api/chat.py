@@ -221,7 +221,7 @@ async def start_conversation(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error("Error starting conversation", error=str(e))
+        logger.error("Error starting conversation", error=str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error starting conversation",
@@ -311,6 +311,7 @@ async def interact_with_session(
             "Error processing interaction",
             error=str(e),
             session_id=conversation_session.id,
+            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

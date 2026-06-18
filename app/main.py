@@ -5,7 +5,8 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from starlette import status
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import RedirectResponse
+from starlette.requests import Request
+from starlette.responses import JSONResponse, RedirectResponse
 from structlog import get_logger
 
 from app.api.analytics import router as analytics_router
@@ -77,6 +78,26 @@ async def validation_exception_handler(request, exc):
         request=request.url,
     )
     return await request_validation_exception_handler(request, exc)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Log the full traceback for any unhandled exception before returning a 500.
+
+    Without this, Cloud Run only records the bare 500 status with no stack
+    trace, making production failures effectively undebuggable.
+    """
+    logger.error(
+        "Unhandled exception",
+        error=str(exc),
+        path=request.url.path,
+        method=request.method,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
 
 
 # Set all CORS enabled origins
