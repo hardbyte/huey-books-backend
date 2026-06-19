@@ -265,8 +265,23 @@ class ReviewRepositoryImpl:
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = db.execute(count_stmt).scalar_one()
 
-        # Order and paginate
+        # Order so reviewing effort lands where it matters most: books that
+        # still need a human look (unchecked or AI-labelled) come first, then by
+        # reach (how many schools stock them), so a reviewer working top-down
+        # confirms the highest-impact unreviewed books before already-reviewed
+        # ones. Human-reviewed books sink to the bottom of the "all" view.
+        needs_attention = case(
+            (
+                (LabelSet.checked.is_(None))
+                | (LabelSet.checked == False)  # noqa: E712
+                | (LabelSet.hue_origin.in_(AI_ORIGINS))
+                | (LabelSet.hue_origin.is_(None)),
+                1,
+            ),
+            else_=0,
+        )
         stmt = stmt.order_by(
+            needs_attention.desc(),
             func.coalesce(cf.c.school_count, 0).desc(),
             Work.id,
         )
@@ -289,6 +304,24 @@ class ReviewRepositoryImpl:
             for hue_row in db.execute(hue_stmt).all():
                 hue_map[hue_row.labelset_id] = hue_row.key
 
+        # One cover per work for the page's rows (bounded to ~limit works).
+        work_ids = [r.work_id for r in rows]
+        cover_map: dict[int, str] = {}
+        if work_ids:
+            cover_stmt = (
+                select(
+                    Edition.work_id,
+                    func.min(Edition.cover_url).label("cover_url"),
+                )
+                .where(
+                    Edition.work_id.in_(work_ids),
+                    Edition.cover_url.isnot(None),
+                )
+                .group_by(Edition.work_id)
+            )
+            for cover_row in db.execute(cover_stmt).all():
+                cover_map[cover_row.work_id] = cover_row.cover_url
+
         items = []
         for row in rows:
             items.append(
@@ -297,6 +330,7 @@ class ReviewRepositoryImpl:
                     "title": row.title,
                     "subtitle": row.subtitle,
                     "leading_article": row.leading_article,
+                    "cover_url": cover_map.get(row.work_id),
                     "authors": [name.strip() for name in (row.author_names or [])],
                     "labelset_id": row.labelset_id,
                     "hue_primary_key": hue_map.get(row.labelset_id),
