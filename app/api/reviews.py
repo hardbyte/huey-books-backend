@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Union
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, Path, Query
 from fastapi_permissions import All, Allow
@@ -167,6 +167,14 @@ def get_review_queue(
         pattern="^(unchecked|ai_labelled|human_reviewed|all)$",
     ),
     min_school_count: int = Query(0, ge=0, description="Minimum school count"),
+    school_id: Optional[int] = Query(
+        None,
+        description=(
+            "Restrict the queue to a school's collection. Honoured for Wriveted "
+            "staff and service accounts; ignored for teachers, who are always "
+            "scoped to their own school."
+        ),
+    ),
     pagination: PaginatedQueryParams = Depends(),
     account: Union[User, ServiceAccount] = Depends(
         get_current_active_user_or_service_account
@@ -177,15 +185,19 @@ def get_review_queue(
     Prioritized review queue sorted by popularity (school_count DESC).
 
     Teachers (educators / school admins) see only books in their own school's
-    collection — the ones their students actually read; Wriveted staff and
-    service accounts see the global queue.
+    collection — the ones their students actually read. Wriveted staff and
+    service accounts see the global queue, or a chosen school's books when
+    ``school_id`` is supplied.
     """
-    school_id = None
     if isinstance(account, User) and account.type in (
         UserAccountType.EDUCATOR,
         UserAccountType.SCHOOL_ADMIN,
     ):
-        school_id = getattr(account, "school_id", None)
+        # Teachers are always locked to their own school's books.
+        effective_school_id = getattr(account, "school_id", None)
+    else:
+        # Wriveted staff / service accounts may target any school (or all).
+        effective_school_id = school_id
 
     items, total = review_repository.get_review_queue(
         db=session,
@@ -193,7 +205,7 @@ def get_review_queue(
         min_school_count=min_school_count,
         skip=pagination.skip,
         limit=pagination.limit,
-        school_id=school_id,
+        school_id=effective_school_id,
     )
     return PaginatedResponse(
         data=[ReviewQueueItem(**item) for item in items],
