@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Path, Security
 from fastapi.params import Query
 from fastapi_permissions import All, Allow, Authenticated
 from sqlalchemy import and_, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from structlog import get_logger
 
 from app import crud
@@ -134,6 +134,20 @@ def get_work_by_id(
             work.info["other"] = {}
             session.add(work)
             session.commit()
+
+        # WorkDetail serialises every edition as an EditionBrief (columns only),
+        # but the Edition model eagerly loads illustrators (subquery), the parent
+        # work (joined), collections (selectin) and a per-row collection_count
+        # subquery. For works with many editions (e.g. 241) that is pathological
+        # — tens of seconds, timing out the request. Load the editions as plain
+        # columns since EditionBrief needs none of those relationships.
+        work = session.scalar(
+            select(Work)
+            .where(Work.id == work.id)
+            .options(
+                selectinload(Work.editions).noload("*").defer(Edition.collection_count)
+            )
+        )
         return WorkDetail.model_validate(work)
 
     else:
