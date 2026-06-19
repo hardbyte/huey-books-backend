@@ -2,7 +2,9 @@ import json
 from typing import Any, Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from structlog import get_logger
 
 from app.api.dependencies.async_db_dep import DBSessionDep
@@ -231,9 +233,18 @@ async def get_recommended_editions_and_labelsets(
 ):
     collection_id = None
     if school_id is not None:
-        school = await school_repository.aget(asession, id=school_id)
+        # Eager-load the collection: school_repository.aget(id) does not, and
+        # accessing the lazy School.collection afterwards raises greenlet_spawn
+        # under the async engine.
+        school = (
+            await asession.execute(
+                select(School)
+                .where(School.id == school_id)
+                .options(selectinload(School.collection))
+            )
+        ).scalar_one_or_none()
         logger.debug("Recommendation request for school", school=school)
-        if school.collection is not None:
+        if school is not None and school.collection is not None:
             collection_id = school.collection.id
         else:
             logger.warning(
