@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Sequence
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, selectinload
@@ -22,6 +22,12 @@ from app.models.user import User, UserAccountType
 from app.schemas.school import SchoolCreateIn, SchoolPatchOptions
 
 logger = get_logger()
+
+# word_similarity threshold for the `%>` operator used in fuzzy school-name
+# search. Lower than the pg_trgm default (0.6) so common typos and
+# transpositions (e.g. "somerfeild" -> "Somerfield") are still recalled, while
+# still letting the GIN trigram index serve the query.
+SCHOOL_SEARCH_WORD_SIMILARITY_THRESHOLD = 0.4
 
 
 class SchoolRepository(ABC):
@@ -231,7 +237,7 @@ class SchoolRepositoryImpl(SchoolRepository):
         official_identifier: Optional[str] = None,
     ):
         """Build a query with optional filters for schools."""
-        from sqlalchemy import func
+        from sqlalchemy import case, func, or_
 
         school_query = select(School).options(
             selectinload(School.subscription).selectinload(Subscription.product),
@@ -247,9 +253,45 @@ class SchoolRepositoryImpl(SchoolRepository):
             school_query = school_query.where(
                 School.info["location", "postcode"].as_string() == postcode
             )
-        if query_string is not None:
+
+        relevance_ordering = None
+        if query_string is not None and query_string.strip():
+            q = query_string.strip().lower()
+            name_lower = func.lower(School.name)
+
+            # word_similarity finds the query as a fuzzy substring within the
+            # (often long) school name; similarity scores the whole string.
+            # GREATEST keeps the stronger of the two signals.
+            word_sim = func.word_similarity(q, name_lower)
+            full_sim = func.similarity(name_lower, q)
+            fuzzy_score = func.greatest(word_sim, full_sim)
+
+            # Boost exact prefix/substring hits above purely fuzzy matches so a
+            # clean partial like "Somer" always outranks a typo-distance match.
+            relevance = fuzzy_score + case(
+                (name_lower.like(q + "%"), 1.0),
+                (name_lower.like("%" + q + "%"), 0.5),
+                else_=0.0,
+            )
+
+            # On a tie (common when two names share the matched word), prefer the
+            # name whose whole string is closest to the query, which favours the
+            # shorter, more specific school over a longer name that merely
+            # contains the same word.
+            relevance_ordering = [relevance.desc(), full_sim.desc()]
+
+            # Recall: keep any substring hit, plus fuzzy hits via the word
+            # similarity operator (catches typos like "Sommerfield" /
+            # "Somerfeild"). Both the LIKE and the `%>` operator are served by
+            # the GIN trigram index (idx_schools_name_trgm) as a BitmapOr, and
+            # `%>` honours pg_trgm.word_similarity_threshold, which the async
+            # caller lowers to SCHOOL_SEARCH_WORD_SIMILARITY_THRESHOLD per
+            # transaction.
             school_query = school_query.where(
-                func.lower(School.name).contains(query_string.lower())
+                or_(
+                    name_lower.like("%" + q + "%"),
+                    name_lower.op("%>")(q),
+                )
             )
         if is_active is not None:
             school_query = school_query.where(
@@ -272,8 +314,15 @@ class SchoolRepositoryImpl(SchoolRepository):
             school_query.options(selectinload(School.country))
             .options(selectinload(School.admins))
             .options(selectinload(School.collection))
-            .order_by(School.created_at.desc())
         )
+
+        if relevance_ordering is not None:
+            school_query = school_query.order_by(
+                *relevance_ordering, School.created_at.desc()
+            )
+        else:
+            school_query = school_query.order_by(School.created_at.desc())
+
         return school_query
 
     async def get_all_with_optional_filters(
@@ -306,6 +355,16 @@ class SchoolRepositoryImpl(SchoolRepository):
             skip=skip,
             limit=limit,
         )
+        if query_string is not None and query_string.strip():
+            # Scope the lowered word_similarity threshold to this transaction so
+            # the fuzzy `%>` recall in the search query stays index-served
+            # without leaking the setting onto pooled connections.
+            await db.execute(
+                text(
+                    "SET LOCAL pg_trgm.word_similarity_threshold = "
+                    f"{SCHOOL_SEARCH_WORD_SIMILARITY_THRESHOLD}"
+                )
+            )
         return (await db.execute(query)).scalars().all()
 
     def create(
