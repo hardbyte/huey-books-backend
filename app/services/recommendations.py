@@ -2,7 +2,7 @@ from typing import Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased
 from structlog import get_logger
 
 from app import crud
@@ -120,20 +120,8 @@ async def get_recommended_labelset_query(
     aliased_edition = aliased(Edition, massive_cte)
     aliased_labelset_end = aliased(LabelSet, massive_cte)
 
-    # Eager-load the relationships consumed downstream (authors, hues, reading
-    # abilities). They are declared lazy="selectin", but that implicit loader
-    # does not attach to entities aliased against the CTE above, so without
-    # explicit options they lazy-load on attribute access — which happens in
-    # synchronous code (get_authors_string / LabelSetDetail validation) and
-    # raises greenlet_spawn under the async engine.
-    return (
-        select(aliased_work, aliased_edition, aliased_labelset_end)
-        .options(
-            selectinload(aliased_work.authors),
-            selectinload(aliased_labelset_end.hues),
-            selectinload(aliased_labelset_end.reading_abilities),
-        )
-        .order_by(func.random())
+    return select(aliased_work, aliased_edition, aliased_labelset_end).order_by(
+        func.random()
     )
 
 
