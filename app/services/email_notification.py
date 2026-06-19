@@ -361,6 +361,12 @@ class EmailNotificationService:
                 html_content=data.get("html_content", ""),
             )
 
+            # Route replies to a monitored inbox when specified.
+            if reply_to := data.get("reply_to"):
+                from sendgrid.helpers.mail import ReplyTo
+
+                message.reply_to = ReplyTo(reply_to)
+
             # Add template ID if specified
             if template_id := data.get("template_id"):
                 message.template_id = template_id

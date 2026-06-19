@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     # (e.g. the broadcast unsubscribe link).
     WRIVETED_API_BASE_URL: str = "https://api.wriveted.com"
 
+    # Sender + reply-to for staff broadcasts. Replies go to BROADCAST_REPLY_TO
+    # (point it at a monitored inbox).
+    BROADCAST_FROM_EMAIL: str = "hello@hueybooks.com"
+    BROADCAST_REPLY_TO: str = "hello@hueybooks.com"
+
     NIELSEN_API_URL: str = (
         "https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest"
     )

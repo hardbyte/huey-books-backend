@@ -1,13 +1,18 @@
-"""Educator broadcast service: recipient resolution, opt-out, unsubscribe tokens.
+"""Broadcast service: audience resolution, opt-out, unsubscribe tokens.
 
-The broadcast reaches active educators/school-admins who have not opted out;
-the unsubscribe token round-trips and flips the opt-out flag.
+A broadcast reaches active users in the chosen segment who have not opted out;
+country/school filters apply to school-affiliated users; the unsubscribe token
+round-trips and flips the opt-out flag.
 """
 
 import uuid
 
 from app.models.educator import Educator
-from app.services import educator_broadcast as bc
+from app.models.user import UserAccountType
+from app.schemas.broadcast import BroadcastAudience
+from app.services import broadcast as bc
+
+EDUCATORS = BroadcastAudience(user_types=[UserAccountType.EDUCATOR])
 
 
 def _make_educator(
@@ -36,28 +41,73 @@ def test_resolve_recipients_includes_active_excludes_optout_and_inactive(
     opted_out = _make_educator(session, test_school.id, opted_out=True)
     inactive = _make_educator(session, test_school.id, is_active=False)
 
-    ids = {u.id for u in bc.resolve_recipients(session, "all_educators", None)}
+    ids = {u.id for u in bc.resolve_recipients(session, EDUCATORS)}
 
     assert keep.id in ids
     assert opted_out.id not in ids
     assert inactive.id not in ids
 
 
-def test_resolve_recipients_school_scope_filters(session, test_school):
+def test_user_type_filter_excludes_other_types(session, test_school):
+    educator = _make_educator(session, test_school.id)
+
+    parents_only = BroadcastAudience(user_types=[UserAccountType.PARENT])
+    ids = {u.id for u in bc.resolve_recipients(session, parents_only)}
+    assert educator.id not in ids
+
+
+def test_school_scope_filters(session, test_school):
     keep = _make_educator(session, test_school.id)
 
     in_school = {
         u.id
         for u in bc.resolve_recipients(
-            session, "school", test_school.wriveted_identifier
+            session,
+            BroadcastAudience(
+                user_types=[UserAccountType.EDUCATOR],
+                school_id=test_school.wriveted_identifier,
+            ),
         )
     }
     assert keep.id in in_school
 
     other_school = {
-        u.id for u in bc.resolve_recipients(session, "school", uuid.uuid4())
+        u.id
+        for u in bc.resolve_recipients(
+            session,
+            BroadcastAudience(
+                user_types=[UserAccountType.EDUCATOR], school_id=uuid.uuid4()
+            ),
+        )
     }
     assert keep.id not in other_school
+
+
+def test_country_scope_filters(session, test_school):
+    keep = _make_educator(session, test_school.id)
+
+    same_country = {
+        u.id
+        for u in bc.resolve_recipients(
+            session,
+            BroadcastAudience(
+                user_types=[UserAccountType.EDUCATOR],
+                country_code=test_school.country_code,
+            ),
+        )
+    }
+    assert keep.id in same_country
+
+    other_country = {
+        u.id
+        for u in bc.resolve_recipients(
+            session,
+            BroadcastAudience(
+                user_types=[UserAccountType.EDUCATOR], country_code="ZZZ"
+            ),
+        )
+    }
+    assert keep.id not in other_country
 
 
 def test_unsubscribe_token_round_trip_and_flag(session, test_school):
@@ -71,8 +121,7 @@ def test_unsubscribe_token_round_trip_and_flag(session, test_school):
     session.refresh(educator)
     assert educator.marketing_opt_out is True
 
-    # Now excluded from the audience.
-    ids = {u.id for u in bc.resolve_recipients(session, "all_educators", None)}
+    ids = {u.id for u in bc.resolve_recipients(session, EDUCATORS)}
     assert educator.id not in ids
 
 

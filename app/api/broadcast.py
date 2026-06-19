@@ -1,6 +1,3 @@
-from typing import Optional
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -8,31 +5,32 @@ from structlog import get_logger
 
 from app.api.dependencies.security import get_current_active_superuser
 from app.db.session import get_session
-from app.schemas.educator_broadcast import (
+from app.schemas.broadcast import (
+    BroadcastAudience,
     BroadcastPreview,
     BroadcastSendIn,
     BroadcastSendResult,
+    BroadcastTestIn,
 )
-from app.services import educator_broadcast as broadcast_service
+from app.services import broadcast as broadcast_service
 
 logger = get_logger()
 
-router = APIRouter(tags=["Educators"])
+router = APIRouter(tags=["Broadcast"])
 public_router = APIRouter(tags=["Public"])
 
 
-@router.get(
-    "/educator-broadcast/preview",
+@router.post(
+    "/broadcast/preview",
     response_model=BroadcastPreview,
     dependencies=[Depends(get_current_active_superuser)],
 )
-def preview_educator_broadcast(
-    scope: str = Query("all_educators"),
-    school_id: Optional[UUID] = Query(None),
+def preview_broadcast(
+    audience: BroadcastAudience,
     session: Session = Depends(get_session),
 ):
     """Count (and sample) the recipients a broadcast would reach. Staff only."""
-    recipients = broadcast_service.resolve_recipients(session, scope, school_id)
+    recipients = broadcast_service.resolve_recipients(session, audience)
     return BroadcastPreview(
         recipient_count=len(recipients),
         sample_names=[r.name for r in recipients[:5] if r.name],
@@ -40,22 +38,37 @@ def preview_educator_broadcast(
 
 
 @router.post(
-    "/educator-broadcast",
+    "/broadcast",
     response_model=BroadcastSendResult,
 )
-def send_educator_broadcast(
+def send_broadcast(
     data: BroadcastSendIn,
     account=Depends(get_current_active_superuser),
     session: Session = Depends(get_session),
 ):
-    """Queue a broadcast email to the chosen educator audience. Staff only."""
+    """Queue a broadcast email to the chosen audience. Staff only."""
     queued = broadcast_service.send_broadcast(
         session,
         subject=data.subject,
         body=data.body,
-        scope=data.audience.scope,
-        school_id=data.audience.school_id,
+        audience=data.audience,
         account=account,
+    )
+    return BroadcastSendResult(queued=queued)
+
+
+@router.post(
+    "/broadcast/test",
+    response_model=BroadcastSendResult,
+)
+def send_broadcast_test(
+    data: BroadcastTestIn,
+    account=Depends(get_current_active_superuser),
+    session: Session = Depends(get_session),
+):
+    """Send the composed message only to the requesting staff member. Staff only."""
+    queued = broadcast_service.send_test(
+        session, subject=data.subject, body=data.body, account=account
     )
     return BroadcastSendResult(queued=queued)
 

@@ -5,6 +5,8 @@ from app.api.auth import router as auth_router
 from app.api.authors import router as author_router
 from app.api.booklists import public_router as booklist_router_public
 from app.api.booklists import router as booklist_router
+from app.api.broadcast import public_router as broadcast_router_public
+from app.api.broadcast import router as broadcast_router
 from app.api.chat import router as chat_router
 from app.api.chatbot_integrations import router as chatbot_integrations_router
 from app.api.classes import router as class_group_router
@@ -14,8 +16,6 @@ from app.api.collections import router as collections_router
 from app.api.commerce import router as commerce_router
 from app.api.dashboards import router as dashboard_router
 from app.api.editions import router as edition_router
-from app.api.educator_broadcast import public_router as broadcast_router_public
-from app.api.educator_broadcast import router as broadcast_router
 from app.api.events import router as events_router
 from app.api.hydration import router as hydration_router
 from app.api.illustrators import router as illustrator_router
