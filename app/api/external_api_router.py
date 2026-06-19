@@ -14,6 +14,8 @@ from app.api.collections import router as collections_router
 from app.api.commerce import router as commerce_router
 from app.api.dashboards import router as dashboard_router
 from app.api.editions import router as edition_router
+from app.api.educator_broadcast import public_router as broadcast_router_public
+from app.api.educator_broadcast import router as broadcast_router
 from app.api.events import router as events_router
 from app.api.hydration import router as hydration_router
 from app.api.illustrators import router as illustrator_router
@@ -48,6 +50,8 @@ api_router.include_router(cms_content_router, prefix="/cms")  # Admin-only CMS e
 api_router.include_router(collections_router)
 api_router.include_router(commerce_router)
 api_router.include_router(dashboard_router)
+api_router.include_router(broadcast_router)
+api_router.include_router(broadcast_router_public)
 api_router.include_router(edition_router)
 api_router.include_router(events_router)
 api_router.include_router(hydration_router)

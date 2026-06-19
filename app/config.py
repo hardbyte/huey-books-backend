@@ -68,6 +68,10 @@ class Settings(BaseSettings):
 
     HUEY_BOOKS_APP_URL: str = "https://hueybooks.com"
 
+    # Public base URL of this API, used to build absolute links in emails
+    # (e.g. the broadcast unsubscribe link).
+    WRIVETED_API_BASE_URL: str = "https://api.wriveted.com"
+
     NIELSEN_API_URL: str = (
         "https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest"
     )

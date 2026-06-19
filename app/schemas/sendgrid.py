@@ -39,6 +39,7 @@ class SendGridEmailData(BaseModel):
     from_name: str | None = None
     to_emails: list[EmailStr]
     subject: str | None = None
+    html_content: str | None = None
     template_id: str | None = None
     template_data: dict = {}
 
