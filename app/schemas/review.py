@@ -52,6 +52,7 @@ class ReviewQueueItem(BaseModel):
     title: str
     subtitle: str | None = None
     leading_article: str | None = None
+    cover_url: str | None = None
     authors: list[str]
     labelset_id: int | None = None
     hue_primary_key: str | None = None
