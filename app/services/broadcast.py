@@ -60,6 +60,21 @@ def unsubscribe_url(user_id) -> str:
     return f"{base}/v1/email/unsubscribe?token={make_unsubscribe_token(user_id)}"
 
 
+def _unsubscribe_headers(user_id) -> dict[str, str]:
+    """RFC 8058 one-click unsubscribe headers for better deliverability.
+
+    The List-Unsubscribe URL accepts a POST (One-Click), so mail clients can
+    unsubscribe in place; GET link-scanners can't trigger it.
+    """
+    return {
+        "List-Unsubscribe": (
+            f"<{unsubscribe_url(user_id)}>, "
+            f"<mailto:{settings.BROADCAST_REPLY_TO}?subject=Unsubscribe>"
+        ),
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+
+
 def _school_member_condition(internal_school_id_subquery):
     """A condition matching users affiliated with the given school ids.
 
@@ -140,7 +155,9 @@ def render_email_html(body: str, unsubscribe_link: str) -> str:
     )
 
 
-def _queue_email(db: Session, *, to_email: str, subject: str, html: str, user_id):
+def _queue_email(
+    db: Session, *, to_email: str, subject: str, html: str, user_id, headers=None
+):
     create_email_notification_service().send_email_via_outbox_sync(
         db,
         SendGridEmailData(
@@ -150,6 +167,7 @@ def _queue_email(db: Session, *, to_email: str, subject: str, html: str, user_id
             to_emails=[to_email],
             subject=subject,
             html_content=html,
+            headers=headers,
         ),
         email_type=EmailType.MARKETING,
         user_id=str(user_id) if user_id else None,
@@ -170,7 +188,12 @@ def send_broadcast(
     for user in recipients:
         html = render_email_html(body, unsubscribe_url(user.id))
         _queue_email(
-            db, to_email=user.email, subject=subject, html=html, user_id=user.id
+            db,
+            to_email=user.email,
+            subject=subject,
+            html=html,
+            user_id=user.id,
+            headers=_unsubscribe_headers(user.id),
         )
 
     logger.info(

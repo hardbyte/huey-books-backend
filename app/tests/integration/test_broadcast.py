@@ -138,3 +138,81 @@ def test_render_email_html_escapes_and_links():
     assert "&lt;script&gt;" in html
     assert "Second para" in html
     assert "unsubscribe?token=abc" in html
+
+
+# --- API layer ---
+
+
+def test_preview_requires_admin(client):
+    resp = client.post("/v1/broadcast/preview", json={"user_types": ["educator"]})
+    assert resp.status_code in (401, 403)
+
+
+def test_send_requires_admin(client):
+    resp = client.post(
+        "/v1/broadcast",
+        json={"subject": "Hi", "body": "Hello", "audience": {"user_types": ["educator"]}},
+    )
+    assert resp.status_code in (401, 403)
+
+
+def test_preview_rejects_empty_user_types(client, test_wrivetedadmin_account_headers):
+    resp = client.post(
+        "/v1/broadcast/preview",
+        headers=test_wrivetedadmin_account_headers,
+        json={"user_types": []},
+    )
+    assert resp.status_code == 422
+
+
+def test_preview_counts_recipients(
+    client, test_wrivetedadmin_account_headers, session, test_school
+):
+    _make_educator(session, test_school.id)
+    resp = client.post(
+        "/v1/broadcast/preview",
+        headers=test_wrivetedadmin_account_headers,
+        json={
+            "user_types": ["educator"],
+            "school_id": str(test_school.wriveted_identifier),
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["recipient_count"] >= 1
+
+
+def test_test_send_goes_to_self_only(client, test_wrivetedadmin_account_headers):
+    resp = client.post(
+        "/v1/broadcast/test",
+        headers=test_wrivetedadmin_account_headers,
+        json={"subject": "Hi", "body": "Hello there"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["queued"] == 1
+
+
+def test_unsubscribe_get_does_not_mutate(client, session, test_school):
+    educator = _make_educator(session, test_school.id)
+    token = bc.make_unsubscribe_token(educator.id)
+
+    resp = client.get(f"/v1/email/unsubscribe?token={token}")
+    assert resp.status_code == 200
+
+    session.refresh(educator)
+    assert educator.marketing_opt_out is False  # GET must not unsubscribe
+
+
+def test_unsubscribe_post_opts_out(client, session, test_school):
+    educator = _make_educator(session, test_school.id)
+    token = bc.make_unsubscribe_token(educator.id)
+
+    resp = client.post(f"/v1/email/unsubscribe?token={token}")
+    assert resp.status_code == 200
+
+    session.refresh(educator)
+    assert educator.marketing_opt_out is True
+
+
+def test_unsubscribe_get_bad_token(client):
+    resp = client.get("/v1/email/unsubscribe?token=garbage")
+    assert resp.status_code == 400

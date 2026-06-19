@@ -367,6 +367,12 @@ class EmailNotificationService:
 
                 message.reply_to = ReplyTo(reply_to)
 
+            # Custom SMTP headers, e.g. List-Unsubscribe / List-Unsubscribe-Post.
+            if headers := data.get("headers"):
+                from sendgrid.helpers.mail import Header
+
+                message.header = [Header(key, value) for key, value in headers.items()]
+
             # Add template ID if specified
             if template_id := data.get("template_id"):
                 message.template_id = template_id

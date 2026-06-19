@@ -73,25 +73,49 @@ def send_broadcast_test(
     return BroadcastSendResult(queued=queued)
 
 
-_UNSUB_OK = (
-    "<html><body style='font-family:Arial,sans-serif;text-align:center;"
-    "padding:60px;color:#1f1f1f;'><h2>You've been unsubscribed</h2>"
-    "<p>You won't receive further update emails from Huey Books.</p></body></html>"
+def _page(body: str) -> str:
+    return (
+        "<html><body style='font-family:Arial,sans-serif;text-align:center;"
+        f"padding:60px;color:#1f1f1f;'>{body}</body></html>"
+    )
+
+
+_UNSUB_OK = _page(
+    "<h2>You've been unsubscribed</h2>"
+    "<p>You won't receive further update emails from Huey Books.</p>"
 )
-_UNSUB_BAD = (
-    "<html><body style='font-family:Arial,sans-serif;text-align:center;"
-    "padding:60px;color:#1f1f1f;'><h2>Link expired or invalid</h2>"
+_UNSUB_BAD = _page(
+    "<h2>Link expired or invalid</h2>"
     "<p>Please contact hello@hueybooks.com to update your preferences.</p>"
-    "</body></html>"
 )
 
 
 @public_router.get("/email/unsubscribe", response_class=HTMLResponse)
+def unsubscribe_page(token: str = Query(...)):
+    """Show an unsubscribe confirmation.
+
+    Deliberately does NOT change anything: email link scanners and clients
+    pre-fetch GET links, which would otherwise unsubscribe people who never
+    clicked. The actual opt-out happens on the POST below.
+    """
+    if broadcast_service.verify_unsubscribe_token(token) is None:
+        return HTMLResponse(content=_UNSUB_BAD, status_code=400)
+    form = _page(
+        "<h2>Unsubscribe from Huey Books updates?</h2>"
+        f"<form method='post' action='/v1/email/unsubscribe?token={token}'>"
+        "<button type='submit' style='padding:10px 20px;font-size:15px;'>"
+        "Yes, unsubscribe</button></form>"
+    )
+    return HTMLResponse(content=form, status_code=200)
+
+
+@public_router.post("/email/unsubscribe", response_class=HTMLResponse)
 def unsubscribe(
     token: str = Query(...),
     session: Session = Depends(get_session),
 ):
-    """One-click unsubscribe target from broadcast emails. Public (token-auth)."""
+    """Perform the opt-out. Serves both the confirmation form above and RFC 8058
+    one-click unsubscribe (mail clients POST here directly). Public (token-auth)."""
     ok = broadcast_service.unsubscribe_user(session, token)
     return HTMLResponse(
         content=_UNSUB_OK if ok else _UNSUB_BAD,

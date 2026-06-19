@@ -16,7 +16,9 @@ class BroadcastAudience(BaseModel):
     """
 
     # Account types to include, e.g. ["educator", "school_admin"], ["parent"].
-    user_types: list[UserAccountType] = Field(default_factory=list)
+    # Required and non-empty: an empty segment would email everyone, which must
+    # be an explicit choice (select every type) rather than an accidental default.
+    user_types: list[UserAccountType] = Field(min_length=1)
     # 3-letter country code as stored on schools (e.g. "NZL", "AUS").
     country_code: Optional[str] = None
     # A school's wriveted_identifier.

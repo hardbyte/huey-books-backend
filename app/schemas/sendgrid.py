@@ -41,6 +41,8 @@ class SendGridEmailData(BaseModel):
     reply_to: EmailStr | None = None
     subject: str | None = None
     html_content: str | None = None
+    # Extra SMTP headers, e.g. List-Unsubscribe / List-Unsubscribe-Post.
+    headers: dict[str, str] | None = None
     template_id: str | None = None
     template_data: dict = {}
 
