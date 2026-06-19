@@ -145,7 +145,8 @@ def get_work_by_id(
             select(Work)
             .where(Work.id == work.id)
             .options(
-                selectinload(Work.editions).noload("*").defer(Edition.collection_count)
+                selectinload(Work.editions).noload("*"),
+                selectinload(Work.editions).defer(Edition.collection_count),
             )
         )
         return WorkDetail.model_validate(work)
