@@ -1,8 +1,10 @@
 from datetime import datetime
-from typing import Union
+from typing import Optional, Union
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query
 from fastapi_permissions import All, Allow
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from structlog import get_logger
 
@@ -12,7 +14,7 @@ from app.api.dependencies.security import (
     get_current_active_user_or_service_account,
 )
 from app.db.session import get_session
-from app.models import ServiceAccount, User, Work
+from app.models import School, ServiceAccount, User, Work
 from app.models.labelset import LabelOrigin
 from app.models.user import UserAccountType
 from app.permissions import Permission
@@ -167,6 +169,15 @@ def get_review_queue(
         pattern="^(unchecked|ai_labelled|human_reviewed|all)$",
     ),
     min_school_count: int = Query(0, ge=0, description="Minimum school count"),
+    school_id: Optional[UUID] = Query(
+        None,
+        description=(
+            "Restrict the queue to a school's collection, identified by the "
+            "school's wriveted_identifier. Honoured for Wriveted staff and "
+            "service accounts; ignored for teachers, who are always scoped to "
+            "their own school."
+        ),
+    ),
     pagination: PaginatedQueryParams = Depends(),
     account: Union[User, ServiceAccount] = Depends(
         get_current_active_user_or_service_account
@@ -177,15 +188,24 @@ def get_review_queue(
     Prioritized review queue sorted by popularity (school_count DESC).
 
     Teachers (educators / school admins) see only books in their own school's
-    collection — the ones their students actually read; Wriveted staff and
-    service accounts see the global queue.
+    collection — the ones their students actually read. Wriveted staff and
+    service accounts see the global queue, or a chosen school's books when
+    ``school_id`` (a school's wriveted_identifier) is supplied.
     """
-    school_id = None
     if isinstance(account, User) and account.type in (
         UserAccountType.EDUCATOR,
         UserAccountType.SCHOOL_ADMIN,
     ):
-        school_id = getattr(account, "school_id", None)
+        # Teachers are always locked to their own school's books.
+        effective_school_id = getattr(account, "school_id", None)
+    elif school_id is not None:
+        # Wriveted staff / service accounts may target any school by its public
+        # identifier; resolve it to the internal id the repository filters on.
+        effective_school_id = session.scalar(
+            select(School.id).where(School.wriveted_identifier == school_id)
+        )
+    else:
+        effective_school_id = None
 
     items, total = review_repository.get_review_queue(
         db=session,
@@ -193,7 +213,7 @@ def get_review_queue(
         min_school_count=min_school_count,
         skip=pagination.skip,
         limit=pagination.limit,
-        school_id=school_id,
+        school_id=effective_school_id,
     )
     return PaginatedResponse(
         data=[ReviewQueueItem(**item) for item in items],
