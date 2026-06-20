@@ -116,6 +116,9 @@ steps:
       - "--region=$_DEPLOY_REGION"
       - "--concurrency=20"
       - "--max-instances=6"
+      # Full CPU during startup so the ~10s app import + image decompress aren't
+      # CPU-throttled — meaningfully cuts cold-start latency at no idle cost.
+      - "--cpu-boost"
       - "--quiet"
       - >-
         --set-env-vars=
