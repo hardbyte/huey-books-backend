@@ -361,6 +361,18 @@ class EmailNotificationService:
                 html_content=data.get("html_content", ""),
             )
 
+            # Route replies to a monitored inbox when specified.
+            if reply_to := data.get("reply_to"):
+                from sendgrid.helpers.mail import ReplyTo
+
+                message.reply_to = ReplyTo(reply_to)
+
+            # Custom SMTP headers, e.g. List-Unsubscribe / List-Unsubscribe-Post.
+            if headers := data.get("headers"):
+                from sendgrid.helpers.mail import Header
+
+                message.header = [Header(key, value) for key, value in headers.items()]
+
             # Add template ID if specified
             if template_id := data.get("template_id"):
                 message.template_id = template_id

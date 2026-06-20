@@ -5,6 +5,8 @@ from app.api.auth import router as auth_router
 from app.api.authors import router as author_router
 from app.api.booklists import public_router as booklist_router_public
 from app.api.booklists import router as booklist_router
+from app.api.broadcast import public_router as broadcast_router_public
+from app.api.broadcast import router as broadcast_router
 from app.api.chat import router as chat_router
 from app.api.chatbot_integrations import router as chatbot_integrations_router
 from app.api.classes import router as class_group_router
@@ -48,6 +50,8 @@ api_router.include_router(cms_content_router, prefix="/cms")  # Admin-only CMS e
 api_router.include_router(collections_router)
 api_router.include_router(commerce_router)
 api_router.include_router(dashboard_router)
+api_router.include_router(broadcast_router)
+api_router.include_router(broadcast_router_public)
 api_router.include_router(edition_router)
 api_router.include_router(events_router)
 api_router.include_router(hydration_router)

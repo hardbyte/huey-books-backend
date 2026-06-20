@@ -38,7 +38,11 @@ class SendGridEmailData(BaseModel):
     from_email: EmailStr = "hello@hueybooks.com"
     from_name: str | None = None
     to_emails: list[EmailStr]
+    reply_to: EmailStr | None = None
     subject: str | None = None
+    html_content: str | None = None
+    # Extra SMTP headers, e.g. List-Unsubscribe / List-Unsubscribe-Post.
+    headers: dict[str, str] | None = None
     template_id: str | None = None
     template_data: dict = {}
 

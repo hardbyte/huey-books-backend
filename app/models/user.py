@@ -104,6 +104,13 @@ class User(Base):
         Boolean(), nullable=False, server_default="false"
     )
 
+    # Opt-out from staff broadcasts/announcements (the educator email channel).
+    # Existing educators are reachable for service updates by default; this is
+    # set true when a recipient clicks the unsubscribe link in a broadcast.
+    marketing_opt_out: Mapped[bool] = mapped_column(
+        Boolean(), nullable=False, server_default="false"
+    )
+
     # targeting the association instead of the users directly to
     # include the "active" status in any outputs
     supportee_associations: Mapped[list[SupporterReaderAssociation]] = relationship(
