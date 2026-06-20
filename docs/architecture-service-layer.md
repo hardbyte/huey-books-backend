@@ -95,11 +95,23 @@ The `crud/__init__.py` re-exports `ChatRepository` from `app/repositories/` for 
 
 ## Declarative Database Infrastructure
 
-All PostgreSQL functions and triggers are defined as Python objects using `alembic_utils`, providing version control and a single source of truth for database logic.
+PostgreSQL functions, triggers, views and extensions are defined as Python
+objects using `alembic_utils` and registered in `alembic/env.py`
+(`register_entities`), providing version control and a single source of truth
+for database logic.
 
 **Key files:**
 - `app/db/functions.py` — PGFunction definitions
 - `app/db/triggers.py` — PGTrigger definitions
+- `app/db/views.py` — PGView / PGMaterializedView definitions
+- `app/db/extensions.py` — PGExtension definitions (`vector`, `pg_trgm`)
+
+> **Scope note:** `alembic_utils` manages *stateful SQL objects* — functions,
+> triggers, views, extensions. Plain schema (tables, columns, indexes) is
+> handled by ordinary Alembic migrations generated from the SQLAlchemy models.
+> A functional index like the trigram GIN index on `lower(schools.name)` is a
+> regular migration op (it can't be expressed as a model `Index`), while the
+> `pg_trgm` extension it depends on is declared in `app/db/extensions.py`.
 
 **Example** (CMS full-text search trigger):
 
@@ -149,8 +161,13 @@ cms_content_tsvector_trigger = PGTrigger(
 | `cms_content_tsvector_trigger` | FTS trigger on `cms_content` | Live |
 | `conversation_sessions_notify_flow_event_trigger` | Event trigger on sessions | Live |
 | `update_collections_trigger` | Collection update trigger | Live |
+| `pgvector_ex` (`vector`) | Embedding storage | Declared |
+| `pg_trgm_ex` (`pg_trgm`) | Trigram / fuzzy search | Live |
 
 Migrations use `op.create_entity()` / `op.drop_entity()` for these objects.
+The `pg_trgm` extension is also created idempotently in its migration
+(`CREATE EXTENSION IF NOT EXISTS pg_trgm`) so the trigram index can be built in
+the same revision.
 
 ---
 
@@ -247,8 +264,10 @@ Session state modifications use PostgreSQL advisory locks combined with revision
 - **Repository migration**: 15 of 16 domains have repository implementations (94%)
 - **CRUD removal**: 12 domain CRUD files deleted (75%)
 - **Service layer**: 4 core services (Analytics, CMS, Conversation, Flow) implementing domain-focused patterns
-- **Declarative DB**: All new database objects use `alembic_utils`
+- **Declarative DB**: Functions, triggers, views and extensions managed via `alembic_utils`
 - **Full-text search**: PostgreSQL tsvector/GIN indexes for CMS content
+- **Trigram search**: `pg_trgm` GIN index for ranked, typo-tolerant school-name search
+- **Educator/user broadcast**: staff email-to-segment (`app/services/broadcast.py`) via the Event Outbox, with one-click unsubscribe (`users.marketing_opt_out`)
 - **Event Outbox**: Production-ready reliable delivery
 - **Concurrency control**: Advisory locks with revision control
 - **Test isolation**: Singleton reset infrastructure, CSRF isolation, 638+ integration tests passing
@@ -257,7 +276,7 @@ Session state modifications use PostgreSQL advisory locks combined with revision
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| **User domain migration** | High | 337-line CRUD, 86 usages across 20 files, polymorphic user types |
+| **User domain migration** | High | 337-line CRUD, 86 usages across 20 files, polymorphic user types. New consumers (e.g. `broadcast.py` recipient resolution) query users directly via `select(User)` until a `UserRepository` exists. |
 | **Collection CRUD removal** | Medium | 26 active usages across 9 files |
 | **Event CRUD removal** | Medium | 49 active usages across 16 files |
 | **API layer migration** | Ongoing | ~16 API files still import from `app.crud`; CMS, analytics, and chat endpoints already use services |

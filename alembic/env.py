@@ -23,6 +23,7 @@ sys.path.insert(
 )
 
 from app.db.base_class import Base  # noqa
+from app.db.extensions import pg_trgm_ex, pgvector_ex
 from app.db.functions import (
     cms_content_tsvector_update,
     notify_flow_event_function,
@@ -44,6 +45,9 @@ from app.db.views import collection_frequency_view, search_view_v1
 
 register_entities(
     [
+        # Extensions
+        pgvector_ex,
+        pg_trgm_ex,
         # Functions
         update_edition_title,
         update_edition_title_from_work,
