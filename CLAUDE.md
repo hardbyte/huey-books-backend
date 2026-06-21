@@ -22,19 +22,22 @@ See [README.md](README.md) for full setup, testing, migration, and deployment in
 
 Quick reference:
 
+Dependencies are managed with **uv** (`pyproject.toml` + `uv.lock`).
+
 | Task | Command |
 |------|---------|
-| Install dependencies | `poetry install` |
+| Install dependencies | `uv sync` |
 | Start stack | `docker compose up -d --build` |
 | Apply migrations | `docker compose run --rm migration` |
 | Seed data | `docker compose run --rm --entrypoint python -v "$PWD/scripts:/app/scripts" api /app/scripts/seed_admin_ui_data.py --emit-tokens --tokens-format json` |
-| Unit tests | `poetry run pytest app/tests/unit/ -v` |
+| Unit tests | `uv run pytest app/tests/unit/ -v` |
 | Integration tests | `bash scripts/integration-tests.sh` |
-| Single test | `poetry run pytest -v app/tests/integration/test_specific.py::test_function` |
-| Lint | `poetry run ruff check` |
-| Lint fix | `poetry run ruff check --fix` |
-| Run API directly | `uvicorn app.main:app --reload` |
-| Run internal API | `gunicorn --workers=1 --worker-class=uvicorn.workers.UvicornWorker app.internal_api:internal_app` |
+| Single test | `uv run pytest -v app/tests/integration/test_specific.py::test_function` |
+| Lint | `uv run ruff check` |
+| Lint fix | `uv run ruff check --fix` |
+| Add a dependency | `uv add <pkg>` (`--dev` for dev group) |
+| Run API directly | `uv run uvicorn app.main:app --reload` |
+| Run internal API | `uv run gunicorn --workers=1 --worker-class=uvicorn.workers.UvicornWorker app.internal_api:internal_app` |
 
 **Important**: Integration tests should be run using `bash scripts/integration-tests.sh` which provides the proper Docker environment. Running integration tests directly with pytest may encounter async fixture issues. Ensure no conflicting postgres containers are running on port 5432.
 
@@ -77,9 +80,9 @@ See [docs/architecture-service-layer.md](docs/architecture-service-layer.md) for
 ### Migration Workflow
 1. Modify SQLAlchemy models in `app/models/`
 2. Add imports to `app/models/__init__.py`
-3. Generate migration: `poetry run alembic revision --autogenerate -m "Description"`
+3. Generate migration: `uv run alembic revision --autogenerate -m "Description"`
 4. Review generated migration file manually. Models are source of truth.
-5. Apply: `poetry run alembic upgrade head`
+5. Apply: `uv run alembic upgrade head`
 
 ## Common Patterns and Pitfalls
 

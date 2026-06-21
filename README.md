@@ -48,7 +48,7 @@ The SQLAlchemy models at [`app/models/`](https://github.com/Wriveted/wriveted-ap
 
 ```bash
 # Install Python dependencies
-poetry install
+uv sync
 
 # Build and start the stack (API + internal + PostgreSQL)
 docker compose up -d --build
@@ -117,7 +117,7 @@ Unit tests require several environment variables to be set. Use the helper scrip
 
 ```bash
 source scripts/setup-test-env.sh
-poetry run pytest app/tests/unit/ -v
+uv run pytest app/tests/unit/ -v
 ```
 
 ### Integration tests (Docker)
@@ -147,7 +147,7 @@ bash scripts/integration-tests.sh --run-isolated-tests
 ### Single test
 
 ```bash
-poetry run pytest -v app/tests/integration/test_specific.py::test_function
+uv run pytest -v app/tests/integration/test_specific.py::test_function
 ```
 
 ### E2E flow test
@@ -168,10 +168,10 @@ Uses [Alembic](https://alembic.sqlalchemy.org/) with SQLAlchemy 2.0 models. Post
 export SQLALCHEMY_DATABASE_URI=postgresql://postgres:password@localhost/postgres
 
 # Apply all migrations
-poetry run alembic upgrade head
+uv run alembic upgrade head
 
 # Create a new migration after modifying models
-poetry run alembic revision --autogenerate -m "Description"
+uv run alembic revision --autogenerate -m "Description"
 ```
 
 Workflow: modify models in `app/models/` -> add imports to `app/models/__init__.py` -> generate migration -> review the generated file -> apply.
@@ -180,14 +180,14 @@ Workflow: modify models in `app/models/` -> add imports to `app/models/__init__.
 
 ```bash
 # Lint
-poetry run ruff check
+uv run ruff check
 
 # Auto-fix
-poetry run ruff check --fix
+uv run ruff check --fix
 
 # Pre-commit hooks (install once, then runs on every commit)
-poetry run pre-commit install
-poetry run pre-commit run --all-files
+uv run pre-commit install
+uv run pre-commit run --all-files
 ```
 
 ## Authentication & authorization
@@ -237,7 +237,7 @@ cloud_sql_proxy -instances=wriveted-api:australia-southeast1:wriveted=tcp:5432
 
 # Apply migrations through the proxy (password in Secret Manager)
 export SQLALCHEMY_DATABASE_URI=postgresql://postgres:password@localhost/postgres
-poetry run alembic upgrade head
+uv run alembic upgrade head
 ```
 
 The Cloud Run service uses a restricted `cloudrun` database role:

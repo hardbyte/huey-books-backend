@@ -18,14 +18,11 @@ jobs:
       SECRET_KEY: unused
     steps:
     - uses: actions/checkout@v6
-    - name: ➕ Install poetry
-      uses: snok/install-poetry@v1
-    - name: 🐍 Set up Python
-      id: python
-      uses: actions/setup-python@v6
+    - name: ➕ Install uv
+      uses: astral-sh/setup-uv@v5
       with:
         python-version: "3.13"
-        cache: 'poetry'
+        enable-cache: true
     - name: 🗄 Set up PostgreSQL
       uses: danielweller-swp/postgresql-action@v2
       with:
@@ -33,20 +30,15 @@ jobs:
         postgresql user: postgres
         postgresql password: secret
     - name: 🔧 Install dependencies
-      run: poetry install --no-interaction --no-root
+      run: uv sync --frozen
     - name: 🔎 Check connection to PostgreSQL
-      run: |
-        source $(poetry env info --path)/bin/activate
-        python -m app.db.check_can_connect_to_db
+      run: uv run python -m app.db.check_can_connect_to_db
     - name: ⚡ Run forward migrations
-      run: |
-        poetry run alembic upgrade head
+      run: uv run alembic upgrade head
     - name: ⚡ Run backwards migrations
-      run: |
-        poetry run alembic downgrade -10
+      run: uv run alembic downgrade -10
     - name: ⚡ Retest forward migrations
-      run: |
-        poetry run alembic upgrade head
+      run: uv run alembic upgrade head
     - name: Install pgroles
       env:
         PGROLES_VERSION: "0.1.5"
