@@ -57,7 +57,9 @@ RUN apt-get update \
 COPY --from=builder --chown=${USER_UID}:${USER_GID} /opt/venv /opt/venv
 
 WORKDIR /app
-COPY --chown=${USER_UID}:${USER_GID} alembic.ini ./
+# pyproject.toml carries pytest config ([tool.pytest.ini_options], incl.
+# asyncio_mode=auto) and ruff config used by the test image — keep it at /app.
+COPY --chown=${USER_UID}:${USER_GID} pyproject.toml alembic.ini ./
 COPY --chown=${USER_UID}:${USER_GID} scripts/ /app/scripts
 COPY --chown=${USER_UID}:${USER_GID} alembic/ /app/alembic
 COPY --chown=${USER_UID}:${USER_GID} app/ /app/app
