@@ -3,4 +3,4 @@
 # Set bash to exit immediately on any command failure
 set -e
 
-poetry run pytest -v app/tests "$@"
+python -m pytest -v app/tests "$@"

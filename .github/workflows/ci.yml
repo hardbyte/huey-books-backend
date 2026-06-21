@@ -25,19 +25,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-      - uses: actions/setup-python@v6
-        id: python
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.13"
-          cache: "poetry"
+          enable-cache: true
       - name: Install dependencies
-        run: poetry install --no-interaction --no-root
+        run: uv sync --frozen
       - name: Check formatting with Ruff
-        run: poetry run ruff format --check .
+        run: uv run ruff format --check .
       - name: Lint with Ruff
-        run: poetry run ruff check .
+        run: uv run ruff check .
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -74,16 +72,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         name: Git Checkout
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-      - uses: actions/setup-python@v6
-        id: python
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.13"
-          cache: "poetry"
+          enable-cache: true
 
       - name: Install dependencies
-        run: poetry install --no-interaction --no-root
+        run: uv sync --frozen
 
       - name: Run tests
         run: |
@@ -93,4 +89,4 @@ jobs:
           export SENDGRID_API_KEY=unused-key-set-for-testing
           export SHOPIFY_HMAC_SECRET=unused-key-set-for-testing
           export SLACK_BOT_TOKEN=unused-key-for-testing
-          poetry run pytest app/tests/unit
+          uv run pytest app/tests/unit
