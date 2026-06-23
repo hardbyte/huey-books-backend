@@ -315,7 +315,7 @@ async def enqueue_debounced_mv_refresh() -> None:
             "schedule_time": timestamp,
             "http_request": {
                 "http_method": tasks_v2.HttpMethod.POST,
-                "url": f"{settings.WRIVETED_INTERNAL_API}/maintenance/refresh-recommendations",
+                "url": f"{settings.WRIVETED_INTERNAL_API}/v1/maintenance/refresh-recommendations",
                 "headers": {"Content-Type": "application/json"},
                 "body": b"{}",
                 "oidc_token": {
