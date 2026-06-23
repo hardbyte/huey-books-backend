@@ -148,9 +148,15 @@ class FlowEventListener:
                 f"Received flow event: {flow_event.event_type} for session {flow_event.session_id}"
             )
 
-            # Dispatch to registered handlers
-            handlers = self.handlers.get(flow_event.event_type, [])
-            handlers.extend(self.handlers.get("*", []))  # Wildcard handlers
+            # Dispatch to registered handlers. Build a NEW list — never mutate
+            # the stored handler list. `dict.get` returns the live list, so an
+            # in-place extend would append the wildcard handlers to
+            # self.handlers[event_type] on every notification, growing the list
+            # unboundedly and fanning each event out to ever-more handlers.
+            handlers = [
+                *self.handlers.get(flow_event.event_type, []),
+                *self.handlers.get("*", []),
+            ]
 
             for handler in handlers:
                 try:
