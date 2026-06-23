@@ -63,6 +63,20 @@ refresh_search_view_v1_function = PGFunction(
     """,
 )
 
+refresh_recommendable_editions_function = PGFunction(
+    schema="public",
+    signature="refresh_recommendable_editions_function()",
+    definition="""returns void LANGUAGE plpgsql
+      AS $function$
+        BEGIN
+        -- CONCURRENTLY avoids an ACCESS EXCLUSIVE lock so recommendation reads are
+        -- not blocked during the refresh; it requires the unique index on work_id.
+        REFRESH MATERIALIZED VIEW CONCURRENTLY public.recommendable_editions;
+        END;
+      $function$
+    """,
+)
+
 refresh_work_collection_frequency_view_function = PGFunction(
     schema="public",
     signature="refresh_work_collection_frequency_view_function()",

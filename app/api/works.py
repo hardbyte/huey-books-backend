@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Path, Security
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Security
 from fastapi.params import Query
 from fastapi_permissions import All, Allow, Authenticated
 from sqlalchemy import and_, func, select
@@ -32,6 +32,7 @@ from app.schemas.work import (
 )
 from app.services.background_tasks import queue_background_task
 from app.services.editions import get_definitive_isbn
+from app.services.recommendations import enqueue_debounced_mv_refresh
 
 """
 Access control rules applying to all Works endpoints.
@@ -273,6 +274,7 @@ def create_work_with_editions(
 )
 def update_work(
     changes: WorkUpdateIn,
+    background_tasks: BackgroundTasks,
     work_orm: Work = Depends(get_work),
     account=Depends(get_current_active_user_or_service_account),
     session: Session = Depends(get_session),
@@ -315,6 +317,11 @@ def update_work(
         },
         account=account,
     )
+
+    if labelset_changes:
+        # Label edits change recommendation eligibility/scoring, so debounce a
+        # refresh of the recommendable_editions MV (see enqueue_debounced_mv_refresh).
+        background_tasks.add_task(enqueue_debounced_mv_refresh)
 
     return updated
 

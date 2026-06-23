@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 from structlog import get_logger
 
@@ -9,6 +9,7 @@ from app.db.session import get_session
 from app.repositories.labelset_repository import labelset_repository
 from app.repositories.work_repository import work_repository
 from app.schemas.labelset import LabelSetPatch
+from app.services.recommendations import enqueue_debounced_mv_refresh
 
 logger = get_logger()
 
@@ -21,6 +22,7 @@ router = APIRouter(
 @router.patch("/labelsets")
 async def bulk_patch_labelsets(
     patches: list[LabelSetPatch],
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
     patched = 0
@@ -39,15 +41,18 @@ async def bulk_patch_labelsets(
                 session, labelset, patch.patch_data, False
             )
 
-            # TODO: add to Huey's Picks booklist
-            # if patch.huey_pick:
-            #     work.booklists.append(crud.booklists.get_by_key("wriveted_hueypicks"))
-
             session.commit()
             patched += 1
         except Exception as ex:
             print(ex)
             errors += 1
             continue
+
+    if patched > 0:
+        # Enqueue a debounced MV refresh after labelset mutations so the
+        # recommendation engine reflects the changes within ~1 minute.
+        # Named Cloud Tasks deduplication ensures many rapid writes collapse
+        # into a single refresh (see enqueue_debounced_mv_refresh docstring).
+        background_tasks.add_task(enqueue_debounced_mv_refresh)
 
     return {"patched": patched, "unknown": unknown, "errors": errors}

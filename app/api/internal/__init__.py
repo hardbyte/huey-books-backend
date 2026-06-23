@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from sendgrid import SendGridAPIClient
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from structlog import get_logger
 from twilio.rest import Client as TwilioClient
@@ -264,3 +265,23 @@ async def handle_cleanup_abandoned_sessions(
         inactive_hours=inactive_hours,
     )
     return {"msg": "ok", "abandoned": count, "inactive_hours": inactive_hours}
+
+
+@router.post("/maintenance/refresh-recommendations")
+async def handle_refresh_recommendations(session: DBSessionDep):
+    """
+    Refresh the recommendable_editions materialized view.
+
+    Uses REFRESH MATERIALIZED VIEW CONCURRENTLY so reads are not blocked during
+    the refresh.  Intended to be called on a weekly Cloud Scheduler job (OIDC
+    auth via the background-tasks service account) so that newly labelled or
+    updated works become visible to the recommendation engine without a deploy.
+
+    The view can also be refreshed on-demand after bulk labelset/collection
+    mutations via the debounced Cloud Tasks path (see
+    app/services/recommendations.py:enqueue_debounced_mv_refresh).
+    """
+    logger.info("Refreshing recommendable_editions materialized view")
+    await session.execute(text("SELECT refresh_recommendable_editions_function()"))
+    logger.info("Refreshed recommendable_editions materialized view")
+    return {"msg": "ok"}

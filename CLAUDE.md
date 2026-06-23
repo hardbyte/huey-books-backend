@@ -105,6 +105,32 @@ See [docs/architecture-service-layer.md](docs/architecture-service-layer.md) for
 ### Performance
 - Bulk operations: use batch create/update for efficiency
 - Full-text search uses PostgreSQL tsvector and GIN indexes
+- Recommendations use the `recommendable_editions` materialized view (see below)
+
+### Recommendation Engine (`recommendable_editions` MV)
+
+The recommendation system is backed by a materialized view pre-computing one row
+per work (latest labelset, best cover edition, hue/reading-ability key arrays).
+
+**Key files**:
+- `app/db/views.py` — `PGMaterializedView` definition
+- `app/db/functions.py` — `refresh_recommendable_editions_function` (non-blocking CONCURRENTLY refresh)
+- `app/services/recommendations.py` — `get_recommended_editions_from_mv` (scored query)
+- `app/api/recommendations.py` — single-pass scored API, replacing the old 4-level fallback
+
+**Scoring** (higher wins): school-collection match (4), reading-ability overlap (2), hue overlap (1).
+Results ordered by score DESC then random() within each tier.
+
+**Refresh**:
+- Weekly via Cloud Scheduler → `POST /maintenance/refresh-recommendations` (internal API)
+- Debounced on label writes (`PATCH /labelsets`, `PATCH /work/{id}` label edits,
+  and promoted reviews) via Cloud Tasks named task `refresh-recommendable-editions`
+  (deduplicates within ~4-hour GCP window; fires ~60 s after the last write)
+
+After adding or modifying labelsets in bulk, force a refresh locally with:
+```sql
+REFRESH MATERIALIZED VIEW CONCURRENTLY recommendable_editions;
+```
 
 ### REST Conventions
 - Verify actual API behavior vs REST conventions for status codes

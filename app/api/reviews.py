@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional, Union
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
 from fastapi_permissions import All, Allow
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,6 +29,7 @@ from app.schemas.review import (
     ReviewQueueItem,
     ReviewStats,
 )
+from app.services.recommendations import enqueue_debounced_mv_refresh
 
 logger = get_logger()
 
@@ -80,6 +81,7 @@ def _review_to_detail(review) -> LabelSetReviewDetail:
 )
 def submit_review(
     review_data: LabelSetReviewIn,
+    background_tasks: BackgroundTasks,
     work: Work = Depends(get_work),
     account: Union[User, ServiceAccount] = Depends(
         get_current_active_user_or_service_account
@@ -114,6 +116,7 @@ def submit_review(
     # labelset as staff-checked; teachers carry EDUCATOR authority (above AI,
     # below staff) and leave the staff-confirmation flag untouched, so their
     # input improves recommendations immediately without bypassing QA.
+    promoted = False
     if account.type == UserAccountType.WRIVETED:
         _promote_review_to_canonical(
             session,
@@ -123,6 +126,7 @@ def submit_review(
             origin=LabelOrigin.HUMAN,
             mark_checked=True,
         )
+        promoted = True
     elif account.type in (UserAccountType.EDUCATOR, UserAccountType.SCHOOL_ADMIN):
         _promote_review_to_canonical(
             session,
@@ -132,6 +136,14 @@ def submit_review(
             origin=LabelOrigin.EDUCATOR,
             mark_checked=False,
         )
+        promoted = True
+
+    if promoted:
+        # A promoted review mutates the canonical labelset, changing
+        # recommendation scoring/eligibility, so debounce a MV refresh
+        # (see enqueue_debounced_mv_refresh). Non-promoting reviews (e.g. from
+        # students) don't touch the labelset, so no refresh is needed.
+        background_tasks.add_task(enqueue_debounced_mv_refresh)
 
     logger.info(
         "Review submitted",
