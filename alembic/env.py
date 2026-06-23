@@ -28,6 +28,7 @@ from app.db.functions import (
     cms_content_tsvector_update,
     notify_flow_event_function,
     public_encode_uri_component,
+    refresh_recommendable_editions_function,
     refresh_search_view_v1_function,
     refresh_work_collection_frequency_view_function,
     update_collections_function,
@@ -41,7 +42,11 @@ from app.db.triggers import (
     update_collections_trigger,
     works_update_edition_title_from_work_trigger,
 )
-from app.db.views import collection_frequency_view, search_view_v1
+from app.db.views import (
+    collection_frequency_view,
+    recommendable_editions_view,
+    search_view_v1,
+)
 
 register_entities(
     [
@@ -54,12 +59,14 @@ register_entities(
         update_collections_function,
         refresh_search_view_v1_function,
         refresh_work_collection_frequency_view_function,
+        refresh_recommendable_editions_function,
         public_encode_uri_component,
         cms_content_tsvector_update,
         notify_flow_event_function,
         # Views
         collection_frequency_view,
         search_view_v1,
+        recommendable_editions_view,
         # Triggers
         editions_update_edition_title_trigger,
         works_update_edition_title_from_work_trigger,

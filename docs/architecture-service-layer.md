@@ -163,11 +163,93 @@ cms_content_tsvector_trigger = PGTrigger(
 | `update_collections_trigger` | Collection update trigger | Live |
 | `pgvector_ex` (`vector`) | Embedding storage | Declared |
 | `pg_trgm_ex` (`pg_trgm`) | Trigram / fuzzy search | Live |
+| `recommendable_editions` (MV) | Pre-computed recommendation candidates | Live |
+| `refresh_recommendable_editions_function` | Non-blocking MV refresh | Live |
 
 Migrations use `op.create_entity()` / `op.drop_entity()` for these objects.
 The `pg_trgm` extension is also created idempotently in its migration
 (`CREATE EXTENSION IF NOT EXISTS pg_trgm`) so the trigram index can be built in
 the same revision.
+
+---
+
+## Recommendation Engine
+
+### Materialized View: `recommendable_editions`
+
+Defined in `app/db/views.py` as a `PGMaterializedView`. One row per recommendable
+work, pre-joining the latest labelset, one cover edition (LATERAL LIMIT 1 on
+`cover_url IS NOT NULL`), and aggregated hue/reading-ability key arrays.
+
+**Columns**: `work_id` (unique), `labelset_id`, `min_age`, `max_age`,
+`recommend_status`, `cover_edition_isbn`, `cover_url`, `hue_keys text[]`,
+`reading_ability_keys text[]`.
+
+**Indexes**:
+- `uix_recommendable_editions_work_id` — unique on `work_id` (required for
+  `REFRESH CONCURRENTLY`; also backs `work_id` lookups in the query)
+- `ix_recommendable_editions_hue_keys` — GIN index for `hue_keys && :hues`
+- `ix_recommendable_editions_reading_ability_keys` — GIN index for array overlap
+- `ix_recommendable_editions_status_ages` — btree on `(recommend_status, min_age, max_age)`
+
+### Scored Recommendation Query
+
+`app/services/recommendations.py::get_recommended_editions_from_mv` issues a
+single query over the MV with a scoring expression:
+
+| Criterion | Weight | Notes |
+|-----------|--------|-------|
+| School-collection membership | 4 | EXISTS sub-query against `collection_items` |
+| Reading-ability overlap | 2 | `reading_ability_keys && :ra_arr` |
+| Hue overlap | 1 | `hue_keys && :hue_arr` |
+
+`ORDER BY score DESC, random()` gives graceful degradation in one pass: best
+matches appear first, random shuffle within each score tier. This replaces the
+previous four sequential fallback round-trips (each 10–16 s against the live
+join graph) with a single fast query over the indexed MV.
+
+### Refresh Strategy
+
+**Weekly**: `POST /maintenance/refresh-recommendations` on the internal API,
+invoked by Cloud Scheduler (OIDC auth via the background-tasks service account).
+The endpoint calls `SELECT refresh_recommendable_editions_function()` which runs
+`REFRESH MATERIALIZED VIEW CONCURRENTLY recommendable_editions`. CONCURRENTLY
+avoids an `ACCESS EXCLUSIVE` lock so recommendation reads continue uninterrupted
+during the refresh (it requires the unique index on `work_id` and an
+already-populated view, both of which hold here).
+
+Terraform job to add in `hardbyte-iac` (mirror `cloudscheduler_cleanup_sessions.tf`):
+```hcl
+resource "google_cloud_scheduler_job" "refresh_recommendations" {
+  name             = "refresh-recommendations"
+  schedule         = "0 3 * * 1"   # Mondays at 03:00 AEST
+  time_zone        = "Australia/Sydney"
+  attempt_deadline = "600s"
+
+  http_target {
+    uri         = "${var.internal_api_base}/maintenance/refresh-recommendations"
+    http_method = "POST"
+    oidc_token {
+      service_account_email = var.background_tasks_service_account_email
+      audience              = var.internal_api_base
+    }
+  }
+}
+```
+
+**Debounced on-write**: After a label mutation, the endpoint enqueues a Cloud
+Tasks job named `refresh-recommendable-editions` via
+`enqueue_debounced_mv_refresh()` in `app/services/recommendations.py`. The
+wired callers are:
+- `PATCH /labelsets` (bulk patch) — `app/api/labelset.py`
+- `PATCH /work/{work_id}` when the change includes labelset edits — `app/api/works.py`
+- `POST /work/{work_id}/reviews` when the review is *promoted* to the canonical
+  labelset (Wriveted staff or educators) — `app/api/reviews.py`. Non-promoting
+  reviews (e.g. from students) leave the labelset untouched and skip the refresh.
+
+Named tasks are deduplicated by GCP within a ~4-hour window, so a burst of writes
+collapses into a single refresh ~60 s after the last write. The function is a
+no-op when Cloud Tasks is not configured (local dev / tests unaffected).
 
 ---
 
