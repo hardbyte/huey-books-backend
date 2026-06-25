@@ -256,9 +256,18 @@ async def get_recommended_labelset_query(
     )
 
 
-async def enqueue_debounced_mv_refresh() -> None:
+def enqueue_debounced_mv_refresh() -> None:
     """
     Enqueue a Cloud Tasks job to refresh the recommendable_editions MV.
+
+    This is a *synchronous* function on purpose. It performs blocking gRPC calls
+    (CloudTasksClient construction + create_task). When passed to
+    BackgroundTasks.add_task, Starlette runs sync background tasks in a worker
+    thread, so the blocking I/O never touches the asyncio event loop. An
+    ``async def`` version would block the single shared event loop for the
+    duration of the gRPC call, stalling every other concurrent request on the
+    instance (containerConcurrency=20) — observed as multi-second/-minute
+    latencies on unrelated endpoints such as /auth/me during a labelling burst.
 
     Debounce / coalescing strategy: Cloud Tasks supports named tasks; a task with
     a given name can only be created once within a ~4-hour deduplication window
