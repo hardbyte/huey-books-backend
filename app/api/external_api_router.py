@@ -7,6 +7,7 @@ from app.api.booklists import public_router as booklist_router_public
 from app.api.booklists import router as booklist_router
 from app.api.broadcast import public_router as broadcast_router_public
 from app.api.broadcast import router as broadcast_router
+from app.api.campaigns import router as campaign_router
 from app.api.chat import router as chat_router
 from app.api.chatbot_integrations import router as chatbot_integrations_router
 from app.api.classes import router as class_group_router
@@ -41,6 +42,7 @@ api_router.include_router(user_router)
 api_router.include_router(author_router)
 api_router.include_router(booklist_router)
 api_router.include_router(booklist_router_public)
+api_router.include_router(campaign_router)
 api_router.include_router(chat_router, prefix="/chat")
 api_router.include_router(chatbot_integrations_router)
 api_router.include_router(class_group_router)
