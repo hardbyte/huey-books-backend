@@ -44,6 +44,9 @@ class HueyRecommendationFilterBase(BaseModel):
 class HueyRecommendationFilter(HueyRecommendationFilterBase):
     wriveted_identifier: Optional[uuid.UUID] = None
     dedupe_authors: bool = True
+    # When set (e.g. a flow passing {{context.campaign_booklist_id}}), the
+    # booklist's works are soft-boosted in the recommendation ranking.
+    booklist_id: Optional[uuid.UUID] = None
 
 
 class HueyRecommendationFilterUsed(HueyRecommendationFilterBase):

@@ -32,6 +32,7 @@ async def get_recommended_editions_from_mv(
     reading_abilities: Optional[list[str]] = None,
     recommendable_only: Optional[bool] = True,
     exclude_isbns: Optional[list[str]] = None,
+    boost_work_ids: Optional[list[int]] = None,
     limit: int = 10,
 ) -> list[tuple[Work, Edition, LabelSet]]:
     """
@@ -39,6 +40,7 @@ async def get_recommended_editions_from_mv(
 
     Scoring weights (higher = more important):
       - school_collection_match: 4  — the work's cover edition is in the school's collection
+      - booklist_boost:          3  — the work is in a campaign's themed booklist (soft BOOST)
       - reading_ability_match:   2  — the labelset covers at least one requested reading ability
       - hue_match:               1  — the labelset covers at least one requested hue
 
@@ -108,7 +110,17 @@ async def get_recommended_editions_from_mv(
             else_=literal(0),
         )
 
-    total_score = (hue_score + ra_score + school_score).label("score")
+    # Campaign book bias: soft BOOST works that belong to the active campaign's
+    # themed booklist. They score above hue/reading-ability matches but below a
+    # school-collection match, so the catalogue stays open (no hard filter).
+    booklist_score = literal(0)
+    if boost_work_ids:
+        booklist_score = case(
+            (mv.c.work_id.in_(boost_work_ids), literal(3)),
+            else_=literal(0),
+        )
+
+    total_score = (hue_score + ra_score + school_score + booklist_score).label("score")
 
     # --- Build the scored MV query ---
     scored_q = (

@@ -117,6 +117,30 @@ def _passes_cel(campaign: Campaign, context: CampaignContext) -> bool:
         return False
 
 
+async def get_campaign_boost_work_ids(session: AsyncSession, booklist_id) -> list[int]:
+    """Work ids in a campaign's booklist, for the recommendation book-bias BOOST.
+
+    Returns [] when there is no booklist, so callers can pass it through
+    unconditionally.
+    """
+    if not booklist_id:
+        return []
+    from app.models.booklist_work_association import BookListItem
+
+    rows = (
+        (
+            await session.execute(
+                select(BookListItem.work_id).where(
+                    BookListItem.booklist_id == booklist_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
 async def resolve_campaign(
     session: AsyncSession, context: CampaignContext
 ) -> Optional[Campaign]:
