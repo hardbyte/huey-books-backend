@@ -30,8 +30,9 @@ if TYPE_CHECKING:
 class CampaignBiasMode(CaseInsensitiveStringEnum):
     """How a campaign's booklist influences recommendations.
 
-    - BOOST: themed books score higher but the full catalogue stays available (v1).
-    - FILTER: restrict recommendations to the booklist (reserved; not implemented in v1).
+    - BOOST: themed books rank higher while the full catalogue stays available.
+    - FILTER: restrict recommendations to the booklist. Not yet honoured by the
+      recommendation query, which treats every booklist as a BOOST.
     """
 
     BOOST = "boost"
@@ -53,7 +54,6 @@ class Campaign(Base):
         default=uuid.uuid4,
         server_default=text("gen_random_uuid()"),
         primary_key=True,
-        index=True,
         nullable=False,
     )
 

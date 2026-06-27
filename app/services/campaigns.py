@@ -1,20 +1,21 @@
 """Campaign resolution: pick the best active campaign for a session context.
 
-Two-stage, matching docs/design-chatflow-segments.md §4:
-  1. An indexable SQL prefilter (lifecycle + date window + structured targeting +
-     visibility).
-  2. An optional CEL gate (only for candidates carrying ``targeting_cel``), then
-     precedence ranking in Python.
+Resolution is two-stage:
+  1. An indexable SQL prefilter narrows candidates by lifecycle, the active date
+     window, structured targeting (country/region/school, age), and visibility.
+  2. Candidates carrying a ``targeting_cel`` expression are then passed through a
+     CEL gate, and the survivors are ranked by precedence in Python.
 
-All DB access is async; CEL evaluation is pure-compute (no I/O), so it is safe to run
-in the request path.
+DB access is async and CEL evaluation is pure-compute (no I/O), so resolution is
+safe to run inline in the request path.
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import and_, false, func, or_, select, true
+from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -61,13 +62,21 @@ def _prefilter(context: CampaignContext):
         # Unknown age → ignore age constraints rather than over-filter.
         age_match = true()
 
+    # A session may be served WRIVETED- and PUBLIC-visibility campaigns globally,
+    # and a SCHOOL-visibility campaign only for its own school. PRIVATE campaigns
+    # are drafts (visible to their creator/admins for editing only) and never
+    # auto-resolve onto a live session.
     visibility_conds = [
         Campaign.visibility.in_([ContentVisibility.WRIVETED, ContentVisibility.PUBLIC])
     ]
     if context.school_id is not None:
-        # School-scoped (SCHOOL/PRIVATE) campaigns only reach their own school.
-        visibility_conds.append(Campaign.school_id == context.school_id)
-    visible = or_(*visibility_conds) if visibility_conds else false()
+        visibility_conds.append(
+            and_(
+                Campaign.school_id == context.school_id,
+                Campaign.visibility == ContentVisibility.SCHOOL,
+            )
+        )
+    visible = or_(*visibility_conds)
 
     return and_(
         Campaign.is_active.is_(True),
@@ -117,7 +126,9 @@ def _passes_cel(campaign: Campaign, context: CampaignContext) -> bool:
         return False
 
 
-async def get_campaign_boost_work_ids(session: AsyncSession, booklist_id) -> list[int]:
+async def get_campaign_boost_work_ids(
+    session: AsyncSession, booklist_id: Optional[uuid.UUID]
+) -> list[int]:
     """Work ids in a campaign's booklist, for the recommendation book-bias BOOST.
 
     Returns [] when there is no booklist, so callers can pass it through

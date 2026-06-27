@@ -87,15 +87,16 @@ async def _resolve_campaign_for_start(
     """Best-effort campaign resolution for a starting session. Never raises."""
     try:
         school = await _resolve_school_for_context(session, current_user, initial_state)
+        region_state = None
+        if school and isinstance(school.info, dict):
+            location = school.info.get("location")
+            if isinstance(location, dict):
+                region_state = location.get("state")
         context = CampaignContext(
             now=datetime.utcnow(),
             school_id=school.id if school else None,
             country_code=school.country_code if school else None,
-            region_state=(
-                (school.info or {}).get("location", {}).get("state")
-                if school and school.info
-                else None
-            ),
+            region_state=region_state,
         )
         return await resolve_campaign(session, context)
     except Exception as exc:

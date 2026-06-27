@@ -91,14 +91,3 @@ class CampaignDetail(CampaignBrief):
     created_at: datetime
     updated_at: datetime
     published_at: Optional[datetime] = None
-
-
-class ResolvedCampaign(BaseModel):
-    """What the resolver returns for a session context."""
-
-    campaign_id: uuid.UUID
-    name: str
-    flow_id: Optional[uuid.UUID] = None
-    theme_id: Optional[uuid.UUID] = None
-    booklist_id: Optional[uuid.UUID] = None
-    bias_mode: CampaignBiasMode

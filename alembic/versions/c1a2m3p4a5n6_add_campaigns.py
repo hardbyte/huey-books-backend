@@ -115,7 +115,6 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_campaigns_id", "campaigns", ["id"])
     op.create_index("ix_campaigns_name", "campaigns", ["name"])
     op.create_index("ix_campaigns_slug", "campaigns", ["slug"], unique=True)
     op.create_index("ix_campaigns_visibility", "campaigns", ["visibility"])
@@ -127,7 +126,6 @@ def downgrade() -> None:
     op.drop_index("ix_campaigns_visibility", table_name="campaigns")
     op.drop_index("ix_campaigns_slug", table_name="campaigns")
     op.drop_index("ix_campaigns_name", table_name="campaigns")
-    op.drop_index("ix_campaigns_id", table_name="campaigns")
     op.drop_table("campaigns")
     # Drop only the enum we created; enum_cms_content_visibility is shared.
     sa.Enum(name="enum_campaign_bias_mode").drop(op.get_bind(), checkfirst=True)

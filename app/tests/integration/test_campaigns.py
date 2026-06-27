@@ -214,3 +214,69 @@ async def test_start_without_flow_or_campaign_is_400(async_client):
     """No flow_id and nothing resolves → explicit 400 (not a 500/422)."""
     resp = await async_client.post("/v1/chat/start", json={})
     assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+
+# --------------------------------------------------------------------------- #
+# Access control + targeting edge cases (added after adversarial review)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_campaigns_forbidden_for_non_admin(
+    async_client, test_schooladmin_account_token
+):
+    """An authenticated non-Wriveted user (school admin) is forbidden, not just 401."""
+    async_client.headers.update(
+        {"Authorization": f"bearer {test_schooladmin_account_token}"}
+    )
+    resp = await async_client.get("/v1/campaigns")
+    assert resp.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_private_campaign_never_resolves(async_session, test_school):
+    """PRIVATE campaigns are drafts and must not auto-resolve, even at their school."""
+    await _add(
+        async_session,
+        name="private-draft",
+        visibility=ContentVisibility.PRIVATE,
+        school_id=test_school.id,
+    )
+    assert await resolve_campaign(async_session, _ctx(school_id=test_school.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_region_targeting(async_session):
+    await _add(async_session, name="auckland", region_states=["Auckland"])
+    assert (
+        await resolve_campaign(async_session, _ctx(region_state="Auckland"))
+    ).name == "auckland"
+    assert await resolve_campaign(async_session, _ctx(region_state="Wellington")) is None
+
+
+@pytest.mark.asyncio
+async def test_age_filter(async_session):
+    await _add(async_session, name="teens", country_codes=["NZL"], min_age=13, max_age=18)
+    assert (
+        await resolve_campaign(async_session, _ctx(country_code="NZL", age=15))
+    ).name == "teens"
+    assert await resolve_campaign(async_session, _ctx(country_code="NZL", age=8)) is None
+    # Unknown age ignores the structured age constraint (permissive).
+    assert (
+        await resolve_campaign(async_session, _ctx(country_code="NZL"))
+    ).name == "teens"
+
+
+@pytest.mark.asyncio
+async def test_cel_unknown_age_fails_closed(async_session):
+    await _add(
+        async_session,
+        name="cel-teens",
+        country_codes=["NZL"],
+        targeting_cel="user.age >= 13",
+    )
+    assert (
+        await resolve_campaign(async_session, _ctx(country_code="NZL", age=15))
+    ).name == "cel-teens"
+    # Unknown age → CEL cannot affirm the rule → fail closed → excluded.
+    assert await resolve_campaign(async_session, _ctx(country_code="NZL")) is None

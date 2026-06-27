@@ -40,7 +40,7 @@ async def get_recommended_editions_from_mv(
 
     Scoring weights (higher = more important):
       - school_collection_match: 4  — the work's cover edition is in the school's collection
-      - booklist_boost:          3  — the work is in a campaign's themed booklist (soft BOOST)
+      - booklist_boost:          3  — the work id is in boost_work_ids (e.g. a campaign's themed booklist)
       - reading_ability_match:   2  — the labelset covers at least one requested reading ability
       - hue_match:               1  — the labelset covers at least one requested hue
 
