@@ -33,7 +33,7 @@ Non-goals (v1): a full visual campaign builder for educators; a public marketpla
 | Book bias in recommendations | ❌ scoring is hue / reading-ability / school-collection only; no booklist boost | `app/services/recommendations.py` |
 | Region modelling | ⚠️ country FK only; sub-national lives in `School.info.location.state` JSONB | `school.py`, `school_repository.py` |
 | **Time-windowing** (active_from/until) | ❌ nothing is date-scoped | — |
-| CMS authoring | ⚠️ WRIVETED-staff only; admin UI gated to `wriveted` | `cms.py` routers, `authenticated-page` |
+| CMS authoring | ⚠️ staff-only (the `WRIVETED` account type); admin UI gated accordingly | `cms.py` routers, `authenticated-page` |
 | Visibility enforcement in CMS ACL | ❌ `FlowDefinition.__acl__` / `CMSContent.__acl__` ignore `visibility`/`school_id` (ChatTheme & BookList *do* enforce it) | `cms.py` |
 
 **Takeaway:** the targeting/seasonality/book-bias logic is the new part. Flows, themes,
@@ -68,7 +68,7 @@ Campaign
   is_active      bool
   # Ownership / access / sharing (designed in from day one — see §7)
   created_by     -> users.id
-  school_id      -> schools.id (int)  (owner's school; null = Wriveted-global)
+  school_id      -> schools.id (int)  (owner's school; null = platform-global)
   visibility     enum PRIVATE|SCHOOL|PUBLIC|WRIVETED   (default WRIVETED)
   created_at, updated_at, published_at
 ```
@@ -210,7 +210,7 @@ whether the cloned flow/booklist are copied or referenced). A curated/featured g
 a later nicety.
 
 **Enablement is still phased** (the *model* above is built now; the surfaces open over time):
-- **Phase A — Wriveted-authored** global/region campaigns via the admin UI
+- **Phase A — staff-authored** global/region campaigns via the admin UI
   (`visibility=WRIVETED`). Ships Matariki & World Cup.
 - **Phase B — School-scoped authoring.** Educators create `visibility=SCHOOL`,
   `school_id=theirs`. Campaign ACL already supports this; remaining work is the educator
@@ -224,7 +224,7 @@ a later nicety.
   `visibility`/`school_id` (only ChatTheme & BookList enforce it). The *campaign* ACL is
   correct from day one, but **Phase B** (school-authored flows referenced by campaigns)
   must close this on the flow/content side before opening authoring. Not a blocker for
-  Phase A (Wriveted-authored).
+  Phase A (staff-authored).
 - **School FK — resolved:** campaign uses `schools.id` (int), aligning with ACL principals
   and the reader's session context (see §3 note). No reconciliation of the CMS uuid FK
   needed for this feature.
@@ -251,13 +251,13 @@ Milestones (each a reviewable PR / small set of PRs):
   `campaigns` table via alembic; Campaign model, repository, Pydantic schemas; targeting
   + precedence (school > region > country > global) + date-window resolver
   (`resolve_campaign(context)`); wire into `/chat/start` (explicit `flow_id` still
-  overrides; otherwise resolve flow + theme). Async, no blocking calls. Wriveted-only
+  overrides; otherwise resolve flow + theme). Async, no blocking calls. Staff-only
   admin CRUD endpoints. Unit + integration tests (precedence, windowing, fallback).
 - **M2 — Book bias (BOOST).** Extend `get_recommended_editions_from_mv` with
   `boost_work_ids`/`booklist_id`; recommendation node reads the active campaign's booklist
   from session context; tests for the boosted ordering.
 - **M3 — Admin authoring UI.** Campaigns list + form in the admin UI (targeting, date
-  window, payload pickers for flow/theme/booklist), Wriveted-gated; per-campaign analytics
+  window, payload pickers for flow/theme/booklist), staff-gated; per-campaign analytics
   via existing conversation-session/event data.
 - **M4 — Seed the real campaigns.** Matariki (NZL, dated window, Māori-stories booklist,
   theme) and Football World Cup (sport booklist), authored via M3.

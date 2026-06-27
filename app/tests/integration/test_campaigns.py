@@ -225,7 +225,7 @@ async def test_start_without_flow_or_campaign_is_400(async_client):
 async def test_campaigns_forbidden_for_non_admin(
     async_client, test_schooladmin_account_token
 ):
-    """An authenticated non-Wriveted user (school admin) is forbidden, not just 401."""
+    """An authenticated non-staff user (school admin) is forbidden, not just 401."""
     async_client.headers.update(
         {"Authorization": f"bearer {test_schooladmin_account_token}"}
     )
