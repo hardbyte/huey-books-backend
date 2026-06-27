@@ -57,17 +57,21 @@ def test_start_conversation_invalid_user_id_format(client, test_user_account_hea
 
 
 def test_start_conversation_missing_required_fields(client, test_user_account_headers):
-    """Test starting conversation with missing required fields returns 422."""
-    # Missing required flow_id field
+    """Starting without a flow_id, when no campaign resolves, is a 400.
+
+    flow_id is optional: the server resolves a campaign for the session context
+    when it is omitted. With no resolvable campaign there is nothing to run, so
+    the request is rejected with a clear 400 rather than starting a flowless
+    session.
+    """
     response = client.post(
         "v1/chat/start",
         json={"initial_state": {"user_name": "Test User"}},
         headers=test_user_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-    error_detail = response.json()["detail"]
-    assert any("flow_id" in str(error).lower() for error in error_detail)
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "flow" in response.json()["detail"].lower()
 
 
 def test_start_conversation_invalid_data_types(client, test_user_account_headers):

@@ -457,3 +457,38 @@ async def test_orm_tuples_are_valid_hueybook_source(session, async_session):
     session.delete(edition)
     session.delete(work)
     session.commit()
+
+
+@pytest.mark.asyncio
+async def test_boost_work_ids_ranks_higher(session, async_session):
+    """A work in the campaign booklist (boost_work_ids) outranks an unboosted peer."""
+    work_boost, edition_boost, labelset_boost = _make_labeled_work(
+        session, "boost-yes", hue_ids=[1], ra_ids=[1]
+    )
+    work_plain, edition_plain, labelset_plain = _make_labeled_work(
+        session, "boost-no", hue_ids=[1], ra_ids=[1]
+    )
+    _refresh_mv(session)
+
+    results = await get_recommended_editions_from_mv(
+        async_session,
+        recommendable_only=True,
+        boost_work_ids=[work_boost.id],
+        limit=200,
+    )
+    work_ids = [w.id for w, _e, _ls in results]
+    assert work_boost.id in work_ids and work_plain.id in work_ids
+    assert work_ids.index(work_boost.id) < work_ids.index(work_plain.id), (
+        "Boosted work should rank ahead of the unboosted peer"
+    )
+
+    for obj in (
+        labelset_boost,
+        edition_boost,
+        work_boost,
+        labelset_plain,
+        edition_plain,
+        work_plain,
+    ):
+        session.delete(obj)
+    session.commit()

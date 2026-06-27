@@ -1,6 +1,7 @@
 from .author import Author
 from .booklist import BookList
 from .booklist_work_association import BookListItem
+from .campaign import Campaign, CampaignBiasMode
 from .class_group import ClassGroup
 from .cms import (
     CMSContent,

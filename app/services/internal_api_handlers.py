@@ -52,6 +52,12 @@ async def handle_recommend(
         limit = max(1, min(int(query_params.get("limit", 5)), 50))
     except (ValueError, TypeError):
         limit = 5
+
+    # Campaign book bias: soft-boost works from the campaign's themed booklist.
+    from app.services.campaigns import get_campaign_boost_work_ids
+
+    boost_work_ids = await get_campaign_boost_work_ids(db, data.booklist_id)
+
     recommended_books, query_parameters = await get_recommendations_with_fallback(
         asession=db,
         account=None,
@@ -59,6 +65,7 @@ async def handle_recommend(
         data=data,
         background_tasks=None,
         limit=limit,
+        boost_work_ids=boost_work_ids,
     )
 
     return {

@@ -69,6 +69,7 @@ async def get_recommendations_with_fallback(
     background_tasks: BackgroundTasks,
     limit=5,
     remove_duplicate_authors=True,
+    boost_work_ids=None,
 ) -> Tuple[list[HueyBook], Any]:
     """
     Return (filtered_books, query_parameters) by running a single scored query
@@ -88,6 +89,7 @@ async def get_recommendations_with_fallback(
         "age": data.age,
         "recommendable_only": data.recommendable_only,
         "exclude_isbns": data.exclude_isbns or [],
+        "boost_work_ids": boost_work_ids or [],
         "limit": limit + 5,
     }
     logger.info("About to make a recommendation", query_parameters=query_parameters)
@@ -162,6 +164,7 @@ async def get_recommended_editions_and_labelsets(
     age,
     recommendable_only,
     exclude_isbns,
+    boost_work_ids=None,
     limit=5,
 ):
     """
@@ -179,5 +182,6 @@ async def get_recommended_editions_and_labelsets(
         reading_abilities=reading_abilities,
         recommendable_only=recommendable_only,
         exclude_isbns=exclude_isbns,
+        boost_work_ids=boost_work_ids,
         limit=limit,
     )

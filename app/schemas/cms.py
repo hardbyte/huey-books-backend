@@ -441,7 +441,10 @@ class ConnectionResponse(PaginatedResponse):
 
 # Conversation Session Schemas
 class SessionCreate(BaseModel):
-    flow_id: UUID4
+    # Optional: when omitted, the server resolves a campaign for the session
+    # context (school/region/season) and uses its flow. An explicit flow_id
+    # always overrides.
+    flow_id: Optional[UUID4] = None
     user_id: Optional[UUID4] = None
     initial_state: Optional[Dict[str, Any]] = {}
 

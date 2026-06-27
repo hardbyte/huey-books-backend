@@ -1,4 +1,5 @@
 import secrets
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -29,7 +30,9 @@ from app.api.dependencies.security import (
 from app.config import get_settings
 from app.crud.cms import CRUDConversationSession
 from app.models import User
+from app.models.campaign import Campaign
 from app.models.cms import ChatTheme, SessionStatus
+from app.models.school import School
 from app.repositories.chat_repository import chat_repo
 from app.schemas.cms import (
     ConversationHistoryResponse,
@@ -42,6 +45,7 @@ from app.schemas.cms import (
 )
 from app.schemas.pagination import Pagination
 from app.security.csrf import generate_csrf_token, set_secure_session_cookie
+from app.services.campaigns import CampaignContext, resolve_campaign
 from app.services.chat_runtime import FlowNotFoundError, chat_runtime
 
 logger = get_logger()
@@ -49,6 +53,55 @@ logger = get_logger()
 router = APIRouter(
     tags=["Chat Runtime"],
 )
+
+
+async def _resolve_school_for_context(
+    session: DBSessionDep,
+    current_user: Optional[User],
+    initial_state: Optional[dict],
+) -> Optional[School]:
+    """Find the reader's school for campaign targeting.
+
+    Prefers the authenticated user's school (Students/Educators carry school_id);
+    otherwise falls back to a school_wriveted_id supplied in the session context.
+    """
+    school_id = getattr(current_user, "school_id", None) if current_user else None
+    if school_id is not None:
+        return await session.get(School, school_id)
+
+    ctx = (initial_state or {}).get("context", {}) or {}
+    swid = ctx.get("school_wriveted_id")
+    if swid:
+        result = await session.execute(
+            select(School).where(School.wriveted_identifier == swid)
+        )
+        return result.scalar_one_or_none()
+    return None
+
+
+async def _resolve_campaign_for_start(
+    session: DBSessionDep,
+    current_user: Optional[User],
+    initial_state: Optional[dict],
+) -> Optional[Campaign]:
+    """Best-effort campaign resolution for a starting session. Never raises."""
+    try:
+        school = await _resolve_school_for_context(session, current_user, initial_state)
+        region_state = None
+        if school and isinstance(school.info, dict):
+            location = school.info.get("location")
+            if isinstance(location, dict):
+                region_state = location.get("state")
+        context = CampaignContext(
+            now=datetime.utcnow(),
+            school_id=school.id if school else None,
+            country_code=school.country_code if school else None,
+            region_state=region_state,
+        )
+        return await resolve_campaign(session, context)
+    except Exception as exc:
+        logger.warning("Campaign resolution failed; using default flow", error=str(exc))
+        return None
 
 
 @router.post(
@@ -88,13 +141,40 @@ async def start_conversation(
                 )
             user_id_for_session = None  # Explicitly anonymous
 
+        # Resolve a campaign when no explicit flow_id was supplied — transparent
+        # per-school / per-region / seasonal flow selection. An explicit flow_id
+        # always overrides (testing / deep-links).
+        effective_flow_id = session_data.flow_id
+        resolved_campaign: Optional[Campaign] = None
+        initial_state = dict(session_data.initial_state or {})
+        if effective_flow_id is None:
+            resolved_campaign = await _resolve_campaign_for_start(
+                session, current_user, initial_state
+            )
+            if resolved_campaign and resolved_campaign.flow_id:
+                effective_flow_id = resolved_campaign.flow_id
+
+        if effective_flow_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No flow_id provided and no campaign matched this context.",
+            )
+
+        # Stash the resolved campaign so downstream nodes can apply its book bias.
+        if resolved_campaign is not None:
+            ctx_state = dict(initial_state.get("context", {}) or {})
+            ctx_state["campaign_id"] = str(resolved_campaign.id)
+            if resolved_campaign.booklist_id:
+                ctx_state["campaign_booklist_id"] = str(resolved_campaign.booklist_id)
+            initial_state["context"] = ctx_state
+
         # Create session using runtime
         conversation_session = await chat_runtime.start_session(
             session,
-            flow_id=session_data.flow_id,
+            flow_id=effective_flow_id,
             user_id=user_id_for_session,
             session_token=session_token,
-            initial_state=session_data.initial_state,
+            initial_state=initial_state,
         )
 
         # Resolve school name from school_wriveted_id if not already set
@@ -131,13 +211,13 @@ async def start_conversation(
 
         # Get initial node
         initial_node = await chat_runtime.get_initial_node(
-            session, session_data.flow_id, conversation_session
+            session, effective_flow_id, conversation_session
         )
 
         # Load theme if flow has one configured
         theme_id = None
         theme_response = None
-        flow = await crud.flow.aget(session, session_data.flow_id)
+        flow = await crud.flow.aget(session, effective_flow_id)
         if flow and flow.flow_data:
             # Theme ID can be in flow_data.theme_id or info.theme_id
             theme_id_str = flow.flow_data.get("theme_id") or flow.info.get("theme_id")
@@ -167,9 +247,29 @@ async def start_conversation(
                 except (ValueError, TypeError):
                     logger.warning(
                         "Invalid theme_id in flow",
-                        flow_id=session_data.flow_id,
+                        flow_id=effective_flow_id,
                         theme_id=theme_id_str,
                     )
+
+        # A resolved campaign's theme overrides the flow's default theme.
+        if resolved_campaign is not None and resolved_campaign.theme_id:
+            campaign_theme = (
+                await session.execute(
+                    select(ChatTheme).where(
+                        ChatTheme.id == resolved_campaign.theme_id,
+                        ChatTheme.is_active.is_(True),
+                    )
+                )
+            ).scalar_one_or_none()
+            if campaign_theme:
+                theme_id = campaign_theme.id
+                theme_response = {
+                    "id": str(campaign_theme.id),
+                    "name": campaign_theme.name,
+                    "config": campaign_theme.config,
+                    "logo_url": campaign_theme.logo_url,
+                    "avatar_url": campaign_theme.avatar_url,
+                }
 
         # Set secure session cookie and CSRF token
         csrf_token = generate_csrf_token()
@@ -198,7 +298,7 @@ async def start_conversation(
         logger.info(
             "Started conversation session",
             session_id=conversation_session.id,
-            flow_id=session_data.flow_id,
+            flow_id=effective_flow_id,
             user_id=conversation_session.user_id,
             csrf_token_set=True,
         )
