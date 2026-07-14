@@ -537,3 +537,42 @@ class TestSlackNotificationIntegration:
 
         for expected in expected_destinations:
             assert expected in actual_destinations
+
+
+def test_event_to_slack_alert_endpoint_commits_outbox_row(session):
+    """The deprecated /event-to-slack-alert endpoint must commit its outbox row.
+
+    handle_event_to_slack_alert queues the alert via publish_event_sync, which
+    does not commit; the endpoint owns the request transaction and must persist
+    it, or the alert is discarded when the session closes.
+    """
+    from starlette.testclient import TestClient
+
+    from app.internal_api import internal_app
+
+    event = crud.event.create(
+        session,
+        title="Outbox commit regression",
+        level=EventLevel.ERROR,
+        commit=True,
+    )
+
+    def slack_count() -> int:
+        session.rollback()  # observe only committed state
+        return session.execute(
+            text(
+                "SELECT COUNT(*) FROM event_outbox WHERE event_type='slack_notification'"
+            )
+        ).scalar()
+
+    before = slack_count()
+    with TestClient(internal_app) as internal_client:
+        resp = internal_client.post(
+            "/v1/event-to-slack-alert",
+            json={
+                "event_id": str(event.id),
+                "slack_channel": EventSlackChannel.GENERAL.value,
+            },
+        )
+    assert resp.status_code == 200
+    assert slack_count() == before + 1

@@ -103,6 +103,9 @@ async def send_email(
         email_type=EmailType.SYSTEM,  # Commerce API emails are system-level
         service_account_id=str(account.id),
     )
+    # publish_event_sync only adds the outbox row; the request session is never
+    # committed on teardown, so commit here or the queued email is discarded.
+    session.commit()
 
     return Response(status_code=202, content="Email queued for reliable delivery.")
 

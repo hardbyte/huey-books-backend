@@ -77,7 +77,10 @@ def test_stripe_welcome_email_creates_outbox_event(session):
             session, parent_user, None, checkout_session_data
         )
 
-        session.commit()
+        # Roll back rather than commit: the outbox row must have been committed by
+        # the handler itself. A manual commit here would mask a missing commit in
+        # the production path (which is exactly how that bug shipped before).
+        session.rollback()
 
         # Verify an outbox event was created
         result = session.execute(text("SELECT COUNT(*) FROM event_outbox"))
@@ -210,9 +213,9 @@ def test_stripe_welcome_email_not_sent_for_non_parent(session):
         )
         final_email_count = result.scalar()
 
-        assert (
-            final_email_count == initial_email_count
-        ), "Welcome email was sent for non-parent user"
+        assert final_email_count == initial_email_count, (
+            "Welcome email was sent for non-parent user"
+        )
 
 
 # @pytest.mark.asyncio  # Not needed for sync tests
@@ -287,6 +290,6 @@ def test_stripe_welcome_email_not_sent_without_customer_email(session):
         )
         final_email_count = result.scalar()
 
-        assert (
-            final_email_count == initial_email_count
-        ), "Welcome email was sent without customer email"
+        assert final_email_count == initial_email_count, (
+            "Welcome email was sent without customer email"
+        )

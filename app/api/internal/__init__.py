@@ -116,6 +116,9 @@ def event_to_slack_alert(
     handle_event_to_slack_alert(
         session, data.event_id, data.slack_channel, extra=data.slack_extra
     )
+    # The alert is queued as an outbox row via publish_event_sync, which does not
+    # commit; the request session would otherwise roll it back on teardown.
+    session.commit()
 
 
 class StripeInternalEventPayload(BaseModel):
