@@ -14,12 +14,14 @@ reliable event-driven delivery.
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from structlog import get_logger
 
 from app.config import get_settings
 from app.schemas.sendgrid import SendGridEmailData
+from app.services.email_templates import render_email_template
 from app.services.event_outbox_service import EventOutboxService, EventPriority
 from app.services.exceptions import ServiceException
 
@@ -262,8 +264,8 @@ class EmailNotificationService:
                 )
                 return False  # Don't retry malformed payloads
 
-            # Use internal SendGrid method for sending
-            success = await self._send_email_via_sendgrid(email_data)
+            # Deliver via the configured provider (Resend or SendGrid)
+            success = await self._send_email(email_data)
 
             if success:
                 logger.info(
@@ -312,8 +314,8 @@ class EmailNotificationService:
             else:
                 email_data_dict = email_data
 
-            # Use internal SendGrid method
-            return await self._send_email_via_sendgrid(email_data_dict)
+            # Deliver via the configured provider (Resend or SendGrid)
+            return await self._send_email(email_data_dict)
 
         except Exception as e:
             logger.error(
@@ -322,6 +324,88 @@ class EmailNotificationService:
                 user_id=user_id,
                 error=str(e),
             )
+            return False
+
+    @staticmethod
+    def _to_dict(
+        email_data: Union[Dict[str, Any], SendGridEmailData],
+    ) -> Dict[str, Any]:
+        if hasattr(email_data, "model_dump"):
+            return email_data.model_dump()
+        if hasattr(email_data, "dict"):
+            return email_data.dict()
+        return email_data
+
+    async def _send_email(
+        self, email_data: Union[Dict[str, Any], SendGridEmailData]
+    ) -> bool:
+        """Deliver an email via the provider selected by EMAIL_PROVIDER."""
+        data = self._to_dict(email_data)
+        provider = (config.EMAIL_PROVIDER or "sendgrid").lower()
+        if provider == "resend":
+            return await self._send_email_via_resend(data)
+        return await self._send_email_via_sendgrid(data)
+
+    async def _send_email_via_resend(self, data: Dict[str, Any]) -> bool:
+        """Send via the Resend HTTP API (async, non-blocking).
+
+        Uses html_content when present; otherwise renders a known legacy
+        template id to HTML. Returns True on a 2xx response.
+        """
+        if not config.RESEND_API_KEY:
+            logger.warning("Resend API key not configured")
+            return False
+
+        html = data.get("html_content")
+        if not html and data.get("template_id"):
+            html = render_email_template(data["template_id"], data.get("template_data"))
+        if not html:
+            logger.error(
+                "No HTML or known template for Resend email",
+                subject=data.get("subject", ""),
+                template_id=data.get("template_id"),
+            )
+            return False
+
+        from_email = data.get("from_email") or config.BROADCAST_FROM_EMAIL
+        from_name = data.get("from_name")
+        sender = f"{from_name} <{from_email}>" if from_name else from_email
+
+        payload: Dict[str, Any] = {
+            "from": sender,
+            "to": data.get("to_emails"),
+            "subject": data.get("subject") or "",
+            "html": html,
+        }
+        if reply_to := data.get("reply_to"):
+            payload["reply_to"] = reply_to
+        if headers := data.get("headers"):
+            payload["headers"] = headers
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {config.RESEND_API_KEY}"},
+                    json=payload,
+                )
+
+            success = response.status_code in (200, 201)
+            if success:
+                logger.info(
+                    "Email sent via Resend",
+                    subject=payload["subject"],
+                    to_emails=payload["to"],
+                )
+            else:
+                logger.warning(
+                    "Resend returned non-2xx status",
+                    status_code=response.status_code,
+                    body=response.text[:500],
+                )
+            return success
+        except Exception as e:
+            logger.error("Resend API error", error=str(e))
             return False
 
     async def _send_email_via_sendgrid(
