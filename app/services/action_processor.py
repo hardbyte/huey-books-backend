@@ -356,7 +356,7 @@ class ActionNodeProcessor(NodeProcessor):
 
                 try:
                     result_data = await INTERNAL_HANDLERS[endpoint](
-                        db, resolved_body, resolved_params
+                        db, resolved_body, resolved_params, context
                     )
                 except Exception:
                     logger.error(
