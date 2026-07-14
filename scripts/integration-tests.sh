@@ -84,6 +84,9 @@ TEST_DB_ENV=(
   -e SQLALCHEMY_ASYNC_URI=postgresql+asyncpg://postgres:password@db/postgres
   -e POSTGRESQL_USER=postgres
   -e POSTGRESQL_PASSWORD=password
+  # Forward the host value (if set) so `BLOCKBUSTER=1 bash scripts/integration-tests.sh`
+  # actually activates blockbuster inside the test container.
+  -e "BLOCKBUSTER=${BLOCKBUSTER:-}"
 )
 
 # Now start the integration tests
