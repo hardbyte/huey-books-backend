@@ -415,6 +415,10 @@ def _handle_checkout_session_completed(
             email_type=EmailType.TRANSACTIONAL,
             user_id=str(wriveted_user.id) if wriveted_user else None,
         )
+        # create_event above already committed the subscription; this queues the
+        # welcome email as a separate outbox row that publish_event_sync does not
+        # commit, so persist it before the session closes.
+        session.commit()
     elif wriveted_parent_id is not None and not stripe_customer_email:
         logger.warning(
             "Skipping subscription welcome email - no customer email address available"
