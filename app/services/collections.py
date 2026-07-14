@@ -161,7 +161,7 @@ async def add_editions_to_collection_by_isbn(
 
     if not final_primary_keys:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="No valid ISBNs were found in input",
         )
 
@@ -200,7 +200,7 @@ async def add_editions_to_collection_by_isbn(
             "IntegrityError when adding editions to collection", exc_info=True
         )
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Couldn't process input",
         )
 

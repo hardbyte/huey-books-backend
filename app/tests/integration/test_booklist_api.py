@@ -21,7 +21,7 @@ def test_create_empty_booklist_invalid_data_returns_validation_error(
         headers=backend_service_account_headers,
         json={"name": "my almost valid booklist", "type": "an invalid book list type"},
     )
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_create_empty_booklist(client, test_user_account_headers):

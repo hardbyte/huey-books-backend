@@ -592,7 +592,7 @@ class TestErrorRecoveryWorkflows:
         response = await async_client.post(
             "/v1/cms/flows", json=invalid_flow, headers=backend_service_account_headers
         )
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
         # Correct the errors and retry
         valid_flow = {

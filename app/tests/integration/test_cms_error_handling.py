@@ -250,7 +250,7 @@ def test_create_content_missing_required_fields(
         headers=backend_service_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     # Should mention the missing field
     assert any("type" in str(error).lower() for error in error_detail)
@@ -267,7 +267,7 @@ def test_create_content_invalid_content_type(client, backend_service_account_hea
         "v1/cms/content", json=invalid_content, headers=backend_service_account_headers
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_create_content_invalid_data_types(client, backend_service_account_headers):
@@ -282,7 +282,7 @@ def test_create_content_invalid_data_types(client, backend_service_account_heade
         "v1/cms/content", json=invalid_content, headers=backend_service_account_headers
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_create_flow_missing_required_fields(client, backend_service_account_headers):
@@ -297,7 +297,7 @@ def test_create_flow_missing_required_fields(client, backend_service_account_hea
         "v1/cms/flows", json=malformed_flow, headers=backend_service_account_headers
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     # Should mention the missing field
     assert any("name" in str(error).lower() for error in error_detail)
@@ -334,7 +334,7 @@ def test_create_flow_node_missing_required_content_fields(
         headers=backend_service_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     assert any("content" in str(error).lower() for error in error_detail)
 
@@ -367,7 +367,7 @@ def test_create_flow_node_invalid_node_type(client, backend_service_account_head
         headers=backend_service_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_update_content_invalid_uuid(client, backend_service_account_headers):
@@ -381,7 +381,7 @@ def test_update_content_invalid_uuid(client, backend_service_account_headers):
         headers=backend_service_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_create_content_variant_missing_fields(client, backend_service_account_headers):
@@ -409,7 +409,7 @@ def test_create_content_variant_missing_fields(client, backend_service_account_h
         headers=backend_service_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     assert any("variant_key" in str(error).lower() for error in error_detail)
 
@@ -442,7 +442,7 @@ def test_create_flow_connection_missing_fields(client, backend_service_account_h
         headers=backend_service_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     assert any("target_node_id" in str(error).lower() for error in error_detail)
 
@@ -728,7 +728,7 @@ def test_create_content_with_extremely_long_tags(
     # We're testing that the API handles it gracefully either way
     assert response.status_code in [
         status.HTTP_201_CREATED,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
     ]
 
 
@@ -755,7 +755,7 @@ def test_create_flow_with_circular_reference_data(
     # Should either succeed or fail gracefully with validation error
     assert response.status_code in [
         status.HTTP_201_CREATED,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
     ]
 
     # If it succeeded, the nested data should be preserved

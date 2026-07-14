@@ -165,7 +165,7 @@ class TestCMSAuthentication:
         assert response.status_code != status.HTTP_401_UNAUTHORIZED
         assert response.status_code in [
             status.HTTP_404_NOT_FOUND,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         ]
 
 
@@ -427,7 +427,7 @@ class TestSecurityBoundaries:
         # Should return 200 (query handled safely) or 422 (validation error)
         assert response.status_code in [
             status.HTTP_200_OK,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         ]
 
         # Database should still be intact - try normal query
@@ -488,4 +488,4 @@ class TestSecurityBoundaries:
             assert "alert(" not in data["content"]["text"]
         else:
             # Or the request should be rejected for validation reasons
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
