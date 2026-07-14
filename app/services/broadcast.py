@@ -23,6 +23,7 @@ from app.models.student import Student
 from app.models.user import User
 from app.schemas.broadcast import BroadcastAudience
 from app.schemas.sendgrid import SendGridEmailData
+from app.services.background_tasks import queue_background_task
 from app.services.email_notification import EmailType, create_email_notification_service
 
 logger = get_logger()
@@ -174,6 +175,21 @@ def _queue_email(
     )
 
 
+def _trigger_outbox_processing() -> None:
+    """Ask the internal API to deliver queued outbox events now.
+
+    Best-effort: the periodic outbox sweep will still deliver anything queued
+    if this nudge fails, so a Cloud Tasks hiccup must not fail the request.
+    """
+    try:
+        queue_background_task("process-outbox-events")
+    except Exception as e:
+        logger.warning(
+            "Failed to trigger outbox processing; the scheduled sweep will deliver",
+            error=str(e),
+        )
+
+
 def send_broadcast(
     db: Session,
     *,
@@ -218,6 +234,10 @@ def send_broadcast(
             },
             account=account,
         )
+        # The request session never commits on its own; without this the
+        # queued outbox rows are rolled back when the session closes.
+        db.commit()
+        _trigger_outbox_processing()
 
     return len(recipients)
 
@@ -234,6 +254,10 @@ def send_test(db: Session, *, subject: str, body: str, account) -> int:
         html=html,
         user_id=account.id,
     )
+    # The request session never commits on its own; without this the
+    # queued outbox row is rolled back when the session closes.
+    db.commit()
+    _trigger_outbox_processing()
     logger.info("Broadcast test queued", to=account.email, subject=subject)
     return 1
 
