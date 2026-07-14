@@ -81,14 +81,25 @@ async def process_outbox_events(session: DBSessionDep):
 
     This is the new unified background processor that handles all reliable
     event delivery including Slack alerts, webhooks, and internal processing.
+
+    Drains in batches until no more events are ready, bounded so one
+    invocation can't run unattended forever. Failed events get a future
+    next_retry_at, so they aren't re-picked within an invocation.
     """
     from app.services.event_outbox_service import EventOutboxService
 
     outbox_service = EventOutboxService()
-    stats = await outbox_service.process_pending_events(session)
+    max_batches = 20
+    totals: dict[str, int] = {}
+    for _ in range(max_batches):
+        stats = await outbox_service.process_pending_events(session)
+        for key, value in stats.items():
+            totals[key] = totals.get(key, 0) + value
+        if stats.get("processed", 0) < outbox_service.batch_size:
+            break
 
-    logger.info("EventOutbox processing completed", stats=stats)
-    return {"msg": "EventOutbox processing completed", "stats": stats}
+    logger.info("EventOutbox processing completed", stats=totals)
+    return {"msg": "EventOutbox processing completed", "stats": totals}
 
 
 class EventSlackAlertPayload(BaseModel):

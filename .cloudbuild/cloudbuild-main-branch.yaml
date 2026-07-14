@@ -46,6 +46,7 @@ steps:
         ENABLE_OTEL_GOOGLE_EXPORTER=True,
         NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,
         NIELSEN_CLIENT_ID=WrivetedWebServices,
+        WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         OTEL_SERVICE_NAME=nonprod-api
       - >-
         --set-secrets=
@@ -89,6 +90,7 @@ steps:
         NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,
         NIELSEN_CLIENT_ID=WrivetedWebServices,
         ENABLE_OTEL_GOOGLE_EXPORTER=True,
+        WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         OTEL_SERVICE_NAME=nonprod-api-internal
       - >-
         --set-secrets=
@@ -132,6 +134,7 @@ steps:
         NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,
         NIELSEN_CLIENT_ID=WrivetedWebServices,
         ENABLE_OTEL_GOOGLE_EXPORTER=True,
+        WRIVETED_API_BASE_URL=https://api.wriveted.com,
         OTEL_SERVICE_NAME=wriveted-api
       - >-
         --set-secrets=
@@ -174,6 +177,7 @@ steps:
         NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,
         NIELSEN_CLIENT_ID=WrivetedWebServices,
         ENABLE_OTEL_GOOGLE_EXPORTER=True,
+        WRIVETED_API_BASE_URL=https://api.wriveted.com,
         OTEL_SERVICE_NAME=wriveted-api-internal
       - >-
         --set-secrets=
