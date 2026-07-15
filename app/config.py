@@ -47,7 +47,11 @@ class Settings(BaseSettings):
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 10
 
-    SENDGRID_API_KEY: str
+    # Email delivery. EMAIL_PROVIDER selects the backend ("resend" or
+    # "sendgrid"); keys are optional so the app boots without the unused one.
+    EMAIL_PROVIDER: str = "sendgrid"
+    SENDGRID_API_KEY: str = ""
+    RESEND_API_KEY: str = ""
 
     SHOPIFY_HMAC_SECRET: str
 

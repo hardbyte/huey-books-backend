@@ -270,10 +270,11 @@ class TestEmailNotificationService:
         assert result is True
         service._send_email_via_sendgrid.assert_called_once()
 
-        # Verify the email data was properly reconstructed
+        # Verify the email data was passed through to the provider adapter.
+        # The dispatcher normalises to a dict so any backend can consume it.
         call_args = service._send_email_via_sendgrid.call_args[0][0]
-        assert call_args.from_email == "test@example.com"
-        assert call_args.to_emails == ["recipient@example.com"]
+        assert call_args["from_email"] == "test@example.com"
+        assert call_args["to_emails"] == ["recipient@example.com"]
 
     @pytest.mark.asyncio
     async def test_process_outbox_email_notification_invalid_payload(self, service):
