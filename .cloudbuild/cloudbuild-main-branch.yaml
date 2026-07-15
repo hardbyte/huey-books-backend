@@ -135,6 +135,7 @@ steps:
         NIELSEN_CLIENT_ID=WrivetedWebServices,
         ENABLE_OTEL_GOOGLE_EXPORTER=True,
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
+        EMAIL_PROVIDER=resend,
         OTEL_SERVICE_NAME=wriveted-api
       - >-
         --set-secrets=
@@ -147,6 +148,7 @@ steps:
         STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
+        RESEND_API_KEY=resend-api-key:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
@@ -178,6 +180,7 @@ steps:
         NIELSEN_CLIENT_ID=WrivetedWebServices,
         ENABLE_OTEL_GOOGLE_EXPORTER=True,
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
+        EMAIL_PROVIDER=resend,
         OTEL_SERVICE_NAME=wriveted-api-internal
       - >-
         --set-secrets=
@@ -189,6 +192,7 @@ steps:
         STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
+        RESEND_API_KEY=resend-api-key:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
