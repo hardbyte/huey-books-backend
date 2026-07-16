@@ -845,14 +845,8 @@ def _apply_or_extend_contribution_grant(
     )
     session.flush()
 
-    # Lock the grant row so concurrent contribution webhooks for the same school
-    # serialise: without this, two tasks can read the same expiration, each add
-    # its own days from that base, and the last commit clobbers the other —
-    # silently dropping a donor's paid extension (both receipts commit, so no
-    # retry). FOR UPDATE makes the second task read the first's committed expiry
-    # and stack onto it. (A concurrent first insert can't be locked here, but the
-    # PK conflict rolls back the whole transaction incl. the receipt claim, so
-    # Cloud Tasks retries into this extend path.)
+    # FOR UPDATE so concurrent contributions for the same school stack instead of
+    # clobbering each other's expiry.
     grant = session.execute(
         select(Subscription).where(Subscription.id == grant_id).with_for_update()
     ).scalar_one_or_none()
