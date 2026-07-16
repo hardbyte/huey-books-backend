@@ -114,7 +114,7 @@ def add_booklist(
             else:
                 logger.debug("Couldn't identify one school from given information")
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="Need to know which school to use",
                 )
         if not has_permission(principals, "update", school_orm):
@@ -138,7 +138,7 @@ def add_booklist(
                 booklist.user_id = account.id
             else:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="Only user accounts may create book lists without specifying the user",
                 )
 
@@ -166,7 +166,7 @@ def add_booklist(
     except IntegrityError as e:
         logger.warning("Database integrity error while adding booklist", exc_info=e)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Couldn't create booklist",
         )
 

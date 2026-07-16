@@ -1016,7 +1016,7 @@ def test_invalid_content_type(client, backend_service_account_headers):
         "v1/cms/content", json=invalid_content, headers=backend_service_account_headers
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_validate_flow(client, backend_service_account_headers):

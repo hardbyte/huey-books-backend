@@ -65,7 +65,7 @@ def test_school_exists_bad_uuid(client, backend_service_account_headers):
     response = client.get(
         "v1/school/not-a-uuid/exists", headers=backend_service_account_headers
     )
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_school_exists_missing_uuid(client, backend_service_account_headers):

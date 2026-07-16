@@ -647,7 +647,7 @@ class TestFlowValidation:
             headers=backend_service_account_headers,
         )
 
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_get_nonexistent_flow(
         self, async_client, backend_service_account_headers

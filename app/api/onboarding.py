@@ -111,7 +111,7 @@ async def onboard_school(
     else:
         if not request.school_name or not request.country_code:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="school_name and country_code are required when creating a new school",
             )
         try:

@@ -45,7 +45,7 @@ def test_stripe_webhook_requires_stripe_sig_header(
         headers={},
     )
 
-    assert webhook_response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert webhook_response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_stripe_webhook_validates_signature(

@@ -465,7 +465,7 @@ class TestThemeValidation:
 
         assert response.status_code in [
             status.HTTP_400_BAD_REQUEST,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         ]
 
     def test_create_theme_missing_required_fields(
@@ -482,7 +482,7 @@ class TestThemeValidation:
             headers=test_wrivetedadmin_account_headers,
         )
 
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_update_theme_partial_config(
         self, client, test_wrivetedadmin_account_headers

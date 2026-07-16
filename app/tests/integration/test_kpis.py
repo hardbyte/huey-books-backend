@@ -102,4 +102,4 @@ async def test_trends_weeks_param_validated(
     too_many = await async_client_authenticated_as_wriveted_user.get(
         "/v1/kpis/trends?weeks=999"
     )
-    assert too_many.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert too_many.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT

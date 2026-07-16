@@ -91,7 +91,7 @@ def get_book_by_isbn(isbn: str, session: Session = Depends(get_session)):
     try:
         isbn = get_definitive_isbn(isbn)
     except AssertionError:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid isbn")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid isbn")
 
     return edition_repository.get_or_404(db=session, isbn=isbn)
 
@@ -104,7 +104,7 @@ def add_edition(
     try:
         edition = edition_repository.create_new_edition(session, edition_data)
     except ValueError as e:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e))
 
     if edition:
         return edition

@@ -134,7 +134,7 @@ async def update_user(
         update_data = InternalUserUpdateIn(current_type=user.type, **updated_items)
     except ValidationError as e:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=json.loads(e.json()),
         )
     except ValueError as e:

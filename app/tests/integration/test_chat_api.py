@@ -657,7 +657,7 @@ def test_malformed_interaction_data(client, test_flow_with_nodes):
         headers=headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_invalid_state_update_data(client, test_flow_with_nodes):
@@ -684,7 +684,7 @@ def test_invalid_state_update_data(client, test_flow_with_nodes):
         f"v1/chat/sessions/{session_token}/state", json=invalid_update, headers=headers
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 # Input Validation Tests

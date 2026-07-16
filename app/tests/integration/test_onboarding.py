@@ -103,7 +103,10 @@ def test_onboard_existing_school(
         name=f"Existing School {secrets.token_hex(4)}",
         country_code="ATA",
         state=SchoolState.INACTIVE,
-        info={"location": {"state": "Test", "postcode": "1234"}, "experiments": get_experiments({})},
+        info={
+            "location": {"state": "Test", "postcode": "1234"},
+            "experiments": get_experiments({}),
+        },
     )
     session.add(school)
     session.commit()
@@ -137,7 +140,10 @@ def test_onboard_active_school_rejected(
         name=f"Active School {secrets.token_hex(4)}",
         country_code="ATA",
         state=SchoolState.ACTIVE,
-        info={"location": {"state": "Test", "postcode": "1234"}, "experiments": get_experiments({})},
+        info={
+            "location": {"state": "Test", "postcode": "1234"},
+            "experiments": get_experiments({}),
+        },
     )
     session.add(school)
     session.commit()
@@ -209,9 +215,9 @@ def test_onboard_creates_event(
     assert response.status_code == 200
 
     # Check an event was created
-    events = session.query(Event).filter(
-        Event.title == "School onboarding request"
-    ).all()
+    events = (
+        session.query(Event).filter(Event.title == "School onboarding request").all()
+    )
     matching = [e for e in events if school_name in (e.description or "")]
     assert len(matching) >= 1
     assert matching[0].info["contact_name"] == "Event Tester"
@@ -245,6 +251,6 @@ def test_onboard_promotes_user_to_school_admin(
     with session_factory() as fresh_session:
         from app.models.user import User
 
-        user = fresh_session.query(User).get(user_id)
+        user = fresh_session.get(User, user_id)
         assert user is not None
         assert user.type == UserAccountType.SCHOOL_ADMIN

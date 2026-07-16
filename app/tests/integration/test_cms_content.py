@@ -672,7 +672,7 @@ class TestContentValidation:
             "v1/cms/content", json=content_data, headers=backend_service_account_headers
         )
 
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_create_content_missing_content(
         self, client, backend_service_account_headers
@@ -687,7 +687,7 @@ class TestContentValidation:
             "v1/cms/content", json=content_data, headers=backend_service_account_headers
         )
 
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_create_content_empty_content(
         self, client, backend_service_account_headers
@@ -702,7 +702,7 @@ class TestContentValidation:
             "v1/cms/content", json=content_data, headers=backend_service_account_headers
         )
 
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_update_content_invalid_status(
         self, client, backend_service_account_headers
@@ -723,7 +723,7 @@ class TestContentValidation:
             headers=backend_service_account_headers,
         )
 
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestContentBulkOperations:

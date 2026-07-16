@@ -24,7 +24,7 @@ def test_start_conversation_invalid_flow_id_format(client, test_user_account_hea
         headers=test_user_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     # Should mention UUID validation error
     assert any(
@@ -48,7 +48,7 @@ def test_start_conversation_invalid_user_id_format(client, test_user_account_hea
         headers=test_user_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     assert any(
         "uuid" in str(error).lower() or "invalid" in str(error).lower()
@@ -85,7 +85,7 @@ def test_start_conversation_invalid_data_types(client, test_user_account_headers
         headers=test_user_account_headers,
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_interact_invalid_session_token_format(client):
@@ -131,7 +131,7 @@ def test_interact_invalid_input_type(client, test_user_account_headers):
     )
 
     # Should get validation error for invalid input_type
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     # Should mention invalid input_type
     assert any("input_type" in str(error).lower() for error in error_detail)
@@ -165,7 +165,7 @@ def test_interact_empty_input(client, test_user_account_headers):
     # Empty input might be valid in some contexts, so accept both outcomes
     assert response.status_code in [
         status.HTTP_200_OK,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
     ]
 
 
@@ -188,7 +188,7 @@ def test_interact_missing_required_fields(client):
     )
 
     # Should get validation error for missing input_type
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     assert any("input_type" in str(error).lower() for error in error_detail)
 
@@ -212,7 +212,7 @@ def test_update_session_state_invalid_revision_format(client):
     )
 
     # Should get validation error for invalid revision format
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     error_detail = response.json()["detail"]
     # Should mention expected_revision validation error
     assert any("expected_revision" in str(error).lower() for error in error_detail)
@@ -254,8 +254,8 @@ def test_start_conversation_oversized_initial_state(client, test_user_account_he
     # Should either succeed (if no size limits) or fail gracefully
     assert response.status_code in [
         status.HTTP_201_CREATED,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
-        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        status.HTTP_413_CONTENT_TOO_LARGE,
         status.HTTP_404_NOT_FOUND,  # Flow doesn't exist
     ]
 
@@ -290,8 +290,8 @@ def test_interact_oversized_input(client, test_user_account_headers):
     # Should handle gracefully
     assert response.status_code in [
         status.HTTP_200_OK,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
-        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        status.HTTP_413_CONTENT_TOO_LARGE,
     ]
 
 
@@ -673,7 +673,7 @@ def test_session_token_boundary_cases(client):
         # Should return proper error codes, not server errors
         assert response.status_code in [
             status.HTTP_404_NOT_FOUND,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             status.HTTP_400_BAD_REQUEST,
         ]
 
@@ -700,7 +700,7 @@ def test_malformed_json_requests(client, test_user_account_headers):
 
             # Should return validation error, not server error
             assert response.status_code in [
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 status.HTTP_400_BAD_REQUEST,
             ]
         except Exception:
@@ -723,6 +723,6 @@ def test_session_operations_with_null_values(client, test_user_account_headers):
     # Should handle null values gracefully
     assert response.status_code in [
         status.HTTP_201_CREATED,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
         status.HTTP_404_NOT_FOUND,
     ]

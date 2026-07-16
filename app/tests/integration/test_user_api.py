@@ -42,7 +42,7 @@ def test_update_public_user_to_student_type(
         json=user_type_update,
     )
 
-    assert failed_update_response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert failed_update_response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     # now add the class_id, completing the requirements to convert from public to student
     user_type_update["class_group_id"] = str(test_class_group.id)
