@@ -9,10 +9,12 @@ from structlog import get_logger
 from structlog.contextvars import bind_contextvars
 
 from app import crud
+from app.config import get_settings
 from app.db.session import get_session_maker
 from app.models import School, User
 from app.models.event import EventSlackChannel
 from app.models.product import Product
+from app.models.school import SchoolState
 from app.models.subscription import Subscription, SubscriptionType
 from app.models.user import UserAccountType
 from app.repositories.product_repository import product_repository
@@ -20,9 +22,15 @@ from app.repositories.school_repository import school_repository
 from app.repositories.subscription_repository import subscription_repository
 from app.schemas.product import ProductCreateIn
 from app.schemas.subscription import SubscriptionCreateIn
+from app.services.email_notification import EmailType, send_email_reliable_sync
 from app.services.events import create_event
+from app.services.school_emails import (
+    render_school_activated_html,
+    render_school_renewal_reminder_html,
+)
 
 logger = get_logger()
+settings = get_settings()
 
 
 def process_stripe_event(event_type: str, event_data):
@@ -91,7 +99,20 @@ def process_stripe_event(event_type: str, event_data):
             # Actionable events
             case "invoice.paid":
                 _handle_invoice_paid(session, wriveted_user, school, event_data)
-            case "checkout.session.completed":
+            case "invoice.upcoming":
+                # Fires ~ahead of a renewal charge; remind school admins.
+                _handle_invoice_upcoming(session, event_data)
+            case "invoice.payment_failed":
+                # Stripe runs its own dunning retries; final give-up arrives as
+                # customer.subscription.deleted, which deactivates the school.
+                logger.warning(
+                    "Invoice payment failed",
+                    stripe_subscription=event_data.get("subscription"),
+                )
+            case (
+                "checkout.session.completed"
+                | "checkout.session.async_payment_succeeded"
+            ):
                 _handle_checkout_session_completed(
                     session, wriveted_user, school, event_data
                 )
@@ -348,16 +369,31 @@ def _handle_checkout_session_completed(
     subscription = subscription_repository.upsert(session, base_subscription_data)
     logger.debug("Upserted subscription in our database", subscription=subscription)
 
-    # update the subscription in our database with the latest information
-    # we store the checkout session id in the subscription so that we can
-    # retrieve it later (in the case that a user hasn't yet signed up nor logged in,
-    # and need to link this subscription to their account once they have).
-    subscription.is_active = True
+    # Only a cleared payment marks the subscription active. "paid" = charged;
+    # "no_payment_required" = 100%-off promo or trial (an intentional grant of
+    # access). "unpaid" (async payment not yet cleared) leaves it inactive until
+    # checkout.session.async_payment_succeeded arrives. Gating this (not just the
+    # school state) keeps has_active_subscription / supporter flags honest.
+    payment_status = event_data.get("payment_status")
+    paid = payment_status in ("paid", "no_payment_required")
+    subscription.is_active = paid
     subscription.latest_checkout_session_id = checkout_session_id
 
     # fetch from db instead of stripe object in case we have a product name override
     product = product_repository.get_by_id(session, product_id=stripe_price_id)
     product_name = product.name if product else "Unknown Product"
+
+    # Activate a paid or fully-comped school in the same transaction (before the
+    # commit below).
+    if school is not None:
+        if paid:
+            _activate_school_after_payment(session, school, stripe_customer_email)
+        else:
+            logger.warning(
+                "School checkout completed without cleared payment; leaving inactive",
+                school=school.name,
+                payment_status=payment_status,
+            )
 
     create_event(
         session=session,
@@ -393,9 +429,6 @@ def _handle_checkout_session_completed(
     if wriveted_parent_id is not None and stripe_customer_email:
         logger.info("Sending subscription welcome email via EventOutbox")
 
-        # Local import to avoid circular dependency
-        from app.services.email_notification import EmailType, send_email_reliable_sync
-
         email_data = {
             "from_email": "orders@hueybooks.com",
             "from_name": "Huey Books",
@@ -425,6 +458,91 @@ def _handle_checkout_session_completed(
         )
 
     return subscription
+
+
+def _activate_school_after_payment(session, school: School, customer_email):
+    """Mark a paid school ACTIVE and email the contact a confirmation/receipt.
+
+    Idempotent: Stripe redelivers events, so an already-active school is a
+    no-op (and does not re-send the receipt).
+    """
+    if school.state == SchoolState.ACTIVE:
+        logger.info("School already active; ignoring duplicate", school=school.name)
+        return
+
+    school.state = SchoolState.ACTIVE
+    session.add(school)
+
+    onboarding = (school.info or {}).get("onboarding") or {}
+    to_email = onboarding.get("contact_email") or customer_email
+    if to_email:
+        send_email_reliable_sync(
+            db=session,
+            email_data={
+                "from_email": settings.BROADCAST_FROM_EMAIL,
+                "from_name": "Huey Books",
+                "to_emails": [to_email],
+                "subject": f"{school.name} is live on Huey Books",
+                "html_content": render_school_activated_html(
+                    school.name,
+                    onboarding.get("contact_name"),
+                    settings.SCHOOL_ADMIN_URL,
+                ),
+            },
+            email_type=EmailType.TRANSACTIONAL,
+        )
+
+    # No commit here: the caller commits (via create_event) so activation and the
+    # receipt persist in the same transaction as the subscription.
+    logger.info(
+        "School activated after payment", school=school.name, emailed=bool(to_email)
+    )
+
+
+def _handle_invoice_upcoming(session, event_data):
+    """Remind an active school's contact that their subscription renews soon."""
+    stripe_subscription_id = event_data.get("subscription")
+    if not stripe_subscription_id:
+        return
+    subscription = subscription_repository.get_by_id(
+        session, subscription_id=stripe_subscription_id
+    )
+    if subscription is None or not subscription.school_id:
+        return
+    school = school_repository.get_by_wriveted_id(session, str(subscription.school_id))
+    if school is None or school.state != SchoolState.ACTIVE:
+        return
+
+    onboarding = (school.info or {}).get("onboarding") or {}
+    to_email = onboarding.get("contact_email")
+    if not to_email:
+        return
+
+    amount = event_data.get("amount_due")
+    currency = (event_data.get("currency") or "aud").upper()
+    amount_str = (
+        f"${(amount or 0) / 100:.2f} {currency}" if amount is not None else None
+    )
+    renews_at = event_data.get("next_payment_attempt") or event_data.get("period_end")
+    renewal_date = (
+        datetime.utcfromtimestamp(renews_at).date().isoformat() if renews_at else None
+    )
+
+    send_email_reliable_sync(
+        db=session,
+        email_data={
+            "from_email": settings.BROADCAST_FROM_EMAIL,
+            "from_name": "Huey Books",
+            "to_emails": [to_email],
+            "subject": f"{school.name} — your Huey Books subscription renews soon",
+            "html_content": render_school_renewal_reminder_html(
+                school.name, onboarding.get("contact_name"), amount_str, renewal_date
+            ),
+        },
+        email_type=EmailType.TRANSACTIONAL,
+    )
+    session.commit()
+    logger.info("Sent school renewal reminder", school=school.name)
 
 
 def _handle_subscription_created(
@@ -578,6 +696,20 @@ def _handle_subscription_cancelled(
         subscription.is_active = False
         if "ended_at" in event_data and event_data["ended_at"] is not None:
             subscription.expiration = datetime.utcfromtimestamp(event_data["ended_at"])
+
+        # Deactivate the school this subscription paid for. The school is not in
+        # the subscription.deleted payload (client_reference_id is only on
+        # checkout sessions), so resolve it from our subscription record.
+        if school is None and subscription.school_id:
+            school = school_repository.get_by_wriveted_id(
+                session, str(subscription.school_id)
+            )
+        if school is not None and school.state == SchoolState.ACTIVE:
+            school.state = SchoolState.INACTIVE
+            session.add(school)
+            logger.info(
+                "Deactivated school after subscription ended", school=school.name
+            )
 
         # Use unified event workflow instead of direct crud.event.create
         create_event(

@@ -124,3 +124,45 @@
 - **Cons**: More coordination between runtime and service layers
 
 **Rationale**: Pure functions are easier to test, debug, and reason about. Centralized persistence enables proper transaction and concurrency control.
+
+---
+
+### ADR-007: Resend over SendGrid for Email, behind an EMAIL_PROVIDER abstraction
+
+**Status**: Accepted/Implemented
+**Date**: 2026-07-16
+**Context**: We needed to switch email provider away from SendGrid. All email flows through the Event Outbox, but the delivery adapter was hard-wired to the sync SendGrid SDK (a blocking call on the async event loop) and depended on SendGrid-hosted dynamic templates, so there was no clean way to swap providers or render templates ourselves.
+
+**Decision**: Introduce an `EMAIL_PROVIDER` config that selects the delivery backend, add a Resend backend that sends via `httpx.AsyncClient` (async, non-blocking), and port the SendGrid dynamic templates to inline HTML rendered in-repo (`app/services/email_templates.py`). Keep the SendGrid path behind the flag as a reversible fallback.
+
+**Alternatives Considered**:
+- Reactivate/settle the SendGrid account (terminated accounts are rarely reinstated; keeps a vendor we're leaving).
+- Amazon SES (cheaper at volume, more setup, not on our stack).
+- Hard cut to Resend with no abstraction (no rollback path).
+
+**Trade-offs**:
+- **Pros**: No vendor lock, reversible cutover, non-blocking sends, templates are versioned in-repo and testable.
+- **Cons**: We now own template HTML/copy; two backends to keep working while the flag exists.
+
+**Rationale**: An abstraction with a config switch made the cutover low-risk and reversible, and moving delivery to async HTTP removed a loop-blocking call. Resend fits the low volume and de-Wriveting direction. See `docs/school-self-serve-signup.md` and `app/services/email_notification.py`.
+
+---
+
+### ADR-008: Payment Gates School Activation (Stripe Checkout + webhook)
+
+**Status**: Accepted/Implemented
+**Date**: 2026-07-16
+**Context**: Schools self-register (`/onboarding/school`) into a PENDING state that previously required a manual approval step to activate. We want activation to be self-serve and gated on payment. The Stripe webhook already models SCHOOL subscriptions and resolves schools from `client_reference_id`, but there was no way to *initiate* a school checkout and nothing linked payment to activation. Signup alerts now go by email rather than Slack.
+
+**Decision**: Payment gates activation. `POST /school/{id}/checkout` creates a Stripe Checkout Session (subscription mode) scoped to the school via `client_reference_id`; the `checkout.session.completed` webhook activates the school when `payment_status` is `paid` (charged) or `no_payment_required` (a fully-comped 100%-off promo or trial), in the same transaction as the subscription. An `unpaid` (async, not-yet-cleared) session waits for `checkout.session.async_payment_succeeded`. Cancellation (`customer.subscription.deleted`) deactivates the school (resolved from our `Subscription.school_id`, since the school isn't in that payload). Because the checkout link is payer-agnostic, a sponsor (parent/library) can pay it — the subscription attaches to the school regardless of payer.
+
+**Alternatives Considered**:
+- Approval-first (manual gate) — adds a manual bottleneck we want to avoid for self-serve.
+- SetupIntent / charge-in-arrears — more moving parts than a flat recurring price needs.
+- Activate on `checkout.session.completed` unconditionally — unsafe: completes unpaid for trials, 100%-off promos, and async payment methods.
+
+**Trade-offs**:
+- **Pros**: Fully self-serve, reuses existing webhook/subscription model, sponsorship falls out for free, no manual step.
+- **Cons**: Access is only as correct as our webhook handling; activation/deactivation is idempotent-on-retry rather than single-transaction (accepted — see doc).
+
+**Rationale**: A Stripe-hosted Checkout Session keyed to the school is the closest fit to the existing integration and the simplest correct way to gate access on real payment. Renewal reminders ride `invoice.upcoming`. See `docs/school-self-serve-signup.md`.

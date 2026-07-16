@@ -48,6 +48,7 @@ steps:
         NIELSEN_CLIENT_ID=WrivetedWebServices,
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
+        STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
         OTEL_SERVICE_NAME=nonprod-api
       - >-
         --set-secrets=
@@ -94,6 +95,7 @@ steps:
         ENABLE_OTEL_GOOGLE_EXPORTER=True,
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
+        STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
         OTEL_SERVICE_NAME=nonprod-api-internal
       - >-
         --set-secrets=
@@ -140,6 +142,7 @@ steps:
         ENABLE_OTEL_GOOGLE_EXPORTER=True,
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
+        STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
         OTEL_SERVICE_NAME=wriveted-api
       - >-
         --set-secrets=
@@ -185,6 +188,7 @@ steps:
         ENABLE_OTEL_GOOGLE_EXPORTER=True,
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
+        STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
         OTEL_SERVICE_NAME=wriveted-api-internal
       - >-
         --set-secrets=

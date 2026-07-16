@@ -72,6 +72,10 @@ class Settings(BaseSettings):
 
     HUEY_BOOKS_APP_URL: str = "https://hueybooks.com"
 
+    # Where a school admin manages their school (used for links in emails).
+    # Currently the admin UI; set per deployment (target: admin.hueybooks.com).
+    SCHOOL_ADMIN_URL: str = "https://api.wriveted.com"
+
     # Public base URL of this API, used to build absolute links in emails
     # (e.g. the broadcast unsubscribe link).
     WRIVETED_API_BASE_URL: str = "https://api.wriveted.com"
@@ -268,6 +272,18 @@ class Settings(BaseSettings):
 
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
+    # Stripe price ids offerable for a school subscription (first is the default).
+    STRIPE_SCHOOL_PRICE_IDS: List[str] = []
+    # Recipients for internal signup alerts (set per deployment). Empty disables.
+    STAFF_ALERT_EMAILS: List[str] = []
+
+    @field_validator("STRIPE_SCHOOL_PRICE_IDS", "STAFF_ALERT_EMAILS", mode="before")
+    @classmethod
+    def _split_csv_list(cls, v: Union[str, List[str]]) -> Union[str, List[str]]:
+        # Accept a comma-separated env string as well as a JSON list.
+        if isinstance(v, str) and not v.startswith("["):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
 
     ENABLE_OTEL_GOOGLE_EXPORTER: bool = False
 

@@ -52,5 +52,31 @@ When a customer subscribes to a plan, a customer.subscription.created event is s
 
 ### customer.subscription.deleted
 
-When a customer unsubscribes from a plan, a customer.subscription.deleted event is sent to the webhook and we mark the `User.is_active` to `False`.
+When a customer unsubscribes from a plan, a customer.subscription.deleted event is sent to the webhook and we mark the `User.is_active` to `False`. For a **school** subscription we also resolve the school from our `Subscription.school_id` and set the school `INACTIVE` (the school is not in this payload).
+
+### checkout.session.completed / checkout.session.async_payment_succeeded
+
+Primary "someone paid" signal. Creates/updates the subscription and, for a
+**school** subscription, activates the school — but **only when
+`payment_status == "paid"`** (a completed session can be unpaid for async
+payment methods, trials, or 100%-off promos). Activation is idempotent across
+Stripe's redeliveries.
+
+### invoice.upcoming
+
+Fires ahead of a renewal charge. For an active school we email the contact a
+renewal reminder (amount + date from the invoice).
+
+### invoice.payment_failed
+
+Logged only. Stripe runs its own dunning retries; the final give-up arrives as
+`customer.subscription.deleted`, which deactivates the school.
+
+## School self-serve paid signup
+
+`POST /v1/school/{wriveted_identifier}/checkout` creates a Checkout Session
+(subscription mode) for `STRIPE_SCHOOL_PRICE_ID`, scoped to the school via
+`client_reference_id` so an admin or a sponsor can pay it. Payment gates
+activation via the webhook above. Full design + the account-cutover checklist:
+[school-self-serve-signup.md](./school-self-serve-signup.md).
 

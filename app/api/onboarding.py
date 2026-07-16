@@ -1,10 +1,11 @@
 """Self-service onboarding endpoints for schools and families."""
 
+import asyncio
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr, Field, StringConstraints
+from pydantic import BaseModel, EmailStr, Field, StringConstraints, model_validator
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from starlette import status
@@ -13,11 +14,18 @@ from typing_extensions import Annotated
 
 from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.security import get_current_active_user
+from app.config import get_settings
 from app.models import School, SchoolAdmin, SchoolState
 from app.models.school import SchoolBookbotType
 from app.models.user import User, UserAccountType
 from app.repositories.event_repository import event_repository
+from app.services.background_tasks import queue_background_task
+from app.services.email_notification import EmailType, send_email_reliable
 from app.services.experiments import get_experiments
+from app.services.school_emails import (
+    render_school_registered_html,
+    render_staff_new_school_alert_html,
+)
 
 logger = get_logger()
 
@@ -60,6 +68,18 @@ class SchoolOnboardingRequest(BaseModel):
     contact_phone: Optional[str] = Field(None, max_length=50)
     student_count_estimate: Optional[int] = Field(None, ge=1, le=100000)
     message: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def _require_existing_id_or_new_school_details(self):
+        # Either select an existing school by id, or provide the details to
+        # create a new one — not neither.
+        if self.school_wriveted_id is None and not (
+            self.school_name and self.country_code
+        ):
+            raise ValueError(
+                "Provide school_wriveted_id, or both school_name and country_code."
+            )
+        return self
 
 
 class SchoolOnboardingResponse(BaseModel):
@@ -185,7 +205,16 @@ async def onboard_school(
         commit=False,
     )
 
+    # Commit the signup first: it is the transaction of record and must not
+    # fail if the notification emails can't be queued.
     await db.commit()
+
+    try:
+        await _queue_onboarding_emails(db, school, request)
+        await db.commit()
+        await _nudge_outbox()
+    except Exception as e:
+        logger.warning("Failed to queue onboarding emails", error=str(e))
 
     logger.info(
         "School onboarding completed",
@@ -198,8 +227,63 @@ async def onboard_school(
         school_wriveted_id=school.wriveted_identifier,
         school_name=school.name,
         school_state=school.state,
-        message="Your school is pending review. We'll be in touch shortly!",
+        message="Your school is registered. Start your subscription to activate it.",
     )
+
+
+async def _queue_onboarding_emails(db, school, request):
+    """Queue the staff signup alert and the contact's confirmation email.
+
+    Added to the request session (not committed here) so the endpoint's commit
+    persists them alongside the school and event.
+    """
+    settings = get_settings()
+    from_email = settings.BROADCAST_FROM_EMAIL
+
+    if settings.STAFF_ALERT_EMAILS:
+        await send_email_reliable(
+            db=db,
+            email_data={
+                "from_email": from_email,
+                "from_name": "Huey Books",
+                "to_emails": settings.STAFF_ALERT_EMAILS,
+                "subject": f"New school signup: {school.name}",
+                "html_content": render_staff_new_school_alert_html(
+                    school_name=school.name,
+                    wriveted_id=str(school.wriveted_identifier),
+                    contact_name=request.contact_name,
+                    contact_email=request.contact_email,
+                    contact_role=request.contact_role,
+                    country_code=school.country_code,
+                    student_count_estimate=request.student_count_estimate,
+                    message=request.message,
+                ),
+            },
+            email_type=EmailType.SYSTEM,
+        )
+
+    if request.contact_email:
+        await send_email_reliable(
+            db=db,
+            email_data={
+                "from_email": from_email,
+                "from_name": "Huey Books",
+                "to_emails": [request.contact_email],
+                "subject": f"{school.name} — activate your Huey Books school",
+                "html_content": render_school_registered_html(
+                    school.name, request.contact_name
+                ),
+            },
+            email_type=EmailType.ONBOARDING,
+        )
+
+
+async def _nudge_outbox():
+    """Best-effort: ask the internal API to deliver the queued emails now."""
+    try:
+        await asyncio.to_thread(queue_background_task, "process-outbox-events")
+    except Exception as e:
+        logger.warning("Failed to nudge outbox after onboarding", error=str(e))
 
 
 async def _promote_to_school_admin(
