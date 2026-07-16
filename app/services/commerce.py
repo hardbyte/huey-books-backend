@@ -3,6 +3,7 @@ from datetime import datetime
 from json import loads
 from typing import Container, ItemsView, Union
 from urllib.error import HTTPError
+from uuid import UUID
 
 from pydantic import EmailStr, parse_obj_as
 from python_http_client.client import Response
@@ -15,6 +16,7 @@ from twilio.rest import Client as TwilioClient
 
 from app import crud
 from app.config import get_settings
+from app.db.session import get_session_maker
 from app.models.service_account import ServiceAccount
 from app.models.user import User
 from app.schemas.sendgrid import (
@@ -24,6 +26,7 @@ from app.schemas.sendgrid import (
     SendGridEmailData,
 )
 from app.schemas.shopify import ShopifyEventRoot
+from app.services.account_refs import AccountRefType, load_account_ref
 
 logger = get_logger()
 config = get_settings()
@@ -183,8 +186,10 @@ def upsert_sendgrid_contact(
         )
 
     try:
+        # exclude_none so unset optionals (incl. custom_fields) are omitted
+        # rather than sent as null, which SendGrid's contacts schema rejects.
         response = sg.client.marketing.contacts.put(
-            request_body={"contacts": [data.dict()]}
+            request_body={"contacts": [data.model_dump(exclude_none=True)]}
         )
         output = {
             "code": str(response.status_code),
@@ -209,6 +214,20 @@ def upsert_sendgrid_contact(
         commit=True,
         level="warning" if error else "debug",
     )
+
+
+def upsert_sendgrid_contact_background(
+    data: CustomSendGridContactData,
+    account_type: AccountRefType | None,
+    account_id: UUID | None,
+    increment_children: bool = False,
+):
+    Session = get_session_maker()
+    with Session() as session:
+        account = load_account_ref(session, account_type, account_id)
+        upsert_sendgrid_contact(
+            data, session, account, get_sendgrid_api(), increment_children
+        )
 
 
 def send_sendgrid_email(
@@ -307,3 +326,9 @@ def process_shopify_order(
         description="A customer placed an order on the HueyBooks Shopify store",
         info={"shopify_data": json.loads(json.dumps(data.dict(), default=str))},
     )
+
+
+def process_shopify_order_background(data: ShopifyEventRoot):
+    Session = get_session_maker()
+    with Session() as session:
+        process_shopify_order(data, get_sendgrid_api(), session)
