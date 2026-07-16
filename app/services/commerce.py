@@ -186,8 +186,10 @@ def upsert_sendgrid_contact(
         )
 
     try:
+        # exclude_none so unset optionals (incl. custom_fields) are omitted
+        # rather than sent as null, which SendGrid's contacts schema rejects.
         response = sg.client.marketing.contacts.put(
-            request_body={"contacts": [data.dict()]}
+            request_body={"contacts": [data.model_dump(exclude_none=True)]}
         )
         output = {
             "code": str(response.status_code),
