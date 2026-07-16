@@ -45,6 +45,7 @@ from .school import School, SchoolState
 from .school_admin import SchoolAdmin
 from .series import Series
 from .service_account import ServiceAccount, ServiceAccountType
+from .stripe_contribution import StripeContributionReceipt
 from .student import Student
 from .subscription import Subscription
 from .supporter import Supporter

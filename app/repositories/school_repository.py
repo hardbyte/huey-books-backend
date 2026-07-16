@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Sequence
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, exists, select, text, update
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, selectinload
@@ -302,8 +302,18 @@ class SchoolRepositoryImpl(SchoolRepository):
                 Collection.book_count > 0
             )
         if has_active_subscription is not None:
-            school_query = school_query.join(Subscription).where(
-                Subscription.is_active == has_active_subscription
+            # "has active subscription" means paying: an active subscription
+            # backed by a real Stripe customer. Comped contribution grants
+            # (empty stripe_customer_id) are excluded. An EXISTS subquery (not a
+            # join) avoids duplicate School rows when a school has more than one
+            # subscription row.
+            paying_subscription = exists().where(
+                Subscription.school_id == School.wriveted_identifier,
+                Subscription.is_active.is_(True),
+                Subscription.stripe_customer_id != "",
+            )
+            school_query = school_query.where(
+                paying_subscription if has_active_subscription else ~paying_subscription
             )
         if official_identifier is not None:
             school_query = school_query.where(

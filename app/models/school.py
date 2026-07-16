@@ -145,11 +145,16 @@ class School(Base):
         back_populates="schools",
     )
 
+    # A school can transiently have more than one subscription row (e.g. a comped
+    # contribution grant that is retired when the school converts to a paying
+    # Stripe subscription). uselist=False must therefore resolve deterministically
+    # to the "live" one: active first, then latest expiry.
     subscription: Mapped[Optional["Subscription"]] = relationship(
         "Subscription",
         back_populates="school",
         uselist=False,
         cascade="all, delete-orphan",
+        order_by="(Subscription.is_active.desc(), Subscription.expiration.desc())",
     )
 
     created_at: Mapped[datetime] = mapped_column(
