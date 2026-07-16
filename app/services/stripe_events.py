@@ -369,25 +369,24 @@ def _handle_checkout_session_completed(
     subscription = subscription_repository.upsert(session, base_subscription_data)
     logger.debug("Upserted subscription in our database", subscription=subscription)
 
-    # update the subscription in our database with the latest information
-    # we store the checkout session id in the subscription so that we can
-    # retrieve it later (in the case that a user hasn't yet signed up nor logged in,
-    # and need to link this subscription to their account once they have).
-    subscription.is_active = True
+    # Only a cleared payment marks the subscription active. "paid" = charged;
+    # "no_payment_required" = 100%-off promo or trial (an intentional grant of
+    # access). "unpaid" (async payment not yet cleared) leaves it inactive until
+    # checkout.session.async_payment_succeeded arrives. Gating this (not just the
+    # school state) keeps has_active_subscription / supporter flags honest.
+    payment_status = event_data.get("payment_status")
+    paid = payment_status in ("paid", "no_payment_required")
+    subscription.is_active = paid
     subscription.latest_checkout_session_id = checkout_session_id
 
     # fetch from db instead of stripe object in case we have a product name override
     product = product_repository.get_by_id(session, product_id=stripe_price_id)
     product_name = product.name if product else "Unknown Product"
 
-    # Activate a paid or fully-comped school before the commit below so the
-    # school state persists in the same transaction as the subscription.
-    # "paid" = charged; "no_payment_required" = 100%-off promo or trial (both an
-    # intentional grant of access). "unpaid" (async payment not yet cleared)
-    # waits for checkout.session.async_payment_succeeded.
+    # Activate a paid or fully-comped school in the same transaction (before the
+    # commit below).
     if school is not None:
-        payment_status = event_data.get("payment_status")
-        if payment_status in ("paid", "no_payment_required"):
+        if paid:
             _activate_school_after_payment(session, school, stripe_customer_email)
         else:
             logger.warning(

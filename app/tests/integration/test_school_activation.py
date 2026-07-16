@@ -135,6 +135,9 @@ def test_unpaid_checkout_does_not_activate(
     session.rollback()
     session.refresh(test_school)
     assert test_school.state == SchoolState.PENDING  # not activated
+    # The subscription must not be marked active on an unpaid checkout either.
+    sub = session.get(Subscription, "sub_cs_test")
+    assert sub is not None and sub.is_active is False
 
 
 @patch("app.services.stripe_events.StripeProduct")
