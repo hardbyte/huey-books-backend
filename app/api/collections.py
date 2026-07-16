@@ -48,6 +48,8 @@ from app.schemas.collection import (
     CollectionUpdateSummaryResponse,
 )
 from app.schemas.pagination import Pagination
+from app.services.account_refs import get_account_ref
+from app.services.background_events import record_booklist_collection_comparison_event
 from app.services.collection_service import CollectionService
 from app.services.collections import (
     get_collection_info_with_criteria,
@@ -289,17 +291,14 @@ async def get_collection_booklist_intersection(
     )
     common_work_ids = {item.work_id for item in common_collection_items}
 
+    account_type, account_id = get_account_ref(account)
     background_tasks.add_task(
-        event_repository.create,
-        session,
-        title="Compared booklist and collection",
-        info={
-            "items_in_common": len(common_collection_items),
-            "collection_id": str(collection.id),
-            "booklist_id": str(booklist.id),
-        },
-        collection=collection,
-        account=account,
+        record_booklist_collection_comparison_event,
+        str(collection.id),
+        str(booklist.id),
+        len(common_collection_items),
+        account_type,
+        account_id,
     )
 
     return CollectionBookListIntersection(
