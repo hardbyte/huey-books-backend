@@ -268,6 +268,10 @@ class Settings(BaseSettings):
 
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
+    # Stripe price id for the flat annual school subscription (Supporter School).
+    STRIPE_SCHOOL_PRICE_ID: str = ""
+    # Where internal signup alerts go (schools self-serve; no Slack anymore).
+    STAFF_ALERT_EMAIL: str = "hardbyte@gmail.com"
 
     ENABLE_OTEL_GOOGLE_EXPORTER: bool = False
 

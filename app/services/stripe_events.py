@@ -9,10 +9,12 @@ from structlog import get_logger
 from structlog.contextvars import bind_contextvars
 
 from app import crud
+from app.config import get_settings
 from app.db.session import get_session_maker
 from app.models import School, User
 from app.models.event import EventSlackChannel
 from app.models.product import Product
+from app.models.school import SchoolState
 from app.models.subscription import Subscription, SubscriptionType
 from app.models.user import UserAccountType
 from app.repositories.product_repository import product_repository
@@ -20,9 +22,12 @@ from app.repositories.school_repository import school_repository
 from app.repositories.subscription_repository import subscription_repository
 from app.schemas.product import ProductCreateIn
 from app.schemas.subscription import SubscriptionCreateIn
+from app.services.email_notification import EmailType, send_email_reliable_sync
 from app.services.events import create_event
+from app.services.school_emails import render_school_activated_html
 
 logger = get_logger()
+settings = get_settings()
 
 
 def process_stripe_event(event_type: str, event_data):
@@ -393,9 +398,6 @@ def _handle_checkout_session_completed(
     if wriveted_parent_id is not None and stripe_customer_email:
         logger.info("Sending subscription welcome email via EventOutbox")
 
-        # Local import to avoid circular dependency
-        from app.services.email_notification import EmailType, send_email_reliable_sync
-
         email_data = {
             "from_email": "orders@hueybooks.com",
             "from_name": "Huey Books",
@@ -424,7 +426,44 @@ def _handle_checkout_session_completed(
             "Skipping subscription welcome email - no customer email address available"
         )
 
+    if school is not None:
+        _activate_school_after_payment(session, school, stripe_customer_email)
+
     return subscription
+
+
+def _activate_school_after_payment(session, school: School, customer_email):
+    """Mark a paid school ACTIVE and email the contact a confirmation/receipt."""
+    newly_activated = school.state != SchoolState.ACTIVE
+    if newly_activated:
+        school.state = SchoolState.ACTIVE
+        session.add(school)
+
+    onboarding = (school.info or {}).get("onboarding") or {}
+    to_email = onboarding.get("contact_email") or customer_email
+    if to_email:
+        send_email_reliable_sync(
+            db=session,
+            email_data={
+                "from_email": settings.BROADCAST_FROM_EMAIL,
+                "from_name": "Huey Books",
+                "to_emails": [to_email],
+                "subject": f"{school.name} is live on Huey Books",
+                "html_content": render_school_activated_html(
+                    school.name, onboarding.get("contact_name")
+                ),
+            },
+            email_type=EmailType.TRANSACTIONAL,
+        )
+
+    # publish_event_sync only adds the outbox row; persist activation + email.
+    session.commit()
+    logger.info(
+        "School activated after payment",
+        school=school.name,
+        newly_activated=newly_activated,
+        emailed=bool(to_email),
+    )
 
 
 def _handle_subscription_created(

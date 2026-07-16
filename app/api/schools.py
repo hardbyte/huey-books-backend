@@ -3,6 +3,7 @@ from typing import Any, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi_permissions import Allow, Authenticated, Deny, has_permission
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette import status
@@ -33,6 +34,10 @@ from app.schemas.school import (
     SchoolSelectorOption,
 )
 from app.services.experiments import get_experiments
+from app.services.school_billing import (
+    SchoolBillingError,
+    create_school_checkout_session,
+)
 from app.utils.dict_utils import deep_merge_dicts
 
 logger = get_logger()
@@ -276,6 +281,33 @@ async def bind_school(
     session.commit()
 
     return school.admin_id
+
+
+class SchoolCheckoutResponse(BaseModel):
+    checkout_url: str
+
+
+@router.post(
+    "/school/{wriveted_identifier}/checkout", response_model=SchoolCheckoutResponse
+)
+async def create_school_checkout(
+    school: School = Permission("update", aget_school_from_wriveted_id),
+    account: Union[User, ServiceAccount] = Depends(
+        get_current_active_user_or_service_account
+    ),
+):
+    """Start a Stripe Checkout for the school's annual subscription.
+
+    Returns a Stripe-hosted checkout URL. The school admin can pay it or forward
+    it to a sponsor (parent, library) — the subscription attaches to the school
+    regardless of who pays. The school is activated when payment completes, via
+    the Stripe webhook.
+    """
+    try:
+        checkout_url = await create_school_checkout_session(school)
+    except SchoolBillingError as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
+    return SchoolCheckoutResponse(checkout_url=checkout_url)
 
 
 @router.patch("/school/{wriveted_identifier}", response_model=SchoolDetail)
