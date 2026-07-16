@@ -380,6 +380,22 @@ def _handle_checkout_session_completed(
     product = product_repository.get_by_id(session, product_id=stripe_price_id)
     product_name = product.name if product else "Unknown Product"
 
+    # Activate a paid or fully-comped school before the commit below so the
+    # school state persists in the same transaction as the subscription.
+    # "paid" = charged; "no_payment_required" = 100%-off promo or trial (both an
+    # intentional grant of access). "unpaid" (async payment not yet cleared)
+    # waits for checkout.session.async_payment_succeeded.
+    if school is not None:
+        payment_status = event_data.get("payment_status")
+        if payment_status in ("paid", "no_payment_required"):
+            _activate_school_after_payment(session, school, stripe_customer_email)
+        else:
+            logger.warning(
+                "School checkout completed without cleared payment; leaving inactive",
+                school=school.name,
+                payment_status=payment_status,
+            )
+
     create_event(
         session=session,
         title="Subscription started",
@@ -442,20 +458,6 @@ def _handle_checkout_session_completed(
             "Skipping subscription welcome email - no customer email address available"
         )
 
-    if school is not None:
-        # Only a genuinely paid session activates a school. A completed session
-        # can still be unpaid (async payment methods) or zero-charge (trial,
-        # 100%-off promo), and must not unlock access.
-        payment_status = event_data.get("payment_status")
-        if payment_status == "paid":
-            _activate_school_after_payment(session, school, stripe_customer_email)
-        else:
-            logger.warning(
-                "School checkout completed but not paid; leaving school inactive",
-                school=school.name,
-                payment_status=payment_status,
-            )
-
     return subscription
 
 
@@ -489,12 +491,10 @@ def _activate_school_after_payment(session, school: School, customer_email):
             email_type=EmailType.TRANSACTIONAL,
         )
 
-    # publish_event_sync only adds the outbox row; persist activation + email.
-    session.commit()
+    # No commit here: the caller commits (via create_event) so activation and the
+    # receipt persist in the same transaction as the subscription.
     logger.info(
-        "School activated after payment",
-        school=school.name,
-        emailed=bool(to_email),
+        "School activated after payment", school=school.name, emailed=bool(to_email)
     )
 
 

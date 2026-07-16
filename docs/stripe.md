@@ -79,5 +79,4 @@ Logged only. Stripe runs its own dunning retries; the final give-up arrives as
 `client_reference_id` so an admin or a sponsor can pay it. Payment gates
 activation via the webhook above. Full design + the account-cutover checklist:
 [school-self-serve-signup.md](./school-self-serve-signup.md).
-`scripts/stripe_migrate.py` migrates the catalog between Stripe accounts.
 

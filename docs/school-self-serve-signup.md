@@ -11,7 +11,7 @@ the email backend.
                                              -> email: staff alert + "registered, subscribe to activate"
 2. Pay         POST /v1/school/{id}/checkout -> Stripe Checkout Session URL (subscription mode)
                                              -> admin pays, or forwards the URL to a sponsor
-3. Activate    webhook checkout.session.completed (payment_status == "paid")
+3. Activate    webhook checkout.session.completed (paid or fully comped)
                                              -> School(state=ACTIVE) + receipt email
 4. Renew       webhook invoice.upcoming      -> renewal reminder email to the contact
 5. Lapse       webhook customer.subscription.deleted -> School(state=INACTIVE)
@@ -35,9 +35,12 @@ School state machine: `PENDING --paid--> ACTIVE --cancelled/ended--> INACTIVE`.
 
 `app/services/stripe_events.py`:
 - `checkout.session.completed` / `checkout.session.async_payment_succeeded` →
-  `_handle_checkout_session_completed`. A school is activated **only when
-  `event_data["payment_status"] == "paid"`**. Completed-but-unpaid sessions
-  (async payment methods, trials, 100%-off promos) do not activate.
+  `_handle_checkout_session_completed`. A school is activated when
+  `payment_status` is `paid` (charged) or `no_payment_required` (a fully-comped
+  100%-off promo, or a trial — both intentional grants of access). An `unpaid`
+  session (async payment not yet cleared) does **not** activate; it waits for
+  `checkout.session.async_payment_succeeded`. Activation happens in the same
+  transaction as the subscription (before the `create_event` commit).
 - `_activate_school_after_payment` is idempotent: an already-ACTIVE school is a
   no-op and does not re-send the receipt (Stripe redelivers events).
 - `customer.subscription.deleted` → the school is resolved from our
@@ -74,21 +77,17 @@ paid. Bulk multi-school sponsorship in one transaction is future work.
 ## Config
 
 - `EMAIL_PROVIDER` — `resend` (prod) or `sendgrid` (fallback).
-- `STRIPE_SCHOOL_PRICE_ID` — the flat school price (Supporter School).
-- `STAFF_ALERT_EMAIL` — recipient for signup alerts, set per deployment; unset
-  disables the alert.
+- `STRIPE_SCHOOL_PRICE_IDS` — offerable school price ids (comma-separated or
+  JSON); the first is the default. Checkout accepts an optional `price_id` that
+  must be one of these.
+- `STAFF_ALERT_EMAILS` — recipients for signup alerts (comma-separated or JSON),
+  set per deployment; empty disables the alert.
 
 ## Known gaps / accepted trade-offs
 
-- **Not single-transaction.** Subscription and school-state changes commit
-  separately; a crash between them self-heals on Stripe's retry (activation is
-  idempotent). Accepted for MVP.
 - **No immediate dunning deactivation.** A failed renewal keeps the school
   active until Stripe cancels the subscription; then it deactivates. Tune the
   Stripe dunning policy if a harder cutoff is wanted.
-- **Promo codes disabled** on checkout (`allow_promotion_codes` not set) — a
-  100%-off code would be a no-charge activation path; re-enable deliberately with
-  a policy.
 - **Dead ACL rule**: `School` grants `(Allow, "school:{id}", "update")` but no
   principal is ever `school:{id}`; checkout is effectively admin/superuser only.
   Harmless but misleading — remove or correct when touching `app/models/school.py`.
@@ -102,19 +101,17 @@ paid. Bulk multi-school sponsorship in one transaction is future work.
   re-email, cancellation deactivates. Run with
   `bash scripts/integration-tests.sh -k school_activation`.
 
-## Stripe account cutover (hardbyte)
+## Going live
 
 The school flow is parameterized by config, so going live is a
-setup + secret/price swap, not code:
+setup + secret/price change, not code:
 
-1. In the hardbyte Stripe account, create the school product/price (flat
-   recurring) and a webhook endpoint at the internal API `/v1/stripe/webhook`
-   with events: `checkout.session.completed`,
+1. In Stripe, create the school product/price(s) and a webhook endpoint at the
+   internal API `/v1/stripe/webhook` with events: `checkout.session.completed`,
    `checkout.session.async_payment_succeeded`, `customer.subscription.deleted`,
    `invoice.upcoming`, `invoice.payment_failed`, plus the existing subscription
-   events. `scripts/stripe_migrate.py` automates recreating the catalog and
-   emits the old→new price-ID mapping.
+   events.
 2. Set the secrets/config: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
-   `STRIPE_SCHOOL_PRICE_ID` (from the mapping), `EMAIL_PROVIDER=resend`.
+   `STRIPE_SCHOOL_PRICE_IDS`, `EMAIL_PROVIDER=resend`, and `STAFF_ALERT_EMAILS`.
 3. Manual e2e: register a school → hit `/checkout` → pay with a Stripe test
    card → confirm the school flips to ACTIVE and the receipt email sends.

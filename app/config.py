@@ -268,10 +268,18 @@ class Settings(BaseSettings):
 
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
-    # Stripe price id for the flat school subscription.
-    STRIPE_SCHOOL_PRICE_ID: str = ""
-    # Recipient for internal signup alerts (set per deployment). Empty disables.
-    STAFF_ALERT_EMAIL: str = ""
+    # Stripe price ids offerable for a school subscription (first is the default).
+    STRIPE_SCHOOL_PRICE_IDS: List[str] = []
+    # Recipients for internal signup alerts (set per deployment). Empty disables.
+    STAFF_ALERT_EMAILS: List[str] = []
+
+    @field_validator("STRIPE_SCHOOL_PRICE_IDS", "STAFF_ALERT_EMAILS", mode="before")
+    @classmethod
+    def _split_csv_list(cls, v: Union[str, List[str]]) -> Union[str, List[str]]:
+        # Accept a comma-separated env string as well as a JSON list.
+        if isinstance(v, str) and not v.startswith("["):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
 
     ENABLE_OTEL_GOOGLE_EXPORTER: bool = False
 

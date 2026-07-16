@@ -23,12 +23,23 @@ class SchoolBillingError(Exception):
     """Raised when a school checkout session cannot be created."""
 
 
-async def create_school_checkout_session(school: School) -> str:
-    """Create a Stripe Checkout Session for the school and return its URL."""
-    if not settings.STRIPE_SCHOOL_PRICE_ID:
-        raise SchoolBillingError("STRIPE_SCHOOL_PRICE_ID is not configured")
+async def create_school_checkout_session(
+    school: School, price_id: str | None = None
+) -> str:
+    """Create a Stripe Checkout Session for the school and return its URL.
+
+    ``price_id`` selects one of the configured school prices; it must be one of
+    ``STRIPE_SCHOOL_PRICE_IDS`` (defaults to the first).
+    """
+    if not settings.STRIPE_SCHOOL_PRICE_IDS:
+        raise SchoolBillingError("STRIPE_SCHOOL_PRICE_IDS is not configured")
     if not settings.STRIPE_SECRET_KEY:
         raise SchoolBillingError("STRIPE_SECRET_KEY is not configured")
+
+    if price_id is None:
+        price_id = settings.STRIPE_SCHOOL_PRICE_IDS[0]
+    elif price_id not in settings.STRIPE_SCHOOL_PRICE_IDS:
+        raise SchoolBillingError(f"Unknown school price id: {price_id}")
 
     stripe.api_key = settings.STRIPE_SECRET_KEY
     app_url = settings.HUEY_BOOKS_APP_URL.rstrip("/")
@@ -38,7 +49,7 @@ async def create_school_checkout_session(school: School) -> str:
 
     params = {
         "mode": "subscription",
-        "line_items": [{"price": settings.STRIPE_SCHOOL_PRICE_ID, "quantity": 1}],
+        "line_items": [{"price": price_id, "quantity": 1}],
         "client_reference_id": wriveted_id,
         "success_url": f"{app_url}/school/onboarding/success?session_id={{CHECKOUT_SESSION_ID}}",
         "cancel_url": f"{app_url}/school/onboarding/cancelled",

@@ -291,12 +291,16 @@ class SchoolCheckoutResponse(BaseModel):
     "/school/{wriveted_identifier}/checkout", response_model=SchoolCheckoutResponse
 )
 async def create_school_checkout(
+    price_id: Optional[str] = Query(
+        None,
+        description="One of the configured school price ids; defaults to the first.",
+    ),
     school: School = Permission("update", aget_school_from_wriveted_id),
     account: Union[User, ServiceAccount] = Depends(
         get_current_active_user_or_service_account
     ),
 ):
-    """Start a Stripe Checkout for the school's annual subscription.
+    """Start a Stripe Checkout for the school's subscription.
 
     Returns a Stripe-hosted checkout URL. The school admin can pay it or forward
     it to a sponsor (parent, library) — the subscription attaches to the school
@@ -304,7 +308,7 @@ async def create_school_checkout(
     the Stripe webhook.
     """
     try:
-        checkout_url = await create_school_checkout_session(school)
+        checkout_url = await create_school_checkout_session(school, price_id=price_id)
     except SchoolBillingError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
     return SchoolCheckoutResponse(checkout_url=checkout_url)

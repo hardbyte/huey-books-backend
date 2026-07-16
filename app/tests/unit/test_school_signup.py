@@ -58,7 +58,9 @@ def _school() -> School:
 
 @pytest.mark.asyncio
 async def test_create_checkout_session_builds_expected_params(monkeypatch):
-    monkeypatch.setattr(school_billing.settings, "STRIPE_SCHOOL_PRICE_ID", "price_school")
+    monkeypatch.setattr(
+        school_billing.settings, "STRIPE_SCHOOL_PRICE_IDS", ["price_school"]
+    )
     monkeypatch.setattr(school_billing.settings, "STRIPE_SECRET_KEY", "sk_test")
     monkeypatch.setattr(
         school_billing.settings, "HUEY_BOOKS_APP_URL", "https://hueybooks.com"
@@ -90,6 +92,16 @@ async def test_create_checkout_session_builds_expected_params(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_checkout_session_requires_price_id(monkeypatch):
-    monkeypatch.setattr(school_billing.settings, "STRIPE_SCHOOL_PRICE_ID", "")
+    monkeypatch.setattr(school_billing.settings, "STRIPE_SCHOOL_PRICE_IDS", [])
     with pytest.raises(school_billing.SchoolBillingError):
         await school_billing.create_school_checkout_session(School(name="X"))
+
+
+@pytest.mark.asyncio
+async def test_create_checkout_session_rejects_unknown_price_id(monkeypatch):
+    monkeypatch.setattr(
+        school_billing.settings, "STRIPE_SCHOOL_PRICE_IDS", ["price_school"]
+    )
+    monkeypatch.setattr(school_billing.settings, "STRIPE_SECRET_KEY", "sk_test")
+    with pytest.raises(school_billing.SchoolBillingError):
+        await school_billing.create_school_checkout_session(_school(), price_id="price_other")

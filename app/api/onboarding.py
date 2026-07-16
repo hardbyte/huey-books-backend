@@ -228,13 +228,13 @@ async def _queue_onboarding_emails(db, school, request):
     settings = get_settings()
     from_email = settings.BROADCAST_FROM_EMAIL
 
-    if settings.STAFF_ALERT_EMAIL:
+    if settings.STAFF_ALERT_EMAILS:
         await send_email_reliable(
             db=db,
             email_data={
                 "from_email": from_email,
                 "from_name": "Huey Books",
-                "to_emails": [settings.STAFF_ALERT_EMAIL],
+                "to_emails": settings.STAFF_ALERT_EMAILS,
                 "subject": f"New school signup: {school.name}",
                 "html_content": render_staff_new_school_alert_html(
                     school_name=school.name,
