@@ -72,6 +72,10 @@ class Settings(BaseSettings):
 
     HUEY_BOOKS_APP_URL: str = "https://hueybooks.com"
 
+    # Where a school admin manages their school (used for links in emails).
+    # Currently the admin UI; set per deployment (target: admin.hueybooks.com).
+    SCHOOL_ADMIN_URL: str = "https://api.wriveted.com"
+
     # Public base URL of this API, used to build absolute links in emails
     # (e.g. the broadcast unsubscribe link).
     WRIVETED_API_BASE_URL: str = "https://api.wriveted.com"

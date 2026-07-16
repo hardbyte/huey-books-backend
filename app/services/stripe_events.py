@@ -485,7 +485,9 @@ def _activate_school_after_payment(session, school: School, customer_email):
                 "to_emails": [to_email],
                 "subject": f"{school.name} is live on Huey Books",
                 "html_content": render_school_activated_html(
-                    school.name, onboarding.get("contact_name")
+                    school.name,
+                    onboarding.get("contact_name"),
+                    settings.SCHOOL_ADMIN_URL,
                 ),
             },
             email_type=EmailType.TRANSACTIONAL,

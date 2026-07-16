@@ -5,7 +5,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr, Field, StringConstraints
+from pydantic import BaseModel, EmailStr, Field, StringConstraints, model_validator
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from starlette import status
@@ -68,6 +68,18 @@ class SchoolOnboardingRequest(BaseModel):
     contact_phone: Optional[str] = Field(None, max_length=50)
     student_count_estimate: Optional[int] = Field(None, ge=1, le=100000)
     message: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def _require_existing_id_or_new_school_details(self):
+        # Either select an existing school by id, or provide the details to
+        # create a new one — not neither.
+        if self.school_wriveted_id is None and not (
+            self.school_name and self.country_code
+        ):
+            raise ValueError(
+                "Provide school_wriveted_id, or both school_name and country_code."
+            )
+        return self
 
 
 class SchoolOnboardingResponse(BaseModel):

@@ -30,6 +30,11 @@ School state machine: `PENDING --paid--> ACTIVE --cancelled/ended--> INACTIVE`.
   new; `Permission("update", ...)` (school admin or superuser). Returns
   `{ "checkout_url": ... }`. Stripe SDK call is offloaded off the event loop
   (`app/services/school_billing.py`).
+- `POST /v1/school/{wriveted_identifier}/staff` + `GET .../staff`
+  (`app/api/schools.py`) — a school admin adds a teacher (or admin) colleague by
+  email and lists staff. The colleague is created as an educator bound to the
+  school and is linked to their account by email on first sign-in (an email that
+  already has an account is rejected with 409). An invite email is sent.
 
 ## Payment → activation (the money-gates-access rule)
 
@@ -52,8 +57,9 @@ School state machine: `PENDING --paid--> ACTIVE --cancelled/ended--> INACTIVE`.
 
 | Email | Trigger | To |
 |-------|---------|----|
-| Staff signup alert | onboarding submit | `STAFF_ALERT_EMAIL` (replaces Slack) |
+| Staff signup alert | onboarding submit | `STAFF_ALERT_EMAILS` (replaces Slack) |
 | "Registered, subscribe to activate" | onboarding submit | school contact |
+| Staff invite | staff added to a school | the invited colleague |
 | "Your school is live" + receipt | paid activation | school contact / payer |
 | Renewal reminder | `invoice.upcoming` | school contact |
 
@@ -82,6 +88,8 @@ paid. Bulk multi-school sponsorship in one transaction is future work.
   must be one of these.
 - `STAFF_ALERT_EMAILS` — recipients for signup alerts (comma-separated or JSON),
   set per deployment; empty disables the alert.
+- `SCHOOL_ADMIN_URL` — where a school admin manages their school; used for links
+  in the activation and staff-invite emails.
 
 ## Known gaps / accepted trade-offs
 

@@ -1,14 +1,16 @@
 import copy
 from typing import Any, List, Optional, Union
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi_permissions import Allow, Authenticated, Deny, has_permission
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette import status
 from structlog import get_logger
 
+from app import crud
 from app.api.common.pagination import PaginatedQueryParams
 from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.school import (
@@ -20,8 +22,9 @@ from app.api.dependencies.security import (
     get_current_active_user_or_service_account,
     get_current_user,
 )
+from app.config import get_settings
 from app.db.session import get_session
-from app.models import School, SchoolAdmin, ServiceAccount
+from app.models import Educator, School, SchoolAdmin, ServiceAccount
 from app.models.user import User
 from app.permissions import Permission
 from app.repositories.event_repository import event_repository
@@ -33,11 +36,13 @@ from app.schemas.school import (
     SchoolPatchOptions,
     SchoolSelectorOption,
 )
+from app.services.email_notification import EmailType, send_email_reliable_sync
 from app.services.experiments import get_experiments
 from app.services.school_billing import (
     SchoolBillingError,
     create_school_checkout_session,
 )
+from app.services.school_emails import render_school_staff_invite_html
 from app.utils.dict_utils import deep_merge_dicts
 
 logger = get_logger()
@@ -312,6 +317,106 @@ async def create_school_checkout(
     except SchoolBillingError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
     return SchoolCheckoutResponse(checkout_url=checkout_url)
+
+
+class SchoolStaffAddIn(BaseModel):
+    name: str = Field(max_length=200)
+    email: EmailStr
+    as_admin: bool = False
+
+
+class SchoolStaffMember(BaseModel):
+    id: UUID
+    name: Optional[str] = None
+    email: Optional[str] = None
+    type: str
+
+
+def _staff_member(user: User) -> SchoolStaffMember:
+    return SchoolStaffMember(
+        id=user.id, name=user.name, email=user.email, type=user.type.value
+    )
+
+
+@router.get(
+    "/school/{wriveted_identifier}/staff", response_model=List[SchoolStaffMember]
+)
+def list_school_staff(
+    school: School = Permission("read", get_school_from_wriveted_id),
+    session: Session = Depends(get_session),
+):
+    """List the educators and admins attached to a school."""
+    educators = session.query(Educator).filter(Educator.school_id == school.id).all()
+    return [_staff_member(e) for e in educators]
+
+
+@router.post(
+    "/school/{wriveted_identifier}/staff",
+    response_model=SchoolStaffMember,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_school_staff(
+    data: SchoolStaffAddIn,
+    school: School = Permission("update", get_school_from_wriveted_id),
+    account: Union[User, ServiceAccount] = Depends(
+        get_current_active_user_or_service_account
+    ),
+    session: Session = Depends(get_session),
+):
+    """Add a teacher (or admin) to a school and email them an invite.
+
+    The colleague is created as an educator bound to the school and is linked to
+    their account by email on first sign-in. An email that already has an
+    account is rejected — ask them to sign in instead.
+    """
+    if crud.user.get_by_account_email(session, data.email) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "A user with that email already exists; ask them to sign in.",
+        )
+
+    if data.as_admin:
+        member: Educator = SchoolAdmin(
+            name=data.name,
+            email=data.email,
+            school_id=school.id,
+            is_active=True,
+            school_admin_info={},
+        )
+    else:
+        member = Educator(
+            name=data.name, email=data.email, school_id=school.id, is_active=True
+        )
+    session.add(member)
+    # get_session does not commit on teardown; persist the new educator.
+    session.commit()
+
+    settings = get_settings()
+    try:
+        send_email_reliable_sync(
+            db=session,
+            email_data={
+                "from_email": settings.BROADCAST_FROM_EMAIL,
+                "from_name": "Huey Books",
+                "to_emails": [data.email],
+                "subject": f"You've been added to {school.name} on Huey Books",
+                "html_content": render_school_staff_invite_html(
+                    school.name, data.name, settings.SCHOOL_ADMIN_URL
+                ),
+            },
+            email_type=EmailType.ONBOARDING,
+        )
+        session.commit()
+    except Exception as e:
+        logger.warning("Failed to queue staff invite email", error=str(e))
+
+    logger.info(
+        "Added school staff",
+        school=school.name,
+        email=data.email,
+        as_admin=data.as_admin,
+    )
+    return _staff_member(member)
 
 
 @router.patch("/school/{wriveted_identifier}", response_model=SchoolDetail)

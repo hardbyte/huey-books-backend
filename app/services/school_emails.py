@@ -35,17 +35,47 @@ def render_school_registered_html(school_name: str, contact_name: Optional[str])
     )
 
 
-def render_school_activated_html(school_name: str, contact_name: Optional[str]) -> str:
+def render_school_activated_html(
+    school_name: str, contact_name: Optional[str], admin_url: Optional[str] = None
+) -> str:
     """Sent to the school contact once payment activates the school."""
     greeting = f"Hi {escape(contact_name)}," if contact_name else "Hi there,"
+    manage = (
+        f"<p>Manage your school, invite your teachers, and set up classes here: "
+        f'<a href="{escape(admin_url, quote=True)}">{escape(admin_url)}</a></p>'
+        if admin_url
+        else ""
+    )
     return _shell(
         f"<h2>{escape(school_name)} is live! \U0001f389</h2>"
         f"<p>{greeting}</p>"
         "<p>Your subscription is active and your Huey Books school account is "
         "ready to use. You can now add classes and students and get them "
         "reading.</p>"
+        f"{manage}"
         "<p>This is a receipt that your school subscription has started. "
         "If you have any questions just reply to this email.</p>"
+        "<p>Happy reading,<br>The Huey Books team</p>"
+    )
+
+
+def render_school_staff_invite_html(
+    school_name: str, invitee_name: Optional[str], admin_url: Optional[str]
+) -> str:
+    """Sent to a teacher/staff member added to a school."""
+    greeting = f"Hi {escape(invitee_name)}," if invitee_name else "Hi there,"
+    cta = (
+        f"<p>Sign in with this email address to get started: "
+        f'<a href="{escape(admin_url, quote=True)}">{escape(admin_url)}</a></p>'
+        if admin_url
+        else "<p>Sign in with this email address to get started.</p>"
+    )
+    return _shell(
+        f"<h2>You've been added to {escape(school_name)} on Huey Books</h2>"
+        f"<p>{greeting}</p>"
+        f"<p>{escape(school_name)} has added you to their Huey Books account, so "
+        "you can help your students find books they'll love.</p>"
+        f"{cta}"
         "<p>Happy reading,<br>The Huey Books team</p>"
     )
 

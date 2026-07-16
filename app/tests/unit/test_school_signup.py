@@ -9,6 +9,7 @@ from app.services import school_billing
 from app.services.school_emails import (
     render_school_activated_html,
     render_school_registered_html,
+    render_school_staff_invite_html,
     render_staff_new_school_alert_html,
 )
 
@@ -26,6 +27,15 @@ def test_school_activated_html_no_contact_name_falls_back():
     html = render_school_activated_html("St Kilda Primary", None)
     assert "live" in html.lower()
     assert "Hi there" in html
+
+
+def test_staff_invite_html_links_to_admin():
+    html = render_school_staff_invite_html(
+        "St Kilda Primary", "Alex", "https://admin.example/x"
+    )
+    assert "St Kilda Primary" in html
+    assert "Alex" in html
+    assert "https://admin.example/x" in html
 
 
 def test_staff_alert_lists_details_and_escapes():
