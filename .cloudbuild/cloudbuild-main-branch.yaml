@@ -49,6 +49,8 @@ steps:
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
+        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api
       - >-
         --set-secrets=
@@ -96,6 +98,8 @@ steps:
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
+        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api-internal
       - >-
         --set-secrets=
@@ -143,6 +147,8 @@ steps:
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
+        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=wriveted-api
       - >-
         --set-secrets=
@@ -189,6 +195,8 @@ steps:
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
+        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=wriveted-api-internal
       - >-
         --set-secrets=
