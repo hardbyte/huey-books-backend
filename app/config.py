@@ -274,10 +274,23 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_SECRET: str = ""
     # Stripe price ids offerable for a school subscription (first is the default).
     STRIPE_SCHOOL_PRICE_IDS: List[str] = []
+    # One-off Stripe price ids for a "contribute a month" payment toward a
+    # school's subscription (first is the default).
+    STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS: List[str] = []
+    # Notional monthly rate (in minor units, e.g. cents) used to convert a
+    # pay-what-you-want contribution into a proportional access grant for a school
+    # with no auto-renewing Stripe subscription: grant_days = round(amount /
+    # this * 30). Contributions stack (extend the expiry).
+    SCHOOL_CONTRIBUTION_MONTHLY_CENTS: int = 2500
     # Recipients for internal signup alerts (set per deployment). Empty disables.
     STAFF_ALERT_EMAILS: List[str] = []
 
-    @field_validator("STRIPE_SCHOOL_PRICE_IDS", "STAFF_ALERT_EMAILS", mode="before")
+    @field_validator(
+        "STRIPE_SCHOOL_PRICE_IDS",
+        "STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS",
+        "STAFF_ALERT_EMAILS",
+        mode="before",
+    )
     @classmethod
     def _split_csv_list(cls, v: Union[str, List[str]]) -> Union[str, List[str]]:
         # Accept a comma-separated env string as well as a JSON list.

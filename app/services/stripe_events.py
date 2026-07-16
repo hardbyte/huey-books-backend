@@ -1,6 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
+import stripe
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from stripe import Customer as StripeCustomer
 from stripe import Price as StripePrice
 from stripe import Product as StripeProduct
@@ -15,6 +18,7 @@ from app.models import School, User
 from app.models.event import EventSlackChannel
 from app.models.product import Product
 from app.models.school import SchoolState
+from app.models.stripe_contribution import StripeContributionReceipt
 from app.models.subscription import Subscription, SubscriptionType
 from app.models.user import UserAccountType
 from app.repositories.product_repository import product_repository
@@ -25,12 +29,28 @@ from app.schemas.subscription import SubscriptionCreateIn
 from app.services.email_notification import EmailType, send_email_reliable_sync
 from app.services.events import create_event
 from app.services.school_emails import (
+    render_contribution_thankyou_html,
     render_school_activated_html,
+    render_school_contribution_notice_html,
     render_school_renewal_reminder_html,
 )
 
 logger = get_logger()
 settings = get_settings()
+
+# Metadata marker set on a contribution Checkout Session (see school_billing);
+# the webhook routes strictly on this, not on checkout mode.
+CONTRIBUTION_METADATA_KIND = "school_contribution"
+# Title of the audit event recorded per processed contribution.
+CONTRIBUTION_EVENT_TITLE = "School contribution received"
+# Marks a Subscription as a comped grant funded by a one-off contribution (no
+# auto-renewing Stripe subscription behind it), distinguishable from a real
+# Stripe subscription.
+CONTRIBUTION_GRANT_SOURCE = "contribution_grant"
+# Synthetic Product + Subscription id prefix for contribution grants.
+CONTRIBUTION_GRANT_PRODUCT_ID = "comp_school_contribution"
+CONTRIBUTION_GRANT_PRODUCT_NAME = "School contribution (comped)"
+CONTRIBUTION_GRANT_SUBSCRIPTION_PREFIX = "comp_contribution_"
 
 
 def process_stripe_event(event_type: str, event_data):
@@ -88,6 +108,21 @@ def process_stripe_event(event_type: str, event_data):
 
     Session = get_session_maker()
     with Session() as session:
+        # One-off "contribute a month" checkouts run in payment mode and may have
+        # no Stripe customer (guest checkout), so resolve the school directly and
+        # bypass the customer-centric extraction the subscription events rely on.
+        if event_type in (
+            "checkout.session.completed",
+            "checkout.session.async_payment_succeeded",
+        ) and _is_contribution_checkout(event_data):
+            contribution_school = _resolve_school_from_client_reference(
+                session, event_data
+            )
+            _handle_contribution_checkout_completed(
+                session, contribution_school, event_data
+            )
+            return
+
         wriveted_user, school, stripe_customer = (
             _extract_user_and_customer_from_stripe_object(
                 session, event_data, object_type
@@ -388,6 +423,9 @@ def _handle_checkout_session_completed(
     if school is not None:
         if paid:
             _activate_school_after_payment(session, school, stripe_customer_email)
+            # A paying Stripe subscription supersedes any comped contribution
+            # grant, so retire it to keep a single active subscription row.
+            _retire_contribution_grants(session, school.wriveted_identifier)
         else:
             logger.warning(
                 "School checkout completed without cleared payment; leaving inactive",
@@ -499,6 +537,451 @@ def _activate_school_after_payment(session, school: School, customer_email):
     )
 
 
+def _is_contribution_checkout(event_data: dict) -> bool:
+    """Whether a completed checkout session is a one-off school contribution.
+
+    Distinguished strictly by our own metadata marker, not by ``mode`` — a bare
+    ``mode == "payment"`` check would swallow any future one-off checkout.
+    """
+    metadata = event_data.get("metadata") or {}
+    return metadata.get("kind") == CONTRIBUTION_METADATA_KIND
+
+
+def _resolve_school_from_client_reference(
+    session, event_data: dict
+) -> Optional[School]:
+    """Resolve the school a contribution is scoped to from client_reference_id."""
+    client_reference_id = event_data.get("client_reference_id")
+    if client_reference_id in (None, "undefined", "null"):
+        return None
+    return school_repository.get_by_wriveted_id(
+        session, wriveted_id=client_reference_id
+    )
+
+
+def _format_money(amount_total: Optional[int], currency: str) -> Optional[str]:
+    """Format a Stripe minor-unit amount with its ISO currency code (no symbol)."""
+    if amount_total is None:
+        return None
+    return f"{amount_total / 100:.2f} {currency.upper()}"
+
+
+def _get_active_stripe_subscription(session, school: School) -> Optional[Subscription]:
+    """Return the school's active auto-renewing Stripe subscription, if any.
+
+    Queried directly rather than via ``school.subscription`` (a one-to-one
+    relationship that is ambiguous if a school ever has both a comped grant row
+    and a Stripe subscription row). Comped grants carry an empty
+    ``stripe_customer_id``, so the ``!= ""`` filter excludes them.
+    """
+    return (
+        session.execute(
+            select(Subscription)
+            .where(
+                Subscription.school_id == school.wriveted_identifier,
+                Subscription.is_active.is_(True),
+                Subscription.stripe_customer_id != "",
+            )
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+
+
+def _get_active_contribution_grant(session, school_id) -> Optional[Subscription]:
+    """Return a school's active, unexpired comped contribution grant, if any."""
+    now = datetime.utcnow()
+    return (
+        session.execute(
+            select(Subscription)
+            .where(
+                Subscription.school_id == school_id,
+                Subscription.is_active.is_(True),
+                Subscription.info["source"].astext == CONTRIBUTION_GRANT_SOURCE,
+                Subscription.expiration > now,
+            )
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+
+
+def _retire_contribution_grants(session, school_id) -> None:
+    """Deactivate a school's comped contribution grant(s).
+
+    Called when a school gains/uses a real auto-renewing Stripe subscription, so
+    the (superseded) grant does not leave a second active ``subscriptions`` row —
+    which would make ``School.subscription`` (uselist=False) non-deterministic and
+    the "supporter"/"paying" flags unreliable.
+    """
+    grants = (
+        session.execute(
+            select(Subscription).where(
+                Subscription.school_id == school_id,
+                Subscription.is_active.is_(True),
+                Subscription.info["source"].astext == CONTRIBUTION_GRANT_SOURCE,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for grant in grants:
+        grant.is_active = False
+        logger.info(
+            "Retired contribution grant superseded by Stripe subscription",
+            grant_id=grant.id,
+        )
+
+
+def _claim_contribution_session(session, checkout_session_id: str) -> bool:
+    """Claim a checkout session id for processing; return True if we won the claim.
+
+    Race-safe against Stripe webhook redelivery: the insert-on-conflict serialises
+    concurrent deliveries on the session-id primary key, so only the first caller
+    proceeds to activate the school / send emails.
+    """
+    result = session.execute(
+        pg_insert(StripeContributionReceipt)
+        .values(checkout_session_id=checkout_session_id)
+        .on_conflict_do_nothing(index_elements=["checkout_session_id"])
+    )
+    return result.rowcount == 1
+
+
+def _handle_contribution_checkout_completed(
+    session, school: Optional[School], event_data: dict
+) -> None:
+    """Apply a completed one-off contribution toward a school's subscription.
+
+    Contributions are pay-what-you-want (``amount_total`` varies per checkout).
+
+    Crediting model:
+    - **Active Stripe subscription** (auto-renewing): apply ``amount_total`` as a
+      Stripe customer-balance credit on that subscription's customer, reducing the
+      next renewal invoice.
+    - **No active Stripe subscription**: the contribution buys a bounded paid
+      grant whose length is proportional to the amount paid (see
+      ``_contribution_grant_days``). A first-class comped Subscription is created
+      (or, if one already exists, its expiry is extended by the newly-computed days
+      — contributions stack), and the school is activated. The grant has no Stripe
+      subscription behind it, so it does not auto-renew; it is lapsed to INACTIVE
+      after expiry by the ``/maintenance/lapse-expired-schools`` sweep.
+
+    Gated on payment_status == "paid" and idempotent on the checkout session id
+    (Stripe redelivers webhook events).
+    """
+    payment_status = event_data.get("payment_status")
+    if payment_status != "paid":
+        logger.warning(
+            "Contribution checkout completed without cleared payment; ignoring",
+            payment_status=payment_status,
+        )
+        return
+
+    checkout_session_id = event_data.get("id")
+    if not checkout_session_id:
+        logger.warning("Contribution checkout completed without an id; ignoring")
+        return
+
+    if school is None:
+        logger.warning(
+            "Contribution checkout could not be matched to a school; ignoring",
+            checkout_session_id=checkout_session_id,
+        )
+        return
+
+    if not _claim_contribution_session(session, checkout_session_id):
+        logger.info(
+            "Ignoring duplicate contribution event",
+            checkout_session_id=checkout_session_id,
+        )
+        return
+
+    amount_total = event_data.get("amount_total")
+    currency = (event_data.get("currency") or "aud").lower()
+    payer_email = (event_data.get("customer_details") or {}).get(
+        "email"
+    ) or event_data.get("customer_email")
+    amount_str = _format_money(amount_total, currency)
+
+    active_stripe_subscription = _get_active_stripe_subscription(session, school)
+
+    access_until: Optional[str] = None
+    stripe_customer_id: Optional[str] = None
+    if active_stripe_subscription is not None:
+        stripe_customer_id = active_stripe_subscription.stripe_customer_id
+        # A transient credit failure re-raises here (rolling back the claim); a
+        # permanent one returns False.
+        credited = _apply_customer_balance_credit(
+            stripe_customer_id=stripe_customer_id,
+            amount_total=amount_total,
+            currency=currency,
+            school_name=school.name,
+            checkout_session_id=checkout_session_id,
+        )
+        # The live Stripe subscription supersedes any leftover comp grant row.
+        _retire_contribution_grants(session, school.wriveted_identifier)
+        outcome = "credited" if credited else "received"
+        crediting = "balance_credit" if credited else "credit_failed"
+    else:
+        outcome, expiration = _apply_or_extend_contribution_grant(
+            session, school, amount_total
+        )
+        access_until = expiration.date().isoformat()
+        crediting = "grant_extended" if outcome == "extended" else "school_activated"
+
+    _record_contribution_receipt(
+        session,
+        checkout_session_id=checkout_session_id,
+        school=school,
+        amount_total=amount_total,
+        currency=currency,
+        crediting=crediting,
+    )
+
+    if payer_email:
+        send_email_reliable_sync(
+            db=session,
+            email_data={
+                "from_email": settings.BROADCAST_FROM_EMAIL,
+                "from_name": "Huey Books",
+                "to_emails": [payer_email],
+                "subject": f"Thank you for contributing to {school.name}",
+                "html_content": render_contribution_thankyou_html(
+                    school.name, amount_str, outcome, access_until
+                ),
+            },
+            email_type=EmailType.TRANSACTIONAL,
+        )
+
+    onboarding = (school.info or {}).get("onboarding") or {}
+    school_contact_email = onboarding.get("contact_email")
+    if school_contact_email and school_contact_email != payer_email:
+        send_email_reliable_sync(
+            db=session,
+            email_data={
+                "from_email": settings.BROADCAST_FROM_EMAIL,
+                "from_name": "Huey Books",
+                "to_emails": [school_contact_email],
+                "subject": f"A supporter contributed to {school.name} on Huey Books",
+                "html_content": render_school_contribution_notice_html(
+                    school.name,
+                    onboarding.get("contact_name"),
+                    amount_str,
+                    outcome,
+                    access_until,
+                ),
+            },
+            email_type=EmailType.TRANSACTIONAL,
+        )
+
+    create_event(
+        session=session,
+        title=CONTRIBUTION_EVENT_TITLE,
+        description=f"Contribution received toward {school.name}",
+        info={
+            "checkout_session_id": checkout_session_id,
+            "amount_total": amount_total,
+            "currency": currency,
+            "crediting": crediting,
+            "outcome": outcome,
+            "payer_email": payer_email,
+            "access_until": access_until,
+            "stripe_customer_id": stripe_customer_id,
+        },
+        school=school,
+        slack_channel=(
+            None if "test" in checkout_session_id else EventSlackChannel.MEMBERSHIPS
+        ),
+        slack_extra={"school_name": school.name, "amount": amount_str or ""},
+        enable_processing=True,
+        external_notifications=True,
+    )
+    logger.info(
+        "Processed school contribution",
+        school=school.name,
+        crediting=crediting,
+        outcome=outcome,
+        amount=amount_str,
+        checkout_session_id=checkout_session_id,
+    )
+
+
+def _contribution_grant_days(amount_total: Optional[int]) -> int:
+    """Days of access a pay-what-you-want contribution buys.
+
+    Proportional to the amount paid against a configured monthly rate:
+    ``round(amount / SCHOOL_CONTRIBUTION_MONTHLY_CENTS * 30)``, floored at 1 day
+    so any accepted payment grants at least a day.
+    """
+    monthly_cents = settings.SCHOOL_CONTRIBUTION_MONTHLY_CENTS
+    if not amount_total or monthly_cents <= 0:
+        return 1
+    # Clamp to [1, 10 years] so an absurd amount can't overflow the expiry
+    # datetime and wedge the webhook in a retry loop.
+    return max(1, min(round(amount_total / monthly_cents * 30), 3650))
+
+
+def _apply_or_extend_contribution_grant(
+    session, school: School, amount_total: Optional[int]
+) -> tuple[str, datetime]:
+    """Create or extend a school's comped contribution grant and activate it.
+
+    Returns ``(outcome, expiration)`` where outcome is ``"activated"`` (a new or
+    lapsed grant) or ``"extended"`` (an already-live grant whose expiry moved
+    out). The granted period is proportional to the (pay-what-you-want) amount
+    paid. Contributions stack: an unexpired grant extends by the newly-computed
+    days from its current expiry, an expired/absent one from now.
+    """
+    now = datetime.utcnow()
+    grant_days = _contribution_grant_days(amount_total)
+    grant_id = f"{CONTRIBUTION_GRANT_SUBSCRIPTION_PREFIX}{school.wriveted_identifier}"
+
+    # Ensure the synthetic comp product exists (FK target for the grant).
+    session.merge(
+        Product(id=CONTRIBUTION_GRANT_PRODUCT_ID, name=CONTRIBUTION_GRANT_PRODUCT_NAME)
+    )
+    session.flush()
+
+    grant = subscription_repository.get_by_id(session, subscription_id=grant_id)
+    if grant is None:
+        expiration = now + timedelta(days=grant_days)
+        grant = Subscription(
+            id=grant_id,
+            school_id=school.wriveted_identifier,
+            type=SubscriptionType.SCHOOL,
+            stripe_customer_id="",
+            is_active=True,
+            expiration=expiration,
+            product_id=CONTRIBUTION_GRANT_PRODUCT_ID,
+            info={"source": CONTRIBUTION_GRANT_SOURCE},
+        )
+        session.add(grant)
+        outcome = "activated"
+    else:
+        live = grant.is_active and grant.expiration and grant.expiration > now
+        base = grant.expiration if live else now
+        expiration = base + timedelta(days=grant_days)
+        grant.is_active = True
+        grant.expiration = expiration
+        outcome = (
+            "extended" if (live and school.state == SchoolState.ACTIVE) else "activated"
+        )
+
+    if school.state != SchoolState.ACTIVE:
+        school.state = SchoolState.ACTIVE
+        session.add(school)
+
+    logger.info(
+        "Applied contribution grant",
+        school=school.name,
+        grant_id=grant_id,
+        outcome=outcome,
+        expiration=str(expiration),
+    )
+    return outcome, expiration
+
+
+def _record_contribution_receipt(
+    session,
+    *,
+    checkout_session_id: str,
+    school: School,
+    amount_total: Optional[int],
+    currency: str,
+    crediting: str,
+) -> None:
+    """Fill in the details on the idempotency receipt claimed earlier."""
+    receipt = session.get(StripeContributionReceipt, checkout_session_id)
+    if receipt is not None:
+        receipt.school_id = school.wriveted_identifier
+        receipt.amount_total = amount_total
+        receipt.currency = currency
+        receipt.crediting = crediting
+
+
+def _apply_customer_balance_credit(
+    *,
+    stripe_customer_id: str,
+    amount_total: Optional[int],
+    currency: str,
+    school_name: str,
+    checkout_session_id: str,
+) -> bool:
+    """Credit the contribution to the school's Stripe customer balance.
+
+    A negative balance transaction reduces the customer's next renewal invoice.
+    Returns True on success, False on a **permanent** failure (fail soft: the
+    contribution can't be auto-credited and is recorded ``credit_failed`` for
+    manual handling — e.g. a currency mismatch). A **potentially transient** Stripe
+    error (rate limit, connection, API error) is **re-raised** so the caller
+    aborts before committing the idempotency claim and Cloud Tasks retries; the
+    ``idempotency_key`` makes that retry safe from double-crediting.
+    """
+    if not amount_total:
+        logger.warning(
+            "Contribution has no amount to credit; skipping balance credit",
+            checkout_session_id=checkout_session_id,
+        )
+        return False
+
+    # Retrieving the customer can fail transiently; let that re-raise to retry.
+    customer = StripeCustomer.retrieve(stripe_customer_id)
+    customer_currency = (customer.get("currency") or "").lower()
+    if customer_currency and customer_currency != currency:
+        # Permanent: a balance transaction must match the customer's currency.
+        logger.error(
+            "Contribution currency does not match customer balance currency; "
+            "skipping balance credit for manual handling",
+            stripe_customer_id=stripe_customer_id,
+            contribution_currency=currency,
+            customer_currency=customer_currency,
+            checkout_session_id=checkout_session_id,
+        )
+        return False
+
+    try:
+        StripeCustomer.create_balance_transaction(
+            stripe_customer_id,
+            amount=-amount_total,
+            currency=currency,
+            description=(
+                f"Contribution toward {school_name} (checkout {checkout_session_id})"
+            ),
+            idempotency_key=f"contribution-{checkout_session_id}",
+        )
+    except stripe.error.InvalidRequestError as e:
+        # Permanent client error (bad params, e.g. currency mismatch that slipped
+        # past the check): retrying won't help, so fail soft for manual handling.
+        logger.error(
+            "Permanent Stripe error applying contribution credit; recording as failed",
+            stripe_customer_id=stripe_customer_id,
+            checkout_session_id=checkout_session_id,
+            error=str(e),
+        )
+        return False
+    except Exception as e:
+        # Potentially transient (rate limit, connection, API error, or unexpected):
+        # re-raise so the claim is not committed and the task retries.
+        logger.warning(
+            "Transient error applying contribution credit; re-raising to retry",
+            stripe_customer_id=stripe_customer_id,
+            checkout_session_id=checkout_session_id,
+            error=str(e),
+        )
+        raise
+
+    logger.info(
+        "Applied contribution as customer balance credit",
+        stripe_customer_id=stripe_customer_id,
+        amount=amount_total,
+        currency=currency,
+    )
+    return True
+
+
 def _handle_invoice_upcoming(session, event_data):
     """Remind an active school's contact that their subscription renews soon."""
     stripe_subscription_id = event_data.get("subscription")
@@ -599,6 +1082,15 @@ def _handle_subscription_created(
     )
     if created:
         logger.info("Created a new subscription", subscription=subscription)
+
+    # A real, active Stripe subscription for a school supersedes any comped
+    # contribution grant; retire it so there is a single active subscription row.
+    if (
+        school is not None
+        and subscription.is_active
+        and subscription.stripe_customer_id
+    ):
+        _retire_contribution_grants(session, school.wriveted_identifier)
 
 
 def _handle_subscription_updated(
@@ -705,11 +1197,24 @@ def _handle_subscription_cancelled(
                 session, str(subscription.school_id)
             )
         if school is not None and school.state == SchoolState.ACTIVE:
-            school.state = SchoolState.INACTIVE
-            session.add(school)
-            logger.info(
-                "Deactivated school after subscription ended", school=school.name
+            # Don't deactivate a school that still has paid access via an
+            # unexpired comped contribution grant (the lapse sweep will retire it
+            # when it expires).
+            live_grant = _get_active_contribution_grant(
+                session, school.wriveted_identifier
             )
+            if live_grant is not None:
+                logger.info(
+                    "School retains access via active contribution grant; "
+                    "not deactivating after Stripe subscription ended",
+                    school=school.name,
+                )
+            else:
+                school.state = SchoolState.INACTIVE
+                session.add(school)
+                logger.info(
+                    "Deactivated school after subscription ended", school=school.name
+                )
 
         # Use unified event workflow instead of direct crud.event.create
         create_event(
