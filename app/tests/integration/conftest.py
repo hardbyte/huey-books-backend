@@ -23,6 +23,28 @@ from starlette.testclient import TestClient
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(autouse=True)
+def detect_blocking_calls():
+    """Fail tests that make blocking calls on the asyncio event loop.
+
+    The API serves concurrency=20 per Cloud Run instance, so one synchronous
+    blocking call (a sync SDK, file, or socket op inside an async handler)
+    stalls every other coroutine on that instance. blockbuster monkeypatches
+    known-blocking stdlib calls to raise when invoked inside the running loop.
+
+    Off by default because it surfaces pre-existing blocking calls that must be
+    offloaded first; enable with BLOCKBUSTER=1 to hunt them down.
+    """
+    if not os.environ.get("BLOCKBUSTER"):
+        yield
+        return
+
+    from blockbuster import blockbuster_ctx
+
+    with blockbuster_ctx():
+        yield
+
+
 # Global engine cache to prevent creating too many engines
 # Note: Only cache sync engines due to asyncio event loop conflicts with async engines
 _test_engine_cache = {}
