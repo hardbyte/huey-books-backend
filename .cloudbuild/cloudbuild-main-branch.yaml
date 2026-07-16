@@ -64,6 +64,7 @@ steps:
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
         RESEND_API_KEY=resend-api-key:latest,
+        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
@@ -112,6 +113,7 @@ steps:
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
         RESEND_API_KEY=resend-api-key:latest,
+        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
@@ -162,6 +164,7 @@ steps:
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
         RESEND_API_KEY=resend-api-key:latest,
+        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
@@ -209,6 +212,7 @@ steps:
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
         RESEND_API_KEY=resend-api-key:latest,
+        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
