@@ -102,6 +102,97 @@ def render_school_renewal_reminder_html(
     )
 
 
+def _contribution_outcome_sentence(
+    outcome: str, school_name: str, access_until: Optional[str], *, third_person: bool
+) -> str:
+    """Accurate outcome copy shared by the payer and school contribution emails.
+
+    ``outcome`` is one of ``credited``, ``activated``, ``extended``, or
+    ``received`` (a fallback when the contribution could not be applied
+    automatically and needs manual handling).
+    """
+    school = escape(school_name)
+    when = f" through {escape(access_until)}" if access_until else ""
+    subject = "your school" if third_person else school
+    if outcome == "credited":
+        return (
+            f"<p>Your contribution has been credited toward {school}'s next Huey "
+            "Books invoice.</p>"
+            if not third_person
+            else "<p>Their contribution has been credited toward your school's "
+            "next Huey Books invoice.</p>"
+        )
+    if outcome == "activated":
+        return (
+            f"<p>Their contribution has activated {subject}{when}.</p>"
+            if third_person
+            else (
+                f"<p>Thanks to you, {school} is now live on Huey Books{when} and its "
+                "students can start reading.</p>"
+            )
+        )
+    if outcome == "extended":
+        return (
+            f"<p>Their contribution has extended {subject}'s access{when}.</p>"
+            if third_person
+            else f"<p>Your contribution has extended {school}'s access{when}.</p>"
+        )
+    # received: paid but not yet applied automatically
+    return (
+        "<p>Their contribution has been received; our team will apply it to your "
+        "school shortly.</p>"
+        if third_person
+        else f"<p>Your contribution toward {school} has been received; our team "
+        "will apply it shortly.</p>"
+    )
+
+
+def render_contribution_thankyou_html(
+    school_name: str,
+    amount: Optional[str],
+    outcome: str,
+    access_until: Optional[str] = None,
+) -> str:
+    """Sent to a supporter who paid a one-off contribution toward a school."""
+    gift = f" of {escape(amount)}" if amount else ""
+    outcome_html = _contribution_outcome_sentence(
+        outcome, school_name, access_until, third_person=False
+    )
+    return _shell(
+        "<h2>Thank you for contributing \U0001f49b</h2>"
+        "<p>Hi there,</p>"
+        f"<p>Thank you for your contribution{gift} toward "
+        f"{escape(school_name)}'s Huey Books subscription.</p>"
+        f"{outcome_html}"
+        "<p>This email is your receipt. If you have any questions just reply to "
+        "it.</p>"
+        "<p>Happy reading,<br>The Huey Books team</p>"
+    )
+
+
+def render_school_contribution_notice_html(
+    school_name: str,
+    contact_name: Optional[str],
+    amount: Optional[str],
+    outcome: str,
+    access_until: Optional[str] = None,
+) -> str:
+    """Sent to a school's contact when a supporter contributes toward them."""
+    greeting = f"Hi {escape(contact_name)}," if contact_name else "Hi there,"
+    gift = f" of {escape(amount)}" if amount else ""
+    outcome_html = _contribution_outcome_sentence(
+        outcome, school_name, access_until, third_person=True
+    )
+    return _shell(
+        "<h2>Someone contributed to your Huey Books subscription</h2>"
+        f"<p>{greeting}</p>"
+        f"<p>A supporter has contributed{gift} toward {escape(school_name)}'s "
+        "Huey Books subscription.</p>"
+        f"{outcome_html}"
+        "<p>Happy reading,<br>The Huey Books team</p>"
+    )
+
+
 def render_staff_new_school_alert_html(
     *,
     school_name: str,

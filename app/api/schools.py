@@ -41,6 +41,7 @@ from app.services.experiments import get_experiments
 from app.services.school_billing import (
     SchoolBillingError,
     create_school_checkout_session,
+    create_school_contribution_checkout_session,
 )
 from app.services.school_emails import render_school_staff_invite_html
 from app.utils.dict_utils import deep_merge_dicts
@@ -314,6 +315,37 @@ async def create_school_checkout(
     """
     try:
         checkout_url = await create_school_checkout_session(school, price_id=price_id)
+    except SchoolBillingError as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
+    return SchoolCheckoutResponse(checkout_url=checkout_url)
+
+
+@router.post(
+    "/school/{wriveted_identifier}/contribute", response_model=SchoolCheckoutResponse
+)
+async def create_school_contribution(
+    price_id: Optional[str] = Query(
+        None,
+        description="One of the configured contribution price ids; defaults to the first.",
+    ),
+    school: School = Depends(aget_school_from_wriveted_id),
+    account: Union[User, ServiceAccount] = Depends(
+        get_current_active_user_or_service_account
+    ),
+):
+    """Start a one-off Stripe Checkout to contribute toward a school.
+
+    Payer-agnostic: any authenticated active user (or service account) may
+    contribute — a parent, public supporter, or library — not just the school
+    admin, so the returned URL can be shared. The contribution is scoped to the
+    school; when payment completes the Stripe webhook either credits the school's
+    existing subscription or, if the school has none, activates it as a paid
+    grant.
+    """
+    try:
+        checkout_url = await create_school_contribution_checkout_session(
+            school, price_id=price_id
+        )
     except SchoolBillingError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
     return SchoolCheckoutResponse(checkout_url=checkout_url)

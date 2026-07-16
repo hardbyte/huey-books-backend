@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, List, Optional
 from uuid import UUID
 
@@ -5,7 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from sendgrid import SendGridAPIClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from structlog import get_logger
 from twilio.rest import Client as TwilioClient
@@ -17,6 +18,8 @@ from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.internal.tasks import router as tasks_router
 from app.db.session import get_session
 from app.models.event import EventSlackChannel
+from app.models.school import School, SchoolState
+from app.models.subscription import Subscription
 from app.repositories.chat_repository import chat_repo
 from app.repositories.service_account_repository import service_account_repository
 from app.repositories.work_repository import work_repository
@@ -32,7 +35,7 @@ from app.services.commerce import (
 from app.services.events import handle_event_to_slack_alert, process_events
 from app.services.hydration import hydrate_bulk
 from app.services.labelling import label_and_update_work
-from app.services.stripe_events import process_stripe_event
+from app.services.stripe_events import CONTRIBUTION_GRANT_SOURCE, process_stripe_event
 
 
 class CloudRunEnvironment(BaseSettings):
@@ -299,3 +302,75 @@ async def handle_refresh_recommendations(session: DBSessionDep):
     await session.execute(text("SELECT refresh_recommendable_editions_function()"))
     logger.info("Refreshed recommendable_editions materialized view")
     return {"msg": "ok"}
+
+
+@router.post("/maintenance/lapse-expired-schools")
+async def handle_lapse_expired_schools(session: DBSessionDep):
+    """Deactivate schools whose paid access came from an expired contribution grant.
+
+    A "contribute a month" payment to a school with no auto-renewing Stripe
+    subscription grants bounded paid access via a comped Subscription. Unlike a
+    Stripe subscription, that grant does not auto-lapse, so this sweep sets such
+    schools INACTIVE once the grant has expired.
+
+    Schools with an active auto-renewing Stripe subscription are never lapsed here
+    (Stripe drives their lifecycle). Intended to run on a Cloud Scheduler job
+    (OIDC auth via the background-tasks service account); the scheduler is wired
+    separately in the infrastructure repo.
+    """
+    now = datetime.utcnow()
+    expired_grants = (
+        (
+            await session.execute(
+                select(Subscription).where(
+                    Subscription.info["source"].astext == CONTRIBUTION_GRANT_SOURCE,
+                    Subscription.is_active.is_(True),
+                    Subscription.expiration < now,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    lapsed = 0
+    for grant in expired_grants:
+        # The grant itself has expired regardless of what happens to the school.
+        grant.is_active = False
+
+        # If the school now has an active auto-renewing Stripe subscription, leave
+        # it active — Stripe drives that lifecycle.
+        has_stripe_sub = (
+            await session.execute(
+                select(Subscription.id)
+                .where(
+                    Subscription.school_id == grant.school_id,
+                    Subscription.is_active.is_(True),
+                    Subscription.stripe_customer_id != "",
+                )
+                .limit(1)
+            )
+        ).first()
+        if has_stripe_sub is not None:
+            continue
+
+        school = (
+            await session.execute(
+                select(School).where(School.wriveted_identifier == grant.school_id)
+            )
+        ).scalar_one_or_none()
+        if school is not None and school.state == SchoolState.ACTIVE:
+            school.state = SchoolState.INACTIVE
+            lapsed += 1
+            logger.info(
+                "Lapsed school after contribution grant expired",
+                school=school.name,
+                grant_id=grant.id,
+            )
+
+    # get_async_session does not commit on teardown; persist the sweep.
+    await session.commit()
+    logger.info(
+        "Lapse sweep complete", lapsed=lapsed, grants_expired=len(expired_grants)
+    )
+    return {"msg": "ok", "lapsed": lapsed, "grants_expired": len(expired_grants)}

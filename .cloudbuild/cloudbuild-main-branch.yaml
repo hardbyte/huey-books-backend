@@ -49,6 +49,8 @@ steps:
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
+        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api
       - >-
         --set-secrets=
@@ -62,6 +64,7 @@ steps:
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
         RESEND_API_KEY=resend-api-key:latest,
+        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
@@ -96,6 +99,8 @@ steps:
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
+        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api-internal
       - >-
         --set-secrets=
@@ -108,6 +113,7 @@ steps:
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
         RESEND_API_KEY=resend-api-key:latest,
+        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
@@ -143,6 +149,8 @@ steps:
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
+        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=wriveted-api
       - >-
         --set-secrets=
@@ -156,6 +164,7 @@ steps:
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
         RESEND_API_KEY=resend-api-key:latest,
+        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
@@ -189,6 +198,8 @@ steps:
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
+        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=wriveted-api-internal
       - >-
         --set-secrets=
@@ -201,6 +212,7 @@ steps:
         SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
         NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
         RESEND_API_KEY=resend-api-key:latest,
+        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
         OPENAI_API_KEY=openai-api-key:latest
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
