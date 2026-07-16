@@ -28,7 +28,7 @@ def render_school_registered_html(school_name: str, contact_name: Optional[str])
         f"<h2>{escape(school_name)} is registered</h2>"
         f"<p>{greeting}</p>"
         "<p>Thanks for signing your school up to Huey Books. To activate your "
-        "school's account, the last step is to start your annual subscription.</p>"
+        "school's account, the last step is to start your subscription.</p>"
         "<p>Once payment is complete your school is live and your students can "
         "start reading.</p>"
         "<p>Happy reading,<br>The Huey Books team</p>"
@@ -44,8 +44,30 @@ def render_school_activated_html(school_name: str, contact_name: Optional[str]) 
         "<p>Your subscription is active and your Huey Books school account is "
         "ready to use. You can now add classes and students and get them "
         "reading.</p>"
-        "<p>This is a receipt that your annual school subscription has started. "
+        "<p>This is a receipt that your school subscription has started. "
         "If you have any questions just reply to this email.</p>"
+        "<p>Happy reading,<br>The Huey Books team</p>"
+    )
+
+
+def render_school_renewal_reminder_html(
+    school_name: str,
+    contact_name: Optional[str],
+    amount: Optional[str],
+    renewal_date: Optional[str],
+) -> str:
+    """Sent ahead of a school subscription renewal charge."""
+    greeting = f"Hi {escape(contact_name)}," if contact_name else "Hi there,"
+    when = f" on {escape(renewal_date)}" if renewal_date else " soon"
+    cost = f" for {escape(amount)}" if amount else ""
+    return _shell(
+        f"<h2>Your Huey Books subscription renews{when}</h2>"
+        f"<p>{greeting}</p>"
+        f"<p>This is a heads-up that {escape(school_name)}'s Huey Books "
+        f"subscription will renew{when}{cost}, so your school keeps its access "
+        "without interruption.</p>"
+        "<p>No action is needed to continue. If you'd like to make any changes, "
+        "just reply to this email.</p>"
         "<p>Happy reading,<br>The Huey Books team</p>"
     )
 

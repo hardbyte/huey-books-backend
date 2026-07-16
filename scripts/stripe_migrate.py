@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Migrate Stripe catalog config between accounts (Wriveted -> hardbyte).
+"""Migrate Stripe catalog config between two Stripe accounts.
 
 Stripe has no account-to-account clone, and price/product IDs cannot be reused
 across accounts, so this reads the catalog from a SOURCE account and recreates
@@ -8,9 +8,9 @@ into the app (family pricing tables) and `STRIPE_SCHOOL_PRICE_ID`.
 
 Run it yourself with both live secret keys in env (never commit them):
 
-    export STRIPE_SOURCE_KEY=sk_live_...   # old Wriveted account
-    export STRIPE_TARGET_KEY=sk_live_...   # new hardbyte account
-    export STRIPE_WEBHOOK_URL=https://wriveted-api-internal-....run.app/v1/stripe/webhook
+    export STRIPE_SOURCE_KEY=sk_live_...   # source account
+    export STRIPE_TARGET_KEY=sk_live_...   # target account
+    export STRIPE_WEBHOOK_URL=https://<internal-api-host>/v1/stripe/webhook
 
     uv run python scripts/stripe_migrate.py export            # dump SOURCE catalog as JSON
     uv run python scripts/stripe_migrate.py migrate           # recreate in TARGET
@@ -100,10 +100,21 @@ def cmd_migrate(live: bool) -> None:
             )
             product_map[p.id] = new.id
 
-    # Prices (old id -> new id) — the mapping you need downstream
+    # Prices (old id -> new id) — the mapping you need downstream.
     price_map: dict[str, str] = {}
     for pr in cat["prices"]:
-        amount = f"{(pr.unit_amount or 0) / 100:.2f} {pr.currency.upper()}"
+        # Skip prices whose product isn't being migrated (e.g. archived product);
+        # otherwise the create would reference a non-existent target product.
+        if live and pr.product not in product_map:
+            print(f"{tag}SKIP price {pr.id}: product {pr.product} not migrated")
+            continue
+        # Tiered/metered prices carry no flat unit_amount and can't be copied
+        # this simply — recreate them by hand.
+        if pr.unit_amount is None:
+            print(f"{tag}SKIP price {pr.id}: tiered/metered, recreate manually")
+            continue
+
+        amount = f"{pr.unit_amount / 100:.2f} {pr.currency.upper()}"
         interval = pr.recurring["interval"] if pr.recurring else "one-off"
         print(
             f"{tag}create price {amount} / {interval} for product {pr.product} (from {pr.id})"
@@ -112,16 +123,21 @@ def cmd_migrate(live: bool) -> None:
             params = {
                 "currency": pr.currency,
                 "unit_amount": pr.unit_amount,
-                "product": product_map.get(pr.product, pr.product),
+                "product": product_map[pr.product],
                 "nickname": pr.nickname or None,
+                "tax_behavior": pr.tax_behavior,
                 "api_key": target,
             }
             if pr.recurring:
-                params["recurring"] = {"interval": pr.recurring["interval"]}
+                params["recurring"] = {
+                    "interval": pr.recurring["interval"],
+                    "interval_count": pr.recurring.get("interval_count", 1),
+                }
             new = stripe.Price.create(**params)
             price_map[pr.id] = new.id
 
-    # Webhook endpoint(s)
+    # Webhook endpoint(s). Re-running creates duplicates — delete stale ones in
+    # the target dashboard if you re-run.
     webhook_url = os.environ.get("STRIPE_WEBHOOK_URL")
     for w in cat["webhooks"]:
         url = webhook_url or w.url
@@ -132,17 +148,13 @@ def cmd_migrate(live: bool) -> None:
             )
             print(f"  >>> STRIPE_WEBHOOK_SECRET (set this secret): {new.secret}")
 
-    # Billing / customer portal configuration
+    # Billing / customer portal: report for manual recreation. The features
+    # payload doesn't round-trip cleanly through the API, so recreate it in the
+    # target dashboard (Settings -> Billing -> Customer portal).
     for c in cat["portals"]:
         print(
-            f"{tag}create billing portal configuration (from {c.id}, default={c.is_default})"
+            f"portal configuration to recreate manually (source {c.id}, default={c.is_default})"
         )
-        if live:
-            stripe.billing_portal.Configuration.create(
-                business_profile=dict(c.business_profile),
-                features=json.loads(json.dumps(c.features, default=str)),
-                api_key=target,
-            )
 
     if live and price_map:
         print(

@@ -193,11 +193,16 @@ async def onboard_school(
         commit=False,
     )
 
-    # Queue the signup alert + contact confirmation; the commit below persists them.
-    await _queue_onboarding_emails(db, school, request)
-
+    # Commit the signup first: it is the transaction of record and must not
+    # fail if the notification emails can't be queued.
     await db.commit()
-    await _nudge_outbox()
+
+    try:
+        await _queue_onboarding_emails(db, school, request)
+        await db.commit()
+        await _nudge_outbox()
+    except Exception as e:
+        logger.warning("Failed to queue onboarding emails", error=str(e))
 
     logger.info(
         "School onboarding completed",
@@ -223,26 +228,27 @@ async def _queue_onboarding_emails(db, school, request):
     settings = get_settings()
     from_email = settings.BROADCAST_FROM_EMAIL
 
-    await send_email_reliable(
-        db=db,
-        email_data={
-            "from_email": from_email,
-            "from_name": "Huey Books",
-            "to_emails": [settings.STAFF_ALERT_EMAIL],
-            "subject": f"New school signup: {school.name}",
-            "html_content": render_staff_new_school_alert_html(
-                school_name=school.name,
-                wriveted_id=str(school.wriveted_identifier),
-                contact_name=request.contact_name,
-                contact_email=request.contact_email,
-                contact_role=request.contact_role,
-                country_code=school.country_code,
-                student_count_estimate=request.student_count_estimate,
-                message=request.message,
-            ),
-        },
-        email_type=EmailType.SYSTEM,
-    )
+    if settings.STAFF_ALERT_EMAIL:
+        await send_email_reliable(
+            db=db,
+            email_data={
+                "from_email": from_email,
+                "from_name": "Huey Books",
+                "to_emails": [settings.STAFF_ALERT_EMAIL],
+                "subject": f"New school signup: {school.name}",
+                "html_content": render_staff_new_school_alert_html(
+                    school_name=school.name,
+                    wriveted_id=str(school.wriveted_identifier),
+                    contact_name=request.contact_name,
+                    contact_email=request.contact_email,
+                    contact_role=request.contact_role,
+                    country_code=school.country_code,
+                    student_count_estimate=request.student_count_estimate,
+                    message=request.message,
+                ),
+            },
+            email_type=EmailType.SYSTEM,
+        )
 
     if request.contact_email:
         await send_email_reliable(

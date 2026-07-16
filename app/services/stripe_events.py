@@ -24,7 +24,10 @@ from app.schemas.product import ProductCreateIn
 from app.schemas.subscription import SubscriptionCreateIn
 from app.services.email_notification import EmailType, send_email_reliable_sync
 from app.services.events import create_event
-from app.services.school_emails import render_school_activated_html
+from app.services.school_emails import (
+    render_school_activated_html,
+    render_school_renewal_reminder_html,
+)
 
 logger = get_logger()
 settings = get_settings()
@@ -96,7 +99,20 @@ def process_stripe_event(event_type: str, event_data):
             # Actionable events
             case "invoice.paid":
                 _handle_invoice_paid(session, wriveted_user, school, event_data)
-            case "checkout.session.completed":
+            case "invoice.upcoming":
+                # Fires ~ahead of a renewal charge; remind school admins.
+                _handle_invoice_upcoming(session, event_data)
+            case "invoice.payment_failed":
+                # Stripe runs its own dunning retries; final give-up arrives as
+                # customer.subscription.deleted, which deactivates the school.
+                logger.warning(
+                    "Invoice payment failed",
+                    stripe_subscription=event_data.get("subscription"),
+                )
+            case (
+                "checkout.session.completed"
+                | "checkout.session.async_payment_succeeded"
+            ):
                 _handle_checkout_session_completed(
                     session, wriveted_user, school, event_data
                 )
@@ -427,17 +443,34 @@ def _handle_checkout_session_completed(
         )
 
     if school is not None:
-        _activate_school_after_payment(session, school, stripe_customer_email)
+        # Only a genuinely paid session activates a school. A completed session
+        # can still be unpaid (async payment methods) or zero-charge (trial,
+        # 100%-off promo), and must not unlock access.
+        payment_status = event_data.get("payment_status")
+        if payment_status == "paid":
+            _activate_school_after_payment(session, school, stripe_customer_email)
+        else:
+            logger.warning(
+                "School checkout completed but not paid; leaving school inactive",
+                school=school.name,
+                payment_status=payment_status,
+            )
 
     return subscription
 
 
 def _activate_school_after_payment(session, school: School, customer_email):
-    """Mark a paid school ACTIVE and email the contact a confirmation/receipt."""
-    newly_activated = school.state != SchoolState.ACTIVE
-    if newly_activated:
-        school.state = SchoolState.ACTIVE
-        session.add(school)
+    """Mark a paid school ACTIVE and email the contact a confirmation/receipt.
+
+    Idempotent: Stripe redelivers events, so an already-active school is a
+    no-op (and does not re-send the receipt).
+    """
+    if school.state == SchoolState.ACTIVE:
+        logger.info("School already active; ignoring duplicate", school=school.name)
+        return
+
+    school.state = SchoolState.ACTIVE
+    session.add(school)
 
     onboarding = (school.info or {}).get("onboarding") or {}
     to_email = onboarding.get("contact_email") or customer_email
@@ -461,9 +494,54 @@ def _activate_school_after_payment(session, school: School, customer_email):
     logger.info(
         "School activated after payment",
         school=school.name,
-        newly_activated=newly_activated,
         emailed=bool(to_email),
     )
+
+
+def _handle_invoice_upcoming(session, event_data):
+    """Remind an active school's contact that their subscription renews soon."""
+    stripe_subscription_id = event_data.get("subscription")
+    if not stripe_subscription_id:
+        return
+    subscription = subscription_repository.get_by_id(
+        session, subscription_id=stripe_subscription_id
+    )
+    if subscription is None or not subscription.school_id:
+        return
+    school = school_repository.get_by_wriveted_id(session, str(subscription.school_id))
+    if school is None or school.state != SchoolState.ACTIVE:
+        return
+
+    onboarding = (school.info or {}).get("onboarding") or {}
+    to_email = onboarding.get("contact_email")
+    if not to_email:
+        return
+
+    amount = event_data.get("amount_due")
+    currency = (event_data.get("currency") or "aud").upper()
+    amount_str = (
+        f"${(amount or 0) / 100:.2f} {currency}" if amount is not None else None
+    )
+    renews_at = event_data.get("next_payment_attempt") or event_data.get("period_end")
+    renewal_date = (
+        datetime.utcfromtimestamp(renews_at).date().isoformat() if renews_at else None
+    )
+
+    send_email_reliable_sync(
+        db=session,
+        email_data={
+            "from_email": settings.BROADCAST_FROM_EMAIL,
+            "from_name": "Huey Books",
+            "to_emails": [to_email],
+            "subject": f"{school.name} — your Huey Books subscription renews soon",
+            "html_content": render_school_renewal_reminder_html(
+                school.name, onboarding.get("contact_name"), amount_str, renewal_date
+            ),
+        },
+        email_type=EmailType.TRANSACTIONAL,
+    )
+    session.commit()
+    logger.info("Sent school renewal reminder", school=school.name)
 
 
 def _handle_subscription_created(
@@ -617,6 +695,20 @@ def _handle_subscription_cancelled(
         subscription.is_active = False
         if "ended_at" in event_data and event_data["ended_at"] is not None:
             subscription.expiration = datetime.utcfromtimestamp(event_data["ended_at"])
+
+        # Deactivate the school this subscription paid for. The school is not in
+        # the subscription.deleted payload (client_reference_id is only on
+        # checkout sessions), so resolve it from our subscription record.
+        if school is None and subscription.school_id:
+            school = school_repository.get_by_wriveted_id(
+                session, str(subscription.school_id)
+            )
+        if school is not None and school.state == SchoolState.ACTIVE:
+            school.state = SchoolState.INACTIVE
+            session.add(school)
+            logger.info(
+                "Deactivated school after subscription ended", school=school.name
+            )
 
         # Use unified event workflow instead of direct crud.event.create
         create_event(
