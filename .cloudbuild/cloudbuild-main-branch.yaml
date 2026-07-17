@@ -27,6 +27,7 @@ steps:
       - services
       - update
       - $_SERVICE_NAME_DEVELOPMENT
+      - "--startup-probe=httpGet.path=/,httpGet.port=8000,initialDelaySeconds=5,timeoutSeconds=4,periodSeconds=8,failureThreshold=10"
       - "--platform=managed"
       - "--port=8000"
       - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
@@ -76,6 +77,7 @@ steps:
       - services
       - update
       - "$_SERVICE_NAME_DEVELOPMENT-internal"
+      - "--startup-probe=httpGet.path=/,httpGet.port=8000,initialDelaySeconds=5,timeoutSeconds=4,periodSeconds=8,failureThreshold=10"
       - "--platform=managed"
       - "--port=8000"
       - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
@@ -125,6 +127,7 @@ steps:
       - services
       - update
       - $_SERVICE_NAME
+      - "--startup-probe=httpGet.path=/,httpGet.port=8080,initialDelaySeconds=5,timeoutSeconds=4,periodSeconds=8,failureThreshold=10"
       - "--platform=managed"
       - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
       - "--region=$_DEPLOY_REGION"
@@ -176,6 +179,7 @@ steps:
       - services
       - update
       - "$_SERVICE_NAME-internal"
+      - "--startup-probe=httpGet.path=/,httpGet.port=8080,initialDelaySeconds=5,timeoutSeconds=4,periodSeconds=8,failureThreshold=10"
       - "--platform=managed"
       - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
       - "--region=$_DEPLOY_REGION"
