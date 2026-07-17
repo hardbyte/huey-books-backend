@@ -73,7 +73,7 @@ The public API is available at `http://localhost:8000`. The seed script prints J
 uvicorn app.main:app --reload
 
 # Internal API
-gunicorn --workers=1 --worker-class=uvicorn.workers.UvicornWorker app.internal_api:internal_app
+uvicorn app.internal_api:internal_app --port 8888
 ```
 
 ### Configuring local admin access

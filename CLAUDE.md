@@ -37,7 +37,7 @@ Dependencies are managed with **uv** (`pyproject.toml` + `uv.lock`).
 | Lint fix | `uv run ruff check --fix` |
 | Add a dependency | `uv add <pkg>` (`--dev` for dev group) |
 | Run API directly | `uv run uvicorn app.main:app --reload` |
-| Run internal API | `uv run gunicorn --workers=1 --worker-class=uvicorn.workers.UvicornWorker app.internal_api:internal_app` |
+| Run internal API | `uv run uvicorn app.internal_api:internal_app --port 8888` |
 
 **Important**: Integration tests should be run using `bash scripts/integration-tests.sh` which provides the proper Docker environment. Running integration tests directly with pytest may encounter async fixture issues. Ensure no conflicting postgres containers are running on port 5432.
 
