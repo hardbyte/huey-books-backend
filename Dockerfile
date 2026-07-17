@@ -66,7 +66,11 @@ COPY --chown=${USER_UID}:${USER_GID} app/ /app/app
 
 USER ${USERNAME}
 
-# Run under gunicorn. Timeout 0 lets Cloud Run handle instance scaling.
-# When the PORT env var is defined, gunicorn binds 0.0.0.0:$PORT.
-ENTRYPOINT ["gunicorn", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--threads", "1", "--timeout", "0"]
+# Run the ASGI app as a single uvicorn process; Cloud Run scales by instance,
+# so a process supervisor (gunicorn) adds no value here. sh -c expands $PORT
+# (Cloud Run sets it) and forwards the app path from CMD, or from a Cloud Run
+# --args override (e.g. the internal service uses app.internal_api:internal_app).
+# exec makes uvicorn PID 1 for signal handling; an import/boot failure exits
+# non-zero so the revision never goes healthy instead of serving a broken app.
+ENTRYPOINT ["sh", "-c", "exec uvicorn \"$@\" --host 0.0.0.0 --port \"${PORT:-8080}\"", "sh"]
 CMD ["app.main:app"]
