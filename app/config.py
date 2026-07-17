@@ -1,10 +1,11 @@
 import enum
+import json
 from functools import lru_cache
-from typing import List, Optional, Union
+from typing import Annotated, List, Optional, Union
 
 from pydantic import AnyHttpUrl, DirectoryPath, HttpUrl, field_validator
 from pydantic_core.core_schema import FieldValidationInfo
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
 from sqlalchemy.engine import make_url
 from structlog import get_logger
@@ -273,17 +274,17 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     # Stripe price ids offerable for a school subscription (first is the default).
-    STRIPE_SCHOOL_PRICE_IDS: List[str] = []
+    STRIPE_SCHOOL_PRICE_IDS: Annotated[List[str], NoDecode] = []
     # One-off Stripe price ids for a "contribute a month" payment toward a
     # school's subscription (first is the default).
-    STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS: List[str] = []
+    STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS: Annotated[List[str], NoDecode] = []
     # Notional monthly rate (in minor units, e.g. cents) used to convert a
     # pay-what-you-want contribution into a proportional access grant for a school
     # with no auto-renewing Stripe subscription: grant_days = round(amount /
     # this * 30). Contributions stack (extend the expiry).
     SCHOOL_CONTRIBUTION_MONTHLY_CENTS: int = 2500
     # Recipients for internal signup alerts (set per deployment). Empty disables.
-    STAFF_ALERT_EMAILS: List[str] = []
+    STAFF_ALERT_EMAILS: Annotated[List[str], NoDecode] = []
 
     @field_validator(
         "STRIPE_SCHOOL_PRICE_IDS",
@@ -293,8 +294,14 @@ class Settings(BaseSettings):
     )
     @classmethod
     def _split_csv_list(cls, v: Union[str, List[str]]) -> Union[str, List[str]]:
-        # Accept a comma-separated env string as well as a JSON list.
-        if isinstance(v, str) and not v.startswith("["):
+        # These fields are annotated NoDecode so pydantic-settings does not
+        # JSON-decode the raw env value before this validator (that decode raises
+        # on a plain "a,b" string). We therefore accept both a JSON array and a
+        # comma-separated string here.
+        if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("["):
+                return json.loads(v)
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
