@@ -40,11 +40,6 @@ _PROMOTABLE_TO_SCHOOL_ADMIN = {
     UserAccountType.STUDENT,
     UserAccountType.SUPPORTER,
 }
-_PROMOTABLE_TO_PARENT = {
-    UserAccountType.PUBLIC,
-    UserAccountType.STUDENT,
-    UserAccountType.SUPPORTER,
-}
 
 
 class SchoolLocationInput(BaseModel):
@@ -385,68 +380,16 @@ async def onboard_family(
     Promotes the authenticated user to Parent type and creates
     child reader accounts linked to them.
     """
-    from app.models.public_reader import PublicReader
+    from app.services.onboarding_service import create_linked_family_readers
 
     user_id = current_user.id
 
-    # Promote to Parent if needed
-    if current_user.type != UserAccountType.PARENT:
-        if current_user.type not in _PROMOTABLE_TO_PARENT:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Your account type ({current_user.type.value}) cannot be converted to a parent account. Contact support.",
-            )
-
-        safe_type_table_map = {
-            UserAccountType.PUBLIC: "public_readers",
-            UserAccountType.STUDENT: "students",
-            UserAccountType.SUPPORTER: "supporters",
-        }
-        subclass_table = safe_type_table_map.get(current_user.type)
-        if subclass_table:
-            await db.execute(
-                text(f"DELETE FROM {subclass_table} WHERE id = :uid"),
-                {"uid": user_id},
-            )
-
-        # Also remove from readers if present
-        await db.execute(
-            text("DELETE FROM readers WHERE id = :uid"),
-            {"uid": user_id},
-        )
-
-        await db.execute(
-            text("UPDATE users SET type = :new_type, name = :name WHERE id = :uid"),
-            {
-                "new_type": UserAccountType.PARENT.value.upper(),
-                "name": request.parent_name,
-                "uid": user_id,
-            },
-        )
-
-        # Insert into parents table
-        await db.execute(
-            text("INSERT INTO parents (id) VALUES (:uid) ON CONFLICT (id) DO NOTHING"),
-            {"uid": user_id},
-        )
-
-        await db.flush()
-
-    # Create child readers
-    children_created = 0
-    for child in request.children:
-        child_reader = PublicReader(
-            name=child.name,
-            first_name=child.name,
-            parent_id=user_id,
-            huey_attributes={
-                "age": child.age,
-                "reading_ability": child.reading_ability,
-                "interests": child.interests,
-            },
-        )
-        db.add(child_reader)
-        children_created += 1
+    children_created = await create_linked_family_readers(
+        db,
+        user=current_user,
+        parent_name=request.parent_name,
+        children=[c.model_dump() for c in request.children],
+    )
 
     # Create event
     await event_repository.acreate(

@@ -5,15 +5,19 @@ avoiding authentication requirements and HTTP overhead for anonymous
 chatbot sessions.
 """
 
-from typing import Any, Callable, Coroutine, Dict
+from typing import Any, Callable, Coroutine, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 logger = get_logger()
 
+# Handlers receive the resolved request body, query params, and the action
+# execution context (which carries ``session_user_id`` when the chat session is
+# authenticated). ``context`` is optional so handlers that don't need it can
+# ignore it.
 InternalHandler = Callable[
-    [AsyncSession, Dict[str, Any], Dict[str, Any]],
+    [AsyncSession, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]],
     Coroutine[Any, Any, Dict[str, Any]],
 ]
 
@@ -35,6 +39,7 @@ async def handle_recommend(
     db: AsyncSession,
     body: Dict[str, Any],
     query_params: Dict[str, Any],
+    context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Direct service call for book recommendations."""
     from app.api.recommendations import get_recommendations_with_fallback
@@ -80,48 +85,59 @@ async def handle_family_onboarding(
     db: AsyncSession,
     body: Dict[str, Any],
     query_params: Dict[str, Any],
+    context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Direct service call for family onboarding from chatflow.
+    """Direct service call for family onboarding from the chatflow.
 
-    Creates child reader profiles. Since chatflow sessions are anonymous,
-    these readers are unlinked (no parent_id) until the user signs in
-    and claims them via the authenticated onboarding endpoint.
+    Creates child reader profiles linked to the authenticated chat session's
+    user. The family flow signs the user in before the chat starts, so the
+    session carries a ``session_user_id``. When the session is anonymous we
+    create nothing — profiles must belong to an account — and ask the user to
+    sign in.
     """
-    from app.models.public_reader import PublicReader
+    from uuid import UUID
 
-    children = body.get("children", [])
-    if not isinstance(children, list):
+    from app.models.user import User
+    from app.services.onboarding_service import (
+        create_linked_family_readers,
+        normalise_chatflow_child,
+    )
+
+    session_user_id = (context or {}).get("session_user_id")
+    if not session_user_id:
+        logger.warning("Family onboarding attempted without an authenticated session")
+        return {
+            "children_created": 0,
+            "message": "Please sign in to save reader profiles.",
+        }
+
+    raw_children = body.get("children", [])
+    if not isinstance(raw_children, list):
         return {"children_created": 0, "message": "Invalid children data"}
 
-    # Cap at 10 children per request
-    children = children[:10]
+    # Cap at 10 children per request, dropping malformed entries.
+    children = []
+    for child in raw_children[:10]:
+        normalised = normalise_chatflow_child(child)
+        if normalised is not None:
+            children.append(normalised)
 
-    children_created = 0
-    for child in children:
-        if not isinstance(child, dict) or not child.get("name"):
-            continue
-        name = str(child["name"])[:200]
-        age = child.get("age")
-        if isinstance(age, str):
-            try:
-                age = int(age)
-            except ValueError:
-                age = None
-        if age is not None and (age < 2 or age > 18):
-            age = None
-        reader = PublicReader(
-            name=name,
-            first_name=name,
-            huey_attributes={
-                "age": age,
-                "reading_ability": str(child.get("reading_ability", ""))[:50] or None,
-            },
+    user = await db.get(User, UUID(str(session_user_id)))
+    if user is None:
+        logger.warning(
+            "Family onboarding session user not found",
+            session_user_id=session_user_id,
         )
-        db.add(reader)
-        children_created += 1
+        return {"children_created": 0, "message": "Account not found."}
 
-    if children_created > 0:
-        await db.flush()
+    parent_name = str(body.get("parent_name") or user.name or "")[:200]
+
+    children_created = await create_linked_family_readers(
+        db,
+        user=user,
+        parent_name=parent_name,
+        children=children,
+    )
 
     return {
         "children_created": children_created,

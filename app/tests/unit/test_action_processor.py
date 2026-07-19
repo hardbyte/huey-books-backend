@@ -155,9 +155,7 @@ class TestInternalHandlerFallback:
         _setup_chat_repo(mock_action_chat_repo)
         _setup_chat_repo(mock_runtime_chat_repo)
 
-        mock_handlers["/v1/recommend"] = AsyncMock(
-            side_effect=ValueError("bad UUID")
-        )
+        mock_handlers["/v1/recommend"] = AsyncMock(side_effect=ValueError("bad UUID"))
 
         session = MockSession()
         node = _make_action_node(
@@ -180,9 +178,7 @@ class TestInternalHandlerFallback:
             },
         )
 
-        result = await action_processor.process(
-            mock_db, node, session, {"db": mock_db}
-        )
+        result = await action_processor.process(mock_db, node, session, {"db": mock_db})
 
         assert result["success"] is True
         assert result["variables"]["temp"]["book_count"] == 0
@@ -203,9 +199,7 @@ class TestInternalHandlerFallback:
         _setup_chat_repo(mock_action_chat_repo)
         _setup_chat_repo(mock_runtime_chat_repo)
 
-        mock_handlers["/v1/recommend"] = AsyncMock(
-            side_effect=ValueError("bad UUID")
-        )
+        mock_handlers["/v1/recommend"] = AsyncMock(side_effect=ValueError("bad UUID"))
 
         session = MockSession()
         node = _make_action_node(
@@ -225,9 +219,7 @@ class TestInternalHandlerFallback:
             },
         )
 
-        result = await action_processor.process(
-            mock_db, node, session, {"db": mock_db}
-        )
+        result = await action_processor.process(mock_db, node, session, {"db": mock_db})
         # The outer _execute_actions_sync catches the exception and sets success=False
         assert result["success"] is False
 
@@ -249,7 +241,7 @@ class TestInternalHandlerFallback:
 
         captured_args = {}
 
-        async def capture_handler(db, body, params):
+        async def capture_handler(db, body, params, context=None):
             captured_args["body"] = body
             captured_args["params"] = params
             return {"result": "ok"}
@@ -281,9 +273,7 @@ class TestInternalHandlerFallback:
             },
         )
 
-        result = await action_processor.process(
-            mock_db, node, session, {"db": mock_db}
-        )
+        result = await action_processor.process(mock_db, node, session, {"db": mock_db})
 
         assert result["success"] is True
         assert captured_args["body"] == {"name": "resolved", "school_id": None}
@@ -366,7 +356,10 @@ class TestEmitEvent:
 
         def sub_obj(obj, state):
             if isinstance(obj, dict):
-                return {k: sub_vars(v, state) if isinstance(v, str) else v for k, v in obj.items()}
+                return {
+                    k: sub_vars(v, state) if isinstance(v, str) else v
+                    for k, v in obj.items()
+                }
             if isinstance(obj, str):
                 return sub_vars(obj, state)
             return obj
@@ -396,9 +389,7 @@ class TestEmitEvent:
             "app.repositories.event_repository.event_repository"
         ) as patched_repo:
             patched_repo.acreate = mock_acreate
-            result = await processor.process(
-                mock_db, node, session, {"db": mock_db}
-            )
+            result = await processor.process(mock_db, node, session, {"db": mock_db})
 
         assert result["success"] is True
         call_kwargs = mock_acreate.call_args.kwargs
@@ -530,9 +521,7 @@ class TestEmitEvent:
         mock_school = Mock()
         mock_school.id = uuid.UUID(school_uuid)
 
-        session = MockSession(
-            state={"context": {"school_wriveted_id": school_uuid}}
-        )
+        session = MockSession(state={"context": {"school_wriveted_id": school_uuid}})
         node = _make_action_node(
             session.flow_id,
             {
