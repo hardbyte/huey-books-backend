@@ -25,6 +25,15 @@ def test_school_registered_html_mentions_subscription_and_name():
     assert "subscription" in html.lower()
 
 
+def test_school_registered_html_includes_activate_cta_when_url_given():
+    url = "https://hueybooks.com/school/activate"
+    html = render_school_registered_html("St Kilda Primary", "Sarah", activate_url=url)
+    assert f'href="{url}"' in html
+    assert "Activate your school" in html
+    # No dangling link when no URL is supplied.
+    assert "href" not in render_school_registered_html("St Kilda Primary", "Sarah")
+
+
 def test_school_activated_html_no_contact_name_falls_back():
     html = render_school_activated_html("St Kilda Primary", None)
     assert "live" in html.lower()
@@ -58,7 +67,9 @@ def test_staff_alert_lists_details_and_escapes():
 
 
 def test_contribution_thankyou_credit_path_mentions_credit():
-    html = render_contribution_thankyou_html("St Kilda Primary", "50.00 AUD", "credited")
+    html = render_contribution_thankyou_html(
+        "St Kilda Primary", "50.00 AUD", "credited"
+    )
     assert "St Kilda Primary" in html
     assert "50.00 AUD" in html
     assert "credited" in html.lower()
@@ -149,7 +160,9 @@ async def test_create_checkout_session_rejects_unknown_price_id(monkeypatch):
     )
     monkeypatch.setattr(school_billing.settings, "STRIPE_SECRET_KEY", "sk_test")
     with pytest.raises(school_billing.SchoolBillingError):
-        await school_billing.create_school_checkout_session(_school(), price_id="price_other")
+        await school_billing.create_school_checkout_session(
+            _school(), price_id="price_other"
+        )
 
 
 # --- contribution checkout session ---

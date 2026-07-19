@@ -266,7 +266,9 @@ async def _queue_onboarding_emails(db, school, request):
                 "to_emails": [request.contact_email],
                 "subject": f"{school.name} — activate your Huey Books school",
                 "html_content": render_school_registered_html(
-                    school.name, request.contact_name
+                    school.name,
+                    request.contact_name,
+                    activate_url=f"{settings.HUEY_BOOKS_APP_URL.rstrip('/')}/school/activate",
                 ),
             },
             email_type=EmailType.ONBOARDING,

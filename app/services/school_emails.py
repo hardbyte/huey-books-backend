@@ -21,14 +21,31 @@ def _shell(body_html: str) -> str:
     )
 
 
-def render_school_registered_html(school_name: str, contact_name: Optional[str]) -> str:
+def _button(url: str, label: str) -> str:
+    """A prominent call-to-action button (inline-styled for email clients)."""
+    return (
+        '<p style="margin:24px 0;">'
+        f'<a href="{escape(url, quote=True)}" '
+        'style="display:inline-block;background:#F22555;color:#ffffff;'
+        "text-decoration:none;padding:12px 28px;border-radius:9999px;"
+        f'font-weight:bold;">{escape(label)}</a></p>'
+    )
+
+
+def render_school_registered_html(
+    school_name: str,
+    contact_name: Optional[str],
+    activate_url: Optional[str] = None,
+) -> str:
     """Sent to the school contact once onboarding is submitted (pre-payment)."""
     greeting = f"Hi {escape(contact_name)}," if contact_name else "Hi there,"
+    cta = _button(activate_url, "Activate your school") if activate_url else ""
     return _shell(
         f"<h2>{escape(school_name)} is registered</h2>"
         f"<p>{greeting}</p>"
         "<p>Thanks for signing your school up to Huey Books. To activate your "
         "school's account, the last step is to start your subscription.</p>"
+        f"{cta}"
         "<p>Once payment is complete your school is live and your students can "
         "start reading.</p>"
         "<p>Happy reading,<br>The Huey Books team</p>"
