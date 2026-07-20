@@ -214,6 +214,9 @@ class Settings(BaseSettings):
         # Huey Books Production URLs
         "https://hueybooks.com",
         "https://www.hueybooks.com",
+        # Admin UI served from these custom domains calls the API cross-origin.
+        "https://admin.hueybooks.com",
+        "https://api.hueybooks.com",
         # Firebase URLs
         "https://wriveted-library.web.app",
         "https://wriveted-api.web.app",
