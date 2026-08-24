@@ -26,6 +26,7 @@ from app.services.school_emails import (
     render_school_registered_html,
     render_staff_new_school_alert_html,
 )
+from app.services.school_membership import promote_to_school_admin
 
 logger = get_logger()
 
@@ -33,13 +34,6 @@ router = APIRouter(
     prefix="/onboarding",
     tags=["Onboarding"],
 )
-
-# Types that can be safely promoted — any other type is rejected
-_PROMOTABLE_TO_SCHOOL_ADMIN = {
-    UserAccountType.PUBLIC,
-    UserAccountType.STUDENT,
-    UserAccountType.SUPPORTER,
-}
 
 
 class SchoolLocationInput(BaseModel):
@@ -171,7 +165,7 @@ async def onboard_school(
 
     # Promote user to SchoolAdmin if needed
     if current_user.type != UserAccountType.SCHOOL_ADMIN:
-        await _promote_to_school_admin(db, current_user, school)
+        await promote_to_school_admin(db, current_user, school)
 
     # Bind user to school via educators table
     await db.execute(
@@ -281,73 +275,6 @@ async def _nudge_outbox():
         await asyncio.to_thread(queue_background_task, "process-outbox-events")
     except Exception as e:
         logger.warning("Failed to nudge outbox after onboarding", error=str(e))
-
-
-async def _promote_to_school_admin(
-    db: DBSessionDep,
-    user: User,
-    school: School,
-) -> None:
-    """Promote a user to SchoolAdmin type, preserving their identity."""
-    if user.type not in _PROMOTABLE_TO_SCHOOL_ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Your account type ({user.type.value}) cannot be converted to school admin. Contact support.",
-        )
-
-    user_id = user.id
-
-    logger.info(
-        "Promoting user to SchoolAdmin",
-        user_id=str(user_id),
-        old_type=user.type,
-        school=school.name,
-    )
-
-    # Delete from the current type's subclass table
-    safe_type_table_map = {
-        UserAccountType.PUBLIC: "public_readers",
-        UserAccountType.STUDENT: "students",
-        UserAccountType.SUPPORTER: "supporters",
-    }
-
-    subclass_table = safe_type_table_map.get(user.type)
-    if subclass_table:
-        await db.execute(
-            text(f"DELETE FROM {subclass_table} WHERE id = :uid"),
-            {"uid": user_id},
-        )
-
-    # Also remove from readers if present (PUBLIC/STUDENT inherit from Reader)
-    await db.execute(
-        text("DELETE FROM readers WHERE id = :uid"),
-        {"uid": user_id},
-    )
-
-    # Update the user type
-    await db.execute(
-        text("UPDATE users SET type = :new_type WHERE id = :uid"),
-        {"new_type": UserAccountType.SCHOOL_ADMIN.value.upper(), "uid": user_id},
-    )
-
-    # Insert into educators (parent of school_admins in inheritance)
-    await db.execute(
-        text(
-            "INSERT INTO educators (id, school_id) VALUES (:uid, :school_id) "
-            "ON CONFLICT (id) DO UPDATE SET school_id = :school_id"
-        ),
-        {"uid": user_id, "school_id": school.id},
-    )
-
-    # Insert into school_admins
-    await db.execute(
-        text(
-            "INSERT INTO school_admins (id) VALUES (:uid) ON CONFLICT (id) DO NOTHING"
-        ),
-        {"uid": user_id},
-    )
-
-    await db.flush()
 
 
 # ── Family onboarding ─────────────────────────────────────────────────

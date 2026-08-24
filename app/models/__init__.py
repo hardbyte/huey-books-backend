@@ -43,6 +43,7 @@ from .reading_ability import ReadingAbility
 from .review import Review, ReviewableType
 from .school import School, SchoolState
 from .school_admin import SchoolAdmin
+from .school_invitation import SchoolInvitation, SchoolInvitationStatus
 from .series import Series
 from .service_account import ServiceAccount, ServiceAccountType
 from .stripe_contribution import StripeContributionReceipt

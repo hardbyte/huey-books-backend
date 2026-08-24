@@ -28,6 +28,7 @@ from app.schemas.product import ProductCreateIn
 from app.schemas.subscription import SubscriptionCreateIn
 from app.services.email_notification import EmailType, send_email_reliable_sync
 from app.services.events import create_event
+from app.services.school_access import COMP_GRANT_SOURCES
 from app.services.school_emails import (
     render_contribution_thankyou_html,
     render_school_activated_html,
@@ -590,7 +591,11 @@ def _get_active_stripe_subscription(session, school: School) -> Optional[Subscri
 
 
 def _get_active_contribution_grant(session, school_id) -> Optional[Subscription]:
-    """Return a school's active, unexpired comped contribution grant, if any."""
+    """Return a school's active, unexpired comped grant (any source), if any.
+
+    Used when a Stripe subscription is cancelled to decide whether the school
+    should stay active — a live comp grant (contribution *or* invite trial) keeps
+    it up."""
     now = datetime.utcnow()
     return (
         session.execute(
@@ -598,7 +603,7 @@ def _get_active_contribution_grant(session, school_id) -> Optional[Subscription]
             .where(
                 Subscription.school_id == school_id,
                 Subscription.is_active.is_(True),
-                Subscription.info["source"].astext == CONTRIBUTION_GRANT_SOURCE,
+                Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
                 Subscription.expiration > now,
             )
             .limit(1)
@@ -609,19 +614,19 @@ def _get_active_contribution_grant(session, school_id) -> Optional[Subscription]
 
 
 def _retire_contribution_grants(session, school_id) -> None:
-    """Deactivate a school's comped contribution grant(s).
+    """Deactivate a school's comped grants (contribution or invite).
 
     Called when a school gains/uses a real auto-renewing Stripe subscription, so
-    the (superseded) grant does not leave a second active ``subscriptions`` row —
-    which would make ``School.subscription`` (uselist=False) non-deterministic and
-    the "supporter"/"paying" flags unreliable.
+    any superseded comp grant does not leave a second active ``subscriptions``
+    row — which would make ``School.subscription`` (uselist=False) non-deterministic
+    and the "supporter"/"paying" flags unreliable.
     """
     grants = (
         session.execute(
             select(Subscription).where(
                 Subscription.school_id == school_id,
                 Subscription.is_active.is_(True),
-                Subscription.info["source"].astext == CONTRIBUTION_GRANT_SOURCE,
+                Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
             )
         )
         .scalars()

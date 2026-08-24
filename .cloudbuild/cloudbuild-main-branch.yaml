@@ -154,6 +154,8 @@ steps:
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
         STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
+        HUEY_BOOKS_APP_URL=https://hueybooks.com,
+        SCHOOL_ADMIN_URL=https://admin.hueybooks.com,
         OTEL_SERVICE_NAME=wriveted-api
       - >-
         --set-secrets=
