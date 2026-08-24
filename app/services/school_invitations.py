@@ -377,12 +377,16 @@ async def accept_invitation(
 ) -> tuple[School, Optional[datetime]]:
     """Accept an invite: activate the invited school, grant free access, bind the
     user as its admin. Returns (school, access_until)."""
-    # Lock the accepting user so two concurrent accepts (two tokens, one user)
-    # can't both pass the "already administers a school" check below. Reload the
-    # row under the lock so a type change committed by the first request is seen
-    # here (a bare SELECT ... FOR UPDATE would not refresh the loaded instance).
-    await session.execute(select(User.id).where(User.id == user.id).with_for_update())
-    await session.refresh(user)
+    # Lock and re-read the accepting user in *this* session so two concurrent
+    # accepts (two tokens, one user) can't both pass the "already administers a
+    # school" check: the second waits on the row lock, then sees the committed
+    # type change. (The user from the auth dependency may belong to another
+    # session, so we can't refresh it directly — re-query it here.)
+    user = (
+        await session.execute(select(User).where(User.id == user.id).with_for_update())
+    ).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
 
     invitation = await get_invitation_by_token(session, token, for_update=True)
     if invitation is None:

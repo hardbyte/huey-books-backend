@@ -14,12 +14,15 @@ def _make_paying(session, school):
     """Make a school ACTIVE with a real (paying) Stripe subscription."""
     school.state = SchoolState.ACTIVE
     session.add(school)
-    session.add(Product(id="price_inviter_test", name="Supporter School"))
+    # Idempotent + per-school so repeated calls across tests don't collide on the
+    # products/subscriptions primary keys.
+    product_id = f"price_inviter_{school.id}"
+    session.merge(Product(id=product_id, name="Supporter School"))
     session.flush()
-    session.add(
+    session.merge(
         Subscription(
             id=f"sub_inviter_{school.id}",
-            product_id="price_inviter_test",
+            product_id=product_id,
             stripe_customer_id="cus_inviter",
             school_id=school.wriveted_identifier,
             type=SubscriptionType.SCHOOL,
