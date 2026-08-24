@@ -34,6 +34,9 @@ RUN if [ "$INSTALL_DEV" = "true" ]; then \
 ################################################################################
 FROM python:3.11-slim AS runtime
 
+# DL3064 false positive: this block holds only non-secret runtime config —
+# uid/gid, PATH, PORT, Python flags — no credentials.
+# hadolint ignore=DL3064
 ENV USERNAME=wriveted \
   USER_UID=1000 \
   USER_GID=1000 \
@@ -64,7 +67,8 @@ COPY --chown=${USER_UID}:${USER_GID} scripts/ /app/scripts
 COPY --chown=${USER_UID}:${USER_GID} alembic/ /app/alembic
 COPY --chown=${USER_UID}:${USER_GID} app/ /app/app
 
-USER ${USERNAME}
+# Literal numeric UID so hadolint (DL3066) and the host can resolve it; matches USER_UID.
+USER 1000
 
 # Run the ASGI app as a single uvicorn process; Cloud Run scales by instance,
 # so a process supervisor (gunicorn) adds no value here. sh -c expands $PORT
