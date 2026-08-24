@@ -290,6 +290,13 @@ class Settings(BaseSettings):
     # with no auto-renewing Stripe subscription: grant_days = round(amount /
     # this * 30). Contributions stack (extend the expiry).
     SCHOOL_CONTRIBUTION_MONTHLY_CENTS: int = 2500
+
+    # School invitations (referral → free trial). A paying school can refer
+    # another; the invited school gets INVITE_GRANT_DAYS free access on accept.
+    INVITE_GRANT_DAYS: int = 90
+    INVITE_MAX_PER_SCHOOL: int = 3  # SENT + ACCEPTED per inviter school
+    INVITE_EXPIRY_DAYS: int = 30  # unredeemed invite link lifetime
+    INVITE_REQUIRE_PAYING_INVITER: bool = True
     # Recipients for internal signup alerts (set per deployment). Empty disables.
     STAFF_ALERT_EMAILS: Annotated[List[str], NoDecode] = []
 

@@ -35,7 +35,8 @@ from app.services.commerce import (
 from app.services.events import handle_event_to_slack_alert, process_events
 from app.services.hydration import hydrate_bulk
 from app.services.labelling import label_and_update_work
-from app.services.stripe_events import CONTRIBUTION_GRANT_SOURCE, process_stripe_event
+from app.services.school_access import COMP_GRANT_SOURCES
+from app.services.stripe_events import process_stripe_event
 
 
 class CloudRunEnvironment(BaseSettings):
@@ -306,12 +307,13 @@ async def handle_refresh_recommendations(session: DBSessionDep):
 
 @router.post("/maintenance/lapse-expired-schools")
 async def handle_lapse_expired_schools(session: DBSessionDep):
-    """Deactivate schools whose paid access came from an expired contribution grant.
+    """Deactivate schools whose access came from an expired comped grant.
 
-    A "contribute a month" payment to a school with no auto-renewing Stripe
-    subscription grants bounded paid access via a comped Subscription. Unlike a
-    Stripe subscription, that grant does not auto-lapse, so this sweep sets such
-    schools INACTIVE once the grant has expired.
+    A comped grant (a "contribute a month" payment, or a school-invite free
+    trial) gives a school bounded access via a Subscription with no auto-renewing
+    Stripe subscription behind it. Unlike Stripe, these do not auto-lapse, so this
+    sweep sets such schools INACTIVE once the grant (any source in
+    ``COMP_GRANT_SOURCES``) has expired.
 
     Schools with an active auto-renewing Stripe subscription are never lapsed here
     (Stripe drives their lifecycle). Intended to run on a Cloud Scheduler job
@@ -323,7 +325,7 @@ async def handle_lapse_expired_schools(session: DBSessionDep):
         (
             await session.execute(
                 select(Subscription).where(
-                    Subscription.info["source"].astext == CONTRIBUTION_GRANT_SOURCE,
+                    Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
                     Subscription.is_active.is_(True),
                     Subscription.expiration < now,
                 )

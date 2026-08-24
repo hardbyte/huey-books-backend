@@ -97,6 +97,38 @@ def render_school_staff_invite_html(
     )
 
 
+def _grant_period_label(grant_days: int) -> str:
+    """A friendly duration label, e.g. 90 -> '3 months', 45 -> '45 days'."""
+    if grant_days % 30 == 0:
+        months = grant_days // 30
+        return f"{months} month{'s' if months != 1 else ''}"
+    return f"{grant_days} days"
+
+
+def render_school_invite_html(
+    inviter_school_name: str,
+    invited_school_name: Optional[str],
+    accept_url: str,
+    grant_days: int,
+) -> str:
+    """Sent to a school's contact when a peer school refers them to a free trial."""
+    period = _grant_period_label(grant_days)
+    intro_school = (
+        f"{escape(invited_school_name)}" if invited_school_name else "your school"
+    )
+    return _shell(
+        f"<h2>{escape(inviter_school_name)} invited {intro_school} to Huey Books</h2>"
+        "<p>Hi there,</p>"
+        f"<p><strong>{escape(inviter_school_name)}</strong> uses Huey Books to help "
+        f"their students find books they love, and thinks {intro_school} would too — "
+        f"so they've invited you to try it <strong>free for {period}</strong>.</p>"
+        f"{_button(accept_url, 'Activate your free trial')}"
+        "<p>Set up takes a couple of minutes: sign in, confirm your school, and your "
+        "students can start reading right away. No card required.</p>"
+        "<p>Happy reading,<br>The Huey Books team</p>"
+    )
+
+
 def render_school_renewal_reminder_html(
     school_name: str,
     contact_name: Optional[str],
