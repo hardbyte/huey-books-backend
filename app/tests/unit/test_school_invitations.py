@@ -11,6 +11,7 @@ from app.services.school_access import (
     invite_grant_id,
 )
 from app.services.school_emails import _grant_period_label, render_school_invite_html
+from app.services.school_invitations import _staff_granted_bonus
 
 
 def test_create_requires_a_target():
@@ -37,7 +38,9 @@ def test_create_accepts_new_school_name_and_country():
 
 def test_create_rejects_name_without_country():
     with pytest.raises(ValidationError):
-        SchoolInvitationCreate(invited_school_name="No Country", contact_email="a@b.com")
+        SchoolInvitationCreate(
+            invited_school_name="No Country", contact_email="a@b.com"
+        )
 
 
 def test_grant_period_label():
@@ -57,6 +60,41 @@ def test_invite_email_mentions_inviter_period_and_cta():
     assert "3 months" in html
     assert "https://hueybooks.com/school/invited?token=abc" in html
     assert "Activate your free trial" in html
+
+
+def test_invite_email_includes_custom_message():
+    html = render_school_invite_html(
+        inviter_school_name="Melbourne Grammar",
+        invited_school_name="Chennai School",
+        accept_url="https://hueybooks.com/school/invited?token=abc",
+        grant_days=90,
+        message="We love Huey — you will too!",
+    )
+    assert "We love Huey — you will too!" in html
+
+
+def test_invite_email_omits_empty_message():
+    html = render_school_invite_html(
+        inviter_school_name="X",
+        invited_school_name="Y",
+        accept_url="https://h/abc",
+        grant_days=90,
+        message="   ",
+    )
+    assert "font-style:italic" not in html
+
+
+class _FakeSchool:
+    def __init__(self, info):
+        self.info = info
+
+
+def test_staff_granted_bonus_parsing():
+    assert _staff_granted_bonus(_FakeSchool(None)) == 0
+    assert _staff_granted_bonus(_FakeSchool({})) == 0
+    assert _staff_granted_bonus(_FakeSchool({"invite_bonus": 4})) == 4
+    assert _staff_granted_bonus(_FakeSchool({"invite_bonus": "bad"})) == 0
+    assert _staff_granted_bonus(_FakeSchool({"invite_bonus": -3})) == 0
 
 
 def test_invite_grant_constants():

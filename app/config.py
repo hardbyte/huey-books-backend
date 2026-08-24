@@ -294,9 +294,15 @@ class Settings(BaseSettings):
     # School invitations (referral → free trial). A paying school can refer
     # another; the invited school gets INVITE_GRANT_DAYS free access on accept.
     INVITE_GRANT_DAYS: int = 90
-    INVITE_MAX_PER_SCHOOL: int = 3  # SENT + ACCEPTED per inviter school
+    INVITE_MAX_PER_SCHOOL: int = 3  # base allowance per inviter school per year
+    INVITE_ALLOWANCE_WINDOW_DAYS: int = 365  # rolling window the allowance resets over
     INVITE_EXPIRY_DAYS: int = 30  # unredeemed invite link lifetime
     INVITE_REQUIRE_PAYING_INVITER: bool = True
+    # Bonus invites earned by meaningful contribution to the platform. A school
+    # earns one extra invite per this many book reviews / books added, capped.
+    INVITE_EARN_REVIEWS_PER_BONUS: int = 200
+    INVITE_EARN_BOOKS_ADDED_PER_BONUS: int = 100
+    INVITE_EARN_MAX_BONUS: int = 5
     # Recipients for internal signup alerts (set per deployment). Empty disables.
     STAFF_ALERT_EMAILS: Annotated[List[str], NoDecode] = []
 

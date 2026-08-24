@@ -13,14 +13,19 @@ from structlog import get_logger
 
 from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.school import aget_school_from_wriveted_id
-from app.api.dependencies.security import get_current_active_user
+from app.api.dependencies.security import (
+    get_current_active_superuser,
+    get_current_active_user,
+)
 from app.config import get_settings
 from app.models import School
 from app.models.school_invitation import SchoolInvitation, SchoolInvitationStatus
 from app.models.user import User
 from app.permissions import Permission
 from app.schemas.school_invitation import (
+    GrantBonusInvites,
     SchoolInvitationAcceptResponse,
+    SchoolInvitationAllowance,
     SchoolInvitationCreate,
     SchoolInvitationDetail,
     SchoolInvitationPreview,
@@ -72,6 +77,7 @@ async def send_invitation(
                     invited_school_name=invitation.invited_school_name,
                     accept_url=_accept_url(invitation.token),
                     grant_days=invitation.grant_days,
+                    message=invitation.message,
                 ),
             },
             email_type=EmailType.ONBOARDING,
@@ -96,6 +102,91 @@ async def list_school_invitations(
     details = [SchoolInvitationDetail.model_validate(r) for r in rows]
     await db.commit()  # persist any lazy SENT→EXPIRED transitions
     return details
+
+
+@router.get(
+    "/school/{wriveted_identifier}/invitations/allowance",
+    response_model=SchoolInvitationAllowance,
+)
+async def get_invitation_allowance(
+    db: DBSessionDep,
+    school: School = Permission("update", aget_school_from_wriveted_id),
+):
+    """How many invitations this school can still send (base + earned + staff bonus)."""
+    allowance = await invites.invite_allowance(db, school)
+    return SchoolInvitationAllowance(**allowance)
+
+
+@router.post(
+    "/school/{wriveted_identifier}/invitations/grant-bonus",
+    response_model=SchoolInvitationAllowance,
+)
+async def grant_bonus_invitations(
+    payload: GrantBonusInvites,
+    wriveted_identifier: str,
+    db: DBSessionDep,
+    account=Depends(get_current_active_superuser),
+):
+    """Staff action: grant a school extra invitations."""
+    school = (
+        await db.execute(
+            select(School).where(School.wriveted_identifier == wriveted_identifier)
+        )
+    ).scalar_one_or_none()
+    if school is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found.")
+    await invites.grant_bonus_invites(db, school, payload.additional)
+    allowance = await invites.invite_allowance(db, school)
+    await db.commit()
+    return SchoolInvitationAllowance(**allowance)
+
+
+@router.post(
+    "/admin/invitations",
+    response_model=SchoolInvitationDetail,
+    status_code=status.HTTP_201_CREATED,
+)
+async def send_staff_invitation(
+    payload: SchoolInvitationCreate,
+    db: DBSessionDep,
+    account=Depends(get_current_active_superuser),
+):
+    """Staff can invite any school directly (no source school, gate, or limit)."""
+    user = account if isinstance(account, User) else None
+    invitation = await invites.create_staff_invitation(db, user, payload)
+    detail = SchoolInvitationDetail.model_validate(invitation)
+    inviter_name = "The Huey Books team"
+    accept_url = _accept_url(invitation.token)
+    grant_days = invitation.grant_days
+    contact_email = invitation.invited_contact_email
+    invited_name = invitation.invited_school_name
+    message = invitation.message
+    await db.commit()
+
+    settings = get_settings()
+    try:
+        await send_email_reliable(
+            db=db,
+            email_data={
+                "from_email": settings.BROADCAST_FROM_EMAIL,
+                "from_name": "Huey Books",
+                "to_emails": [contact_email],
+                "subject": "You're invited to Huey Books",
+                "html_content": render_school_invite_html(
+                    inviter_school_name=inviter_name,
+                    invited_school_name=invited_name,
+                    accept_url=accept_url,
+                    grant_days=grant_days,
+                    message=message,
+                ),
+            },
+            email_type=EmailType.ONBOARDING,
+        )
+        await db.commit()
+    except Exception as e:
+        logger.warning("Failed to queue staff invitation email", error=str(e))
+
+    return detail
 
 
 @router.post(

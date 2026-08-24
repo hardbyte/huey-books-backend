@@ -16,6 +16,8 @@ class SchoolInvitationCreate(BaseModel):
     country_code: Optional[str] = Field(None, min_length=3, max_length=3)
     contact_email: EmailStr
     contact_name: Optional[str] = Field(None, max_length=200)
+    # Optional personal note included in the invitation email.
+    message: Optional[str] = Field(None, max_length=2000)
     # Optional per-invite override; defaults to INVITE_GRANT_DAYS.
     grant_days: Optional[int] = Field(None, ge=1, le=3650)
 
@@ -37,11 +39,28 @@ class SchoolInvitationDetail(BaseModel):
     invited_school_name: str
     invited_contact_email: str
     invited_contact_name: Optional[str] = None
+    message: Optional[str] = None
     status: SchoolInvitationStatus
     grant_days: int
     created_at: datetime
     expires_at: datetime
     accepted_at: Optional[datetime] = None
+
+
+class SchoolInvitationAllowance(BaseModel):
+    """A school's invite allowance for the current window."""
+
+    base: int
+    staff_bonus: int
+    earned_bonus: int
+    total: int
+    used: int
+    remaining: int
+    window_days: int
+
+
+class GrantBonusInvites(BaseModel):
+    additional: int = Field(..., ge=1, le=100)
 
 
 class SchoolInvitationPreview(BaseModel):

@@ -110,11 +110,18 @@ def render_school_invite_html(
     invited_school_name: Optional[str],
     accept_url: str,
     grant_days: int,
+    message: Optional[str] = None,
 ) -> str:
     """Sent to a school's contact when a peer school refers them to a free trial."""
     period = _grant_period_label(grant_days)
     intro_school = (
         f"{escape(invited_school_name)}" if invited_school_name else "your school"
+    )
+    personal_note = (
+        f'<p style="border-left:3px solid #ddd;padding-left:12px;color:#444;'
+        f'font-style:italic;">“{escape(message)}”</p>'
+        if message and message.strip()
+        else ""
     )
     return _shell(
         f"<h2>{escape(inviter_school_name)} invited {intro_school} to Huey Books</h2>"
@@ -122,6 +129,7 @@ def render_school_invite_html(
         f"<p><strong>{escape(inviter_school_name)}</strong> uses Huey Books to help "
         f"their students find books they love, and thinks {intro_school} would too — "
         f"so they've invited you to try it <strong>free for {period}</strong>.</p>"
+        f"{personal_note}"
         f"{_button(accept_url, 'Activate your free trial')}"
         "<p>Set up takes a couple of minutes: sign in, confirm your school, and your "
         "students can start reading right away. No card required.</p>"

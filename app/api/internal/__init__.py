@@ -356,6 +356,24 @@ async def handle_lapse_expired_schools(session: DBSessionDep):
         if has_stripe_sub is not None:
             continue
 
+        # A school can hold more than one comp grant (e.g. an invite trial plus a
+        # later contribution). Only lapse it once *every* comp grant has expired.
+        other_live_comp_grant = (
+            await session.execute(
+                select(Subscription.id)
+                .where(
+                    Subscription.school_id == grant.school_id,
+                    Subscription.id != grant.id,
+                    Subscription.is_active.is_(True),
+                    Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
+                    Subscription.expiration > now,
+                )
+                .limit(1)
+            )
+        ).first()
+        if other_live_comp_grant is not None:
+            continue
+
         school = (
             await session.execute(
                 select(School).where(School.wriveted_identifier == grant.school_id)

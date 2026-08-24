@@ -44,11 +44,13 @@ class SchoolInvitation(Base):
     # Opaque bearer token embedded in the invite email link.
     token: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
 
-    inviter_school_id: Mapped[uuid.UUID] = mapped_column(
+    # Null for a staff (Wriveted) invitation issued on behalf of no particular
+    # school — staff can invite any school directly.
+    inviter_school_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("schools.wriveted_identifier", name="fk_invitation_inviter_school"),
         index=True,
-        nullable=False,
+        nullable=True,
     )
     inviter_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
@@ -72,6 +74,9 @@ class SchoolInvitation(Base):
         String, index=True, nullable=False
     )
     invited_contact_name: Mapped[Optional[str]] = mapped_column(String(200))
+
+    # Optional personal note from the inviter, shown in the invitation email.
+    message: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
 
     # Days of free access to grant on acceptance (snapshot of the setting/override).
     grant_days: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -100,7 +105,7 @@ class SchoolInvitation(Base):
 
     info: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)  # type: ignore[arg-type]
 
-    inviter_school: Mapped["School"] = relationship(
+    inviter_school: Mapped[Optional["School"]] = relationship(
         "School", foreign_keys=[inviter_school_id]
     )
     invited_school: Mapped[Optional["School"]] = relationship(

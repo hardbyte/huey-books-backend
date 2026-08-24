@@ -16,6 +16,9 @@ from structlog import get_logger
 
 from app.config import get_settings
 from app.models import Country, School, SchoolAdmin
+from app.models.collection import Collection
+from app.models.collection_item import CollectionItem
+from app.models.event import Event
 from app.models.school import SchoolBookbotType, SchoolState
 from app.models.school_invitation import SchoolInvitation, SchoolInvitationStatus
 from app.models.subscription import Subscription
@@ -25,6 +28,9 @@ from app.services.school_access import grant_invite_access, invite_grant_id
 from app.services.school_membership import promote_to_school_admin
 
 logger = get_logger()
+
+BOOK_REVIEWED_EVENT_TITLE = "Huey: Book reviewed"
+INVITE_BONUS_INFO_KEY = "invite_bonus"
 
 
 async def _has_paying_subscription(session: AsyncSession, school: School) -> bool:
@@ -45,13 +51,18 @@ async def _school_has_admin(session: AsyncSession, school: School) -> bool:
     return bool((await session.execute(q)).scalar())
 
 
-async def _active_invite_count(session: AsyncSession, inviter_school_id: UUID) -> int:
-    """Invites that occupy a slot: accepted ones, plus sent ones not yet expired.
-    A lapsed (past ``expires_at``) SENT invite frees its slot even before the lazy
-    SENT→EXPIRED transition is persisted."""
+async def _invites_used_in_window(
+    session: AsyncSession, inviter_school_id: UUID
+) -> int:
+    """Invites this school has spent within the current allowance window: accepted
+    ones plus sent-and-not-yet-expired ones, created since the window opened. The
+    allowance resets as older invitations age out of the window."""
+    settings = get_settings()
     now = datetime.utcnow()
+    window_start = now - timedelta(days=settings.INVITE_ALLOWANCE_WINDOW_DAYS)
     q = select(func.count(SchoolInvitation.id)).where(
         SchoolInvitation.inviter_school_id == inviter_school_id,
+        SchoolInvitation.created_at > window_start,
         or_(
             SchoolInvitation.status == SchoolInvitationStatus.ACCEPTED,
             and_(
@@ -61,6 +72,90 @@ async def _active_invite_count(session: AsyncSession, inviter_school_id: UUID) -
         ),
     )
     return int((await session.execute(q)).scalar() or 0)
+
+
+async def _earned_invite_bonus(session: AsyncSession, school: School) -> int:
+    """Bonus invites a school has earned by contributing to the platform: one per
+    ``INVITE_EARN_REVIEWS_PER_BONUS`` book reviews and one per
+    ``INVITE_EARN_BOOKS_ADDED_PER_BONUS`` books added to its collection, capped at
+    ``INVITE_EARN_MAX_BONUS``."""
+    settings = get_settings()
+
+    # Reader book reviews are Events (keyed by the integer School.id).
+    reviews = int(
+        (
+            await session.execute(
+                select(func.count(Event.id)).where(
+                    Event.title == BOOK_REVIEWED_EVENT_TITLE,
+                    Event.school_id == school.id,
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    # Books added = items in the school's collection (keyed by wriveted_identifier).
+    books_added = int(
+        (
+            await session.execute(
+                select(func.count(CollectionItem.id))
+                .select_from(CollectionItem)
+                .join(Collection, Collection.id == CollectionItem.collection_id)
+                .where(Collection.school_id == school.wriveted_identifier)
+            )
+        ).scalar()
+        or 0
+    )
+
+    earned = 0
+    if settings.INVITE_EARN_REVIEWS_PER_BONUS > 0:
+        earned += reviews // settings.INVITE_EARN_REVIEWS_PER_BONUS
+    if settings.INVITE_EARN_BOOKS_ADDED_PER_BONUS > 0:
+        earned += books_added // settings.INVITE_EARN_BOOKS_ADDED_PER_BONUS
+    return min(earned, settings.INVITE_EARN_MAX_BONUS)
+
+
+def _staff_granted_bonus(school: School) -> int:
+    """Extra invites a staff member granted this school (stored in School.info)."""
+    if not school.info:
+        return 0
+    try:
+        return max(0, int(school.info.get(INVITE_BONUS_INFO_KEY, 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def invite_allowance(session: AsyncSession, school: School) -> dict:
+    """The school's full invite allowance breakdown for a given window."""
+    settings = get_settings()
+    base = settings.INVITE_MAX_PER_SCHOOL
+    staff_bonus = _staff_granted_bonus(school)
+    earned = await _earned_invite_bonus(session, school)
+    used = await _invites_used_in_window(session, school.wriveted_identifier)
+    total = base + staff_bonus + earned
+    return {
+        "base": base,
+        "staff_bonus": staff_bonus,
+        "earned_bonus": earned,
+        "total": total,
+        "used": used,
+        "remaining": max(0, total - used),
+        "window_days": settings.INVITE_ALLOWANCE_WINDOW_DAYS,
+    }
+
+
+async def grant_bonus_invites(
+    session: AsyncSession, school: School, additional: int
+) -> int:
+    """Staff action: add ``additional`` bonus invites to a school. Returns the new
+    staff-granted bonus total."""
+    info = dict(school.info or {})
+    current = _staff_granted_bonus(school)
+    new_total = max(0, current + additional)
+    info[INVITE_BONUS_INFO_KEY] = new_total
+    school.info = info
+    session.add(school)
+    await session.flush()
+    return new_total
 
 
 async def _email_is_existing_school_admin(session: AsyncSession, email: str) -> bool:
@@ -97,14 +192,45 @@ async def create_invitation(
             "Only schools with an active paid subscription can invite other schools.",
         )
 
-    if await _active_invite_count(session, inviter_school.wriveted_identifier) >= (
-        settings.INVITE_MAX_PER_SCHOOL
-    ):
+    allowance = await invite_allowance(session, inviter_school)
+    if allowance["remaining"] <= 0:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"You've reached the limit of {settings.INVITE_MAX_PER_SCHOOL} invitations.",
+            f"You've used all {allowance['total']} of your invitations for now. "
+            "Contributing more to Huey Books (or asking us) can unlock more.",
         )
 
+    invited_school = await _resolve_and_validate_target(
+        session, payload, inviter_school=inviter_school
+    )
+    return await _build_invitation(
+        session, payload, invited_school, inviter_user, inviter_school=inviter_school
+    )
+
+
+async def create_staff_invitation(
+    session: AsyncSession,
+    staff_user: User,
+    payload: SchoolInvitationCreate,
+) -> SchoolInvitation:
+    """Staff (Wriveted) can invite any school directly, with no source school,
+    paying gate, or allowance limit."""
+    invited_school = await _resolve_and_validate_target(
+        session, payload, inviter_school=None
+    )
+    return await _build_invitation(
+        session, payload, invited_school, staff_user, inviter_school=None
+    )
+
+
+async def _resolve_and_validate_target(
+    session: AsyncSession,
+    payload: SchoolInvitationCreate,
+    *,
+    inviter_school: Optional[School],
+) -> Optional[School]:
+    """Resolve/validate the invitee (existing inactive school, or a new
+    name+country), shared by the school and staff invite paths."""
     invited_school: Optional[School] = None
     if payload.invited_school_wriveted_id is not None:
         invited_school = (
@@ -120,7 +246,10 @@ async def create_invitation(
         )
         if invited_school is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Invited school not found.")
-        if invited_school.wriveted_identifier == inviter_school.wriveted_identifier:
+        if (
+            inviter_school is not None
+            and invited_school.wriveted_identifier == inviter_school.wriveted_identifier
+        ):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "You can't invite your own school."
             )
@@ -128,7 +257,6 @@ async def create_invitation(
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "That school is already on Huey Books."
             )
-        # Already invited & accepted → don't re-invite.
         already = (
             await session.execute(
                 select(
@@ -165,12 +293,25 @@ async def create_invitation(
             status.HTTP_409_CONFLICT,
             "That contact already administers a school on Huey Books.",
         )
+    return invited_school
 
+
+async def _build_invitation(
+    session: AsyncSession,
+    payload: SchoolInvitationCreate,
+    invited_school: Optional[School],
+    inviter_user: User,
+    *,
+    inviter_school: Optional[School],
+) -> SchoolInvitation:
+    settings = get_settings()
     grant_days = payload.grant_days or settings.INVITE_GRANT_DAYS
     now = datetime.utcnow()
     invitation = SchoolInvitation(
         token=secrets.token_urlsafe(32),
-        inviter_school_id=inviter_school.wriveted_identifier,
+        inviter_school_id=(
+            inviter_school.wriveted_identifier if inviter_school else None
+        ),
         inviter_user_id=inviter_user.id,
         invited_school_id=(
             invited_school.wriveted_identifier if invited_school else None
@@ -183,6 +324,7 @@ async def create_invitation(
         ),
         invited_contact_email=payload.contact_email,
         invited_contact_name=payload.contact_name,
+        message=payload.message,
         grant_days=grant_days,
         status=SchoolInvitationStatus.SENT,
         expires_at=now + timedelta(days=settings.INVITE_EXPIRY_DAYS),
@@ -211,8 +353,11 @@ async def accept_invitation(
     """Accept an invite: activate the invited school, grant free access, bind the
     user as its admin. Returns (school, access_until)."""
     # Lock the accepting user so two concurrent accepts (two tokens, one user)
-    # can't both pass the "already administers a school" check below.
+    # can't both pass the "already administers a school" check below. Reload the
+    # row under the lock so a type change committed by the first request is seen
+    # here (a bare SELECT ... FOR UPDATE would not refresh the loaded instance).
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await session.refresh(user)
 
     invitation = await get_invitation_by_token(session, token, for_update=True)
     if invitation is None:
