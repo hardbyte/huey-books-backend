@@ -140,6 +140,11 @@ def main() -> None:
                     skipped += 1
                 else:
                     rows.append(row)
+            # De-duplicate by official_identifier within the batch: a single
+            # INSERT ... ON CONFLICT can't affect the same row twice, so a
+            # repeated UDISE code in one page would otherwise error. Keep last.
+            if rows:
+                rows = list({row[0]: row for row in rows}.values())
             if rows and not args.dry_run:
                 with conn.cursor() as cur:
                     execute_values(cur, UPSERT_SQL, rows, template=ROW_TEMPLATE, page_size=1000)
