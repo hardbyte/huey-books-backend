@@ -48,7 +48,11 @@ class SchoolInvitation(Base):
     # school — staff can invite any school directly.
     inviter_school_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("schools.wriveted_identifier", name="fk_invitation_inviter_school"),
+        ForeignKey(
+            "schools.wriveted_identifier",
+            name="fk_invitation_inviter_school",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )
@@ -62,7 +66,11 @@ class SchoolInvitation(Base):
     # name+country when the invite is accepted.
     invited_school_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("schools.wriveted_identifier", name="fk_invitation_invited_school"),
+        ForeignKey(
+            "schools.wriveted_identifier",
+            name="fk_invitation_invited_school",
+            ondelete="SET NULL",
+        ),
         index=True,
         nullable=True,
     )

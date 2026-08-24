@@ -78,8 +78,13 @@ async def _earned_invite_bonus(session: AsyncSession, school: School) -> int:
     """Bonus invites a school has earned by contributing to the platform: one per
     ``INVITE_EARN_REVIEWS_PER_BONUS`` book reviews and one per
     ``INVITE_EARN_BOOKS_ADDED_PER_BONUS`` books added to its collection, capped at
-    ``INVITE_EARN_MAX_BONUS``."""
+    ``INVITE_EARN_MAX_BONUS``. Counted over the same rolling window as the spend
+    side, so the earned allowance resets alongside it (and the review count stays
+    bounded by ``Event.timestamp`` rather than scanning all history)."""
     settings = get_settings()
+    window_start = datetime.utcnow() - timedelta(
+        days=settings.INVITE_ALLOWANCE_WINDOW_DAYS
+    )
 
     # Reader book reviews are Events (keyed by the integer School.id).
     reviews = int(
@@ -88,6 +93,7 @@ async def _earned_invite_bonus(session: AsyncSession, school: School) -> int:
                 select(func.count(Event.id)).where(
                     Event.title == BOOK_REVIEWED_EVENT_TITLE,
                     Event.school_id == school.id,
+                    Event.timestamp > window_start,
                 )
             )
         ).scalar()
@@ -210,7 +216,7 @@ async def create_invitation(
 
 async def create_staff_invitation(
     session: AsyncSession,
-    staff_user: User,
+    staff_user: Optional[User],
     payload: SchoolInvitationCreate,
 ) -> SchoolInvitation:
     """Staff (Wriveted) can invite any school directly, with no source school,
@@ -293,6 +299,25 @@ async def _resolve_and_validate_target(
             status.HTTP_409_CONFLICT,
             "That contact already administers a school on Huey Books.",
         )
+
+    # Don't spam a contact who already has a live (sent, unexpired) invitation.
+    outstanding = (
+        await session.execute(
+            select(
+                exists().where(
+                    func.lower(SchoolInvitation.invited_contact_email)
+                    == payload.contact_email.lower(),
+                    SchoolInvitation.status == SchoolInvitationStatus.SENT,
+                    SchoolInvitation.expires_at > datetime.utcnow(),
+                )
+            )
+        )
+    ).scalar()
+    if outstanding:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "That contact already has a pending invitation.",
+        )
     return invited_school
 
 
@@ -300,7 +325,7 @@ async def _build_invitation(
     session: AsyncSession,
     payload: SchoolInvitationCreate,
     invited_school: Optional[School],
-    inviter_user: User,
+    inviter_user: Optional[User],
     *,
     inviter_school: Optional[School],
 ) -> SchoolInvitation:
@@ -312,7 +337,7 @@ async def _build_invitation(
         inviter_school_id=(
             inviter_school.wriveted_identifier if inviter_school else None
         ),
-        inviter_user_id=inviter_user.id,
+        inviter_user_id=inviter_user.id if inviter_user else None,
         invited_school_id=(
             invited_school.wriveted_identifier if invited_school else None
         ),
@@ -370,7 +395,8 @@ async def accept_invitation(
             status.HTTP_409_CONFLICT, "This invitation has already been accepted."
         )
     if invitation.status == SchoolInvitationStatus.EXPIRED or _is_expired(invitation):
-        invitation.status = SchoolInvitationStatus.EXPIRED
+        # The lazy SENT→EXPIRED transition is persisted by list_invitations; this
+        # handler raises without committing, so don't pretend to write it here.
         raise HTTPException(status.HTTP_410_GONE, "This invitation has expired.")
 
     # A user who already runs another school can't be silently moved.

@@ -31,8 +31,36 @@ def upgrade():
         sa.Column("message", sa.String(length=2000), nullable=True),
     )
 
+    # Deleting a school must not be blocked by historical invitations; null the
+    # references instead (the invitation row survives as an audit record).
+    for fk, col in (
+        ("fk_invitation_inviter_school", "inviter_school_id"),
+        ("fk_invitation_invited_school", "invited_school_id"),
+    ):
+        op.drop_constraint(fk, "school_invitations", type_="foreignkey")
+        op.create_foreign_key(
+            fk,
+            "school_invitations",
+            "schools",
+            [col],
+            ["wriveted_identifier"],
+            ondelete="SET NULL",
+        )
+
 
 def downgrade():
+    for fk, col in (
+        ("fk_invitation_inviter_school", "inviter_school_id"),
+        ("fk_invitation_invited_school", "invited_school_id"),
+    ):
+        op.drop_constraint(fk, "school_invitations", type_="foreignkey")
+        op.create_foreign_key(
+            fk,
+            "school_invitations",
+            "schools",
+            [col],
+            ["wriveted_identifier"],
+        )
     op.drop_column("school_invitations", "message")
     op.alter_column(
         "school_invitations",

@@ -83,7 +83,7 @@ def test_send_and_accept_grants_free_access(
         },
     )
     assert send.status_code == 201, send.text
-    assert send.json()["status"] == "SENT"
+    assert send.json()["status"] == "sent"
 
     with session_factory() as s:
         inv = s.execute(
@@ -121,6 +121,68 @@ def test_send_and_accept_grants_free_access(
         ).scalars().first()
         assert grant is not None and grant.is_active
         assert grant.expiration > datetime.utcnow() + timedelta(days=80)
+
+
+def test_staff_can_invite_any_school_without_source(
+    client, test_wrivetedadmin_account_headers
+):
+    """Staff (Wriveted) can invite a brand-new school with no source school."""
+    resp = client.post(
+        "/v1/admin/invitations",
+        headers=test_wrivetedadmin_account_headers,
+        json={
+            "invited_school_name": f"Staff Invited {datetime.utcnow().timestamp()}",
+            "country_code": "AUS",
+            "contact_email": f"staff-invite-{datetime.utcnow().timestamp()}@x.example",
+            "message": "Come and join us!",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "sent"
+
+
+def test_school_admin_cannot_use_staff_invite(
+    client, admin_of_test_school_headers
+):
+    """The staff invite endpoint is superuser-only."""
+    resp = client.post(
+        "/v1/admin/invitations",
+        headers=admin_of_test_school_headers,
+        json={
+            "invited_school_name": "Nope",
+            "country_code": "AUS",
+            "contact_email": "nope@x.example",
+        },
+    )
+    assert resp.status_code in (401, 403), resp.text
+
+
+def test_allowance_and_staff_bonus(
+    client,
+    session,
+    test_school,
+    admin_of_test_school_headers,
+    test_wrivetedadmin_account_headers,
+):
+    """Allowance reflects the base cap and staff-granted bonuses."""
+    _make_paying(session, test_school)
+    wid = test_school.wriveted_identifier
+
+    allowance = client.get(
+        f"/v1/school/{wid}/invitations/allowance",
+        headers=admin_of_test_school_headers,
+    )
+    assert allowance.status_code == 200, allowance.text
+    base_total = allowance.json()["total"]
+
+    granted = client.post(
+        f"/v1/admin/schools/{wid}/invitations/grant-bonus",
+        headers=test_wrivetedadmin_account_headers,
+        json={"additional": 5},
+    )
+    assert granted.status_code == 200, granted.text
+    assert granted.json()["staff_bonus"] == 5
+    assert granted.json()["total"] == base_total + 5
 
 
 def test_cannot_invite_active_school(

@@ -7,7 +7,7 @@ link and their school gets a free-trial grant. See
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from structlog import get_logger
 
@@ -47,6 +47,40 @@ def _accept_url(token: str) -> str:
     return f"{base}/school/invited?token={token}"
 
 
+async def _queue_invite_email(
+    db: DBSessionDep,
+    *,
+    inviter_display_name: str,
+    subject: str,
+    invitation: SchoolInvitation,
+) -> None:
+    """Best-effort: queue the invitation email. A failure here must not undo the
+    already-committed invitation (safe to read invitation.* post-commit —
+    expire_on_commit is False)."""
+    settings = get_settings()
+    try:
+        await send_email_reliable(
+            db=db,
+            email_data={
+                "from_email": settings.BROADCAST_FROM_EMAIL,
+                "from_name": "Huey Books",
+                "to_emails": [invitation.invited_contact_email],
+                "subject": subject,
+                "html_content": render_school_invite_html(
+                    inviter_school_name=inviter_display_name,
+                    invited_school_name=invitation.invited_school_name,
+                    accept_url=_accept_url(invitation.token),
+                    grant_days=invitation.grant_days,
+                    message=invitation.message,
+                ),
+            },
+            email_type=EmailType.ONBOARDING,
+        )
+        await db.commit()
+    except Exception as e:
+        logger.warning("Failed to queue invitation email", error=str(e))
+
+
 @router.post(
     "/school/{wriveted_identifier}/invitations",
     response_model=SchoolInvitationDetail,
@@ -61,31 +95,15 @@ async def send_invitation(
     """Invite another school to a free trial (paying inviters only)."""
     invitation = await invites.create_invitation(db, school, user, payload)
     detail = SchoolInvitationDetail.model_validate(invitation)
+    school_name = school.name
     await db.commit()
 
-    settings = get_settings()
-    try:
-        await send_email_reliable(
-            db=db,
-            email_data={
-                "from_email": settings.BROADCAST_FROM_EMAIL,
-                "from_name": "Huey Books",
-                "to_emails": [invitation.invited_contact_email],
-                "subject": f"{school.name} invited your school to Huey Books",
-                "html_content": render_school_invite_html(
-                    inviter_school_name=school.name,
-                    invited_school_name=invitation.invited_school_name,
-                    accept_url=_accept_url(invitation.token),
-                    grant_days=invitation.grant_days,
-                    message=invitation.message,
-                ),
-            },
-            email_type=EmailType.ONBOARDING,
-        )
-        await db.commit()
-    except Exception as e:  # email failure must not undo the invitation
-        logger.warning("Failed to queue invitation email", error=str(e))
-
+    await _queue_invite_email(
+        db,
+        inviter_display_name=school_name,
+        subject=f"{school_name} invited your school to Huey Books",
+        invitation=invitation,
+    )
     return detail
 
 
@@ -118,12 +136,12 @@ async def get_invitation_allowance(
 
 
 @router.post(
-    "/school/{wriveted_identifier}/invitations/grant-bonus",
+    "/admin/schools/{wriveted_identifier}/invitations/grant-bonus",
     response_model=SchoolInvitationAllowance,
 )
 async def grant_bonus_invitations(
     payload: GrantBonusInvites,
-    wriveted_identifier: str,
+    wriveted_identifier: UUID,
     db: DBSessionDep,
     account=Depends(get_current_active_superuser),
 ):
@@ -155,37 +173,14 @@ async def send_staff_invitation(
     user = account if isinstance(account, User) else None
     invitation = await invites.create_staff_invitation(db, user, payload)
     detail = SchoolInvitationDetail.model_validate(invitation)
-    inviter_name = "The Huey Books team"
-    accept_url = _accept_url(invitation.token)
-    grant_days = invitation.grant_days
-    contact_email = invitation.invited_contact_email
-    invited_name = invitation.invited_school_name
-    message = invitation.message
     await db.commit()
 
-    settings = get_settings()
-    try:
-        await send_email_reliable(
-            db=db,
-            email_data={
-                "from_email": settings.BROADCAST_FROM_EMAIL,
-                "from_name": "Huey Books",
-                "to_emails": [contact_email],
-                "subject": "You're invited to Huey Books",
-                "html_content": render_school_invite_html(
-                    inviter_school_name=inviter_name,
-                    invited_school_name=invited_name,
-                    accept_url=accept_url,
-                    grant_days=grant_days,
-                    message=message,
-                ),
-            },
-            email_type=EmailType.ONBOARDING,
-        )
-        await db.commit()
-    except Exception as e:
-        logger.warning("Failed to queue staff invitation email", error=str(e))
-
+    await _queue_invite_email(
+        db,
+        inviter_display_name="The Huey Books team",
+        subject="You're invited to Huey Books",
+        invitation=invitation,
+    )
     return detail
 
 
@@ -217,8 +212,10 @@ async def revoke_school_invitation(
 
 
 @router.get("/invitations/{token}", response_model=SchoolInvitationPreview)
-async def preview_invitation(token: str, db: DBSessionDep):
+async def preview_invitation(token: str, db: DBSessionDep, response: Response):
     """Public (token-addressed) preview for the accept page."""
+    # The token is a bearer credential in the URL — don't let it be cached.
+    response.headers["Cache-Control"] = "no-store"
     invitation = await invites.get_invitation_by_token(db, token)
     if invitation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invitation not found.")
@@ -257,13 +254,20 @@ async def accept_invitation(
     admin_url = (
         getattr(settings, "SCHOOL_ADMIN_URL", None) or "https://admin.hueybooks.com"
     )
+    if not user.email:
+        return SchoolInvitationAcceptResponse(
+            school_wriveted_id=school_id,
+            school_name=school_name,
+            access_until=expiration,
+            message=f"Welcome! {school_name} is live on Huey Books.",
+        )
     try:
         await send_email_reliable(
             db=db,
             email_data={
                 "from_email": settings.BROADCAST_FROM_EMAIL,
                 "from_name": "Huey Books",
-                "to_emails": [user.email] if user.email else [],
+                "to_emails": [user.email],
                 "subject": f"{school_name} is live on Huey Books",
                 "html_content": render_school_activated_html(
                     school_name, user.name, admin_url
