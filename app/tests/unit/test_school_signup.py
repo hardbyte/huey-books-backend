@@ -165,6 +165,52 @@ async def test_create_checkout_session_rejects_unknown_price_id(monkeypatch):
         )
 
 
+@pytest.mark.asyncio
+async def test_create_checkout_session_uses_country_specific_price(monkeypatch):
+    """A school's country-specific price (e.g. India) is used when configured,
+    and other countries fall back to the default price."""
+    monkeypatch.setattr(
+        school_billing.settings, "STRIPE_SCHOOL_PRICE_IDS", ["price_default"]
+    )
+    monkeypatch.setattr(
+        school_billing.settings,
+        "STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY",
+        {"IND": "price_india"},
+    )
+    monkeypatch.setattr(school_billing.settings, "STRIPE_SECRET_KEY", "sk_test")
+    monkeypatch.setattr(
+        school_billing.settings, "HUEY_BOOKS_APP_URL", "https://hueybooks.com"
+    )
+
+    captured = {}
+
+    class FakeSession:
+        id = "cs_test_country"
+        url = "https://checkout.stripe.com/pay/cs_test_country"
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return FakeSession()
+
+    monkeypatch.setattr(school_billing.stripe.checkout.Session, "create", fake_create)
+
+    india_school = School(
+        name="AISC",
+        country_code="IND",
+        wriveted_identifier=uuid.uuid4(),
+        info={"onboarding": {"contact_email": "c@aisc.example"}},
+    )
+    await school_billing.create_school_checkout_session(india_school)
+    assert captured["line_items"] == [{"price": "price_india", "quantity": 1}]
+
+    captured.clear()
+    aus_school = School(
+        name="AU School", country_code="AUS", wriveted_identifier=uuid.uuid4()
+    )
+    await school_billing.create_school_checkout_session(aus_school)
+    assert captured["line_items"] == [{"price": "price_default", "quantity": 1}]
+
+
 # --- contribution checkout session ---
 
 

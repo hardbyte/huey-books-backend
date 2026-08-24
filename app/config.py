@@ -278,6 +278,10 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_SECRET: str = ""
     # Stripe price ids offerable for a school subscription (first is the default).
     STRIPE_SCHOOL_PRICE_IDS: Annotated[List[str], NoDecode] = []
+    # Per-country school price overrides, e.g. {"IND": "price_..."}. A school
+    # whose country_code has an entry here uses that price; otherwise the default
+    # (STRIPE_SCHOOL_PRICE_IDS[0]). Set as JSON in the env var.
+    STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY: dict[str, str] = {}
     # One-off Stripe price ids for a "contribute a month" payment toward a
     # school's subscription (first is the default).
     STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS: Annotated[List[str], NoDecode] = []

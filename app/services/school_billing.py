@@ -28,17 +28,26 @@ async def create_school_checkout_session(
 ) -> str:
     """Create a Stripe Checkout Session for the school and return its URL.
 
-    ``price_id`` selects one of the configured school prices; it must be one of
-    ``STRIPE_SCHOOL_PRICE_IDS`` (defaults to the first).
+    ``price_id`` selects one of the configured school prices. When omitted it
+    defaults to the school's country-specific price
+    (``STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY`` keyed by ``country_code``), falling
+    back to the first of ``STRIPE_SCHOOL_PRICE_IDS``. An explicit ``price_id``
+    must be one of the configured prices (list or per-country map).
     """
     if not settings.STRIPE_SCHOOL_PRICE_IDS:
         raise SchoolBillingError("STRIPE_SCHOOL_PRICE_IDS is not configured")
     if not settings.STRIPE_SECRET_KEY:
         raise SchoolBillingError("STRIPE_SECRET_KEY is not configured")
 
+    by_country = settings.STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY or {}
+    allowed_price_ids = set(settings.STRIPE_SCHOOL_PRICE_IDS) | set(by_country.values())
     if price_id is None:
-        price_id = settings.STRIPE_SCHOOL_PRICE_IDS[0]
-    elif price_id not in settings.STRIPE_SCHOOL_PRICE_IDS:
+        # Use the school's country-specific price (e.g. India) when configured,
+        # otherwise the default school price.
+        price_id = (
+            by_country.get(school.country_code) or settings.STRIPE_SCHOOL_PRICE_IDS[0]
+        )
+    elif price_id not in allowed_price_ids:
         raise SchoolBillingError(f"Unknown school price id: {price_id}")
 
     stripe.api_key = settings.STRIPE_SECRET_KEY
