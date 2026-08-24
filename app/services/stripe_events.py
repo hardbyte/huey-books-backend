@@ -591,7 +591,11 @@ def _get_active_stripe_subscription(session, school: School) -> Optional[Subscri
 
 
 def _get_active_contribution_grant(session, school_id) -> Optional[Subscription]:
-    """Return a school's active, unexpired comped contribution grant, if any."""
+    """Return a school's active, unexpired comped grant (any source), if any.
+
+    Used when a Stripe subscription is cancelled to decide whether the school
+    should stay active — a live comp grant (contribution *or* invite trial) keeps
+    it up."""
     now = datetime.utcnow()
     return (
         session.execute(
@@ -599,7 +603,7 @@ def _get_active_contribution_grant(session, school_id) -> Optional[Subscription]
             .where(
                 Subscription.school_id == school_id,
                 Subscription.is_active.is_(True),
-                Subscription.info["source"].astext == CONTRIBUTION_GRANT_SOURCE,
+                Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
                 Subscription.expiration > now,
             )
             .limit(1)

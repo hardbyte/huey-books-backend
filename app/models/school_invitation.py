@@ -66,7 +66,7 @@ class SchoolInvitation(Base):
     )
     invited_school_name: Mapped[str] = mapped_column(String(300), nullable=False)
     country_code: Mapped[Optional[str]] = mapped_column(
-        String(3), ForeignKey("countries.id", name="fk_invitation_country"), index=True
+        String(3), ForeignKey("countries.id", name="fk_invitation_country")
     )
     invited_contact_email: Mapped[str] = mapped_column(
         String, index=True, nullable=False

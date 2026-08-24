@@ -45,13 +45,14 @@ async def grant_invite_access(
 
     Creates the comp grant (deterministic id ``comp_invite_<school_id>``) and
     flips the school to ACTIVE. A school gets **one** invite grant ever: if the
-    row already exists (even expired), this is a no-op returning
-    ``("already_granted", <existing expiration>)`` — preventing repeat free trials
-    via multiple inviters. The ``SELECT … FOR UPDATE`` on the deterministic id
-    serialises concurrent accepts.
+    row already exists it is a no-op (preventing repeat free trials via multiple
+    inviters). The ``SELECT … FOR UPDATE`` on the deterministic id serialises
+    concurrent accepts.
 
-    Returns ``(outcome, expiration)`` where outcome is ``"activated"`` (new grant)
-    or ``"already_granted"`` (pre-existing).
+    Returns ``(outcome, expiration)`` where outcome is one of ``"activated"``
+    (new grant), ``"already_active"`` (a pre-existing grant still live — idempotent
+    re-accept) or ``"already_expired"`` (the one grant was already used and has
+    lapsed; the caller must reject rather than report success).
     """
     now = datetime.utcnow()
     grant_id = invite_grant_id(school.wriveted_identifier)
@@ -68,7 +69,9 @@ async def grant_invite_access(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return "already_granted", existing.expiration
+        if existing.is_active and existing.expiration and existing.expiration > now:
+            return "already_active", existing.expiration
+        return "already_expired", existing.expiration
 
     expiration = now + timedelta(days=days)
     grant = Subscription(

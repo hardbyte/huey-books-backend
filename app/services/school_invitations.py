@@ -8,14 +8,14 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import exists, func, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 from structlog import get_logger
 
 from app.config import get_settings
-from app.models import School, SchoolAdmin
+from app.models import Country, School, SchoolAdmin
 from app.models.school import SchoolBookbotType, SchoolState
 from app.models.school_invitation import SchoolInvitation, SchoolInvitationStatus
 from app.models.subscription import Subscription
@@ -46,10 +46,18 @@ async def _school_has_admin(session: AsyncSession, school: School) -> bool:
 
 
 async def _active_invite_count(session: AsyncSession, inviter_school_id: UUID) -> int:
+    """Invites that occupy a slot: accepted ones, plus sent ones not yet expired.
+    A lapsed (past ``expires_at``) SENT invite frees its slot even before the lazy
+    SENT→EXPIRED transition is persisted."""
+    now = datetime.utcnow()
     q = select(func.count(SchoolInvitation.id)).where(
         SchoolInvitation.inviter_school_id == inviter_school_id,
-        SchoolInvitation.status.in_(
-            [SchoolInvitationStatus.SENT, SchoolInvitationStatus.ACCEPTED]
+        or_(
+            SchoolInvitation.status == SchoolInvitationStatus.ACCEPTED,
+            and_(
+                SchoolInvitation.status == SchoolInvitationStatus.SENT,
+                SchoolInvitation.expires_at > now,
+            ),
         ),
     )
     return int((await session.execute(q)).scalar() or 0)
@@ -138,6 +146,20 @@ async def create_invitation(
                 "That school has already accepted an invitation.",
             )
 
+    # Free-text new-school path: validate the country FK now so send doesn't 500
+    # on a bad code at flush time.
+    if invited_school is None and payload.country_code is not None:
+        known_country = (
+            await session.execute(
+                select(exists().where(Country.id == payload.country_code))
+            )
+        ).scalar()
+        if not known_country:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Unknown country code '{payload.country_code}'.",
+            )
+
     if await _email_is_existing_school_admin(session, payload.contact_email):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -188,6 +210,10 @@ async def accept_invitation(
 ) -> tuple[School, Optional[datetime]]:
     """Accept an invite: activate the invited school, grant free access, bind the
     user as its admin. Returns (school, access_until)."""
+    # Lock the accepting user so two concurrent accepts (two tokens, one user)
+    # can't both pass the "already administers a school" check below.
+    await session.execute(select(User.id).where(User.id == user.id).with_for_update())
+
     invitation = await get_invitation_by_token(session, token, for_update=True)
     if invitation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invitation not found.")
@@ -253,10 +279,16 @@ async def accept_invitation(
             status.HTTP_409_CONFLICT, "This school already has an administrator."
         )
 
-    await promote_to_school_admin(session, user, school)
     outcome, expiration = await grant_invite_access(
         session, school, invitation.grant_days
     )
+    if outcome == "already_expired":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This school has already used its free trial.",
+        )
+
+    await promote_to_school_admin(session, user, school)
 
     invitation.status = SchoolInvitationStatus.ACCEPTED
     invitation.accepted_at = datetime.utcnow()
