@@ -1,7 +1,9 @@
 version: 2
 updates:
-  # Enable version updates for Python Deps
-  - package-ecosystem: "pip"
+  # Enable version updates for Python Deps (this project is uv-managed:
+  # pyproject.toml + uv.lock). The "pip" ecosystem doesn't understand the
+  # lockfile and produced stale, orphaned PRs.
+  - package-ecosystem: "uv"
     directory: "/"
     # Check for updates once a week
     schedule:
