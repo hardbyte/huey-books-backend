@@ -64,7 +64,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest>=8,<9",
+    "pytest>=8,<10",
     "pytest-cov>=7.0.0,<8",
     "google-api-python-client>=2.191,<3",
     "google-auth-httplib2>=0.2,<0.3",
