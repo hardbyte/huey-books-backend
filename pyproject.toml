@@ -78,7 +78,7 @@ dev = [
     "ruff>=0.4.10,<1.0",
     "mypy>=1.16.0,<2",
     "types-setuptools>=80.9.0.20250529,<84",
-    "psutil>=6.0,<7",
+    "psutil>=6.0,<8",
     "blockbuster>=1.5.26",
 ]
 
