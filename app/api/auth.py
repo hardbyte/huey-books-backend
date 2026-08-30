@@ -136,10 +136,14 @@ def secure_user_endpoint(
             )
 
     if was_created:
+        provider = raw_data.get("firebase", {}).get("sign_in_provider") or "unknown"
         event_repository.create(
             session=session,
             title="User account created",
-            description="",
+            description=(
+                f"{user.name or user.email or 'A user'} created an account "
+                f"({user.type.value} via {provider})"
+            ),
             account=user,
             commit=False,
         )
