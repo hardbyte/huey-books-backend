@@ -64,14 +64,17 @@ def normalize_school_info(
 
 
 class CompGrantRequest(BaseModel):
-    # Complimentary access length. Common presets are 1/3/6/12 months.
     days: int = Field(90, ge=1, le=3650)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    reason: str | None = Field(default=None, max_length=500)
+    campaign_id: str | None = Field(default=None, max_length=128)
 
 
 class CompGrantResponse(BaseModel):
-    outcome: Literal["granted", "extended"]
-    state: str
+    outcome: Literal["granted", "extended", "unchanged"]
+    state: SchoolState
     access_until: datetime
+    idempotent_replay: bool
 
 
 class SchoolBrief(SchoolIdentity):

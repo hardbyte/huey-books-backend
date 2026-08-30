@@ -11,16 +11,23 @@ webhook path). This module adds the **invite** grant (async, used by the accept
 flow) and the source registry both share.
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Literal
+from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
+from app.models.event import Event
 from app.models.product import Product
 from app.models.school import School, SchoolState
+from app.models.service_account import ServiceAccount
 from app.models.subscription import Subscription, SubscriptionType
+from app.models.user import User
+from app.repositories.event_repository import event_repository
 
 # Mirrors stripe_events.CONTRIBUTION_GRANT_SOURCE (kept as a literal here to keep
 # this a leaf module — stripe_events/internal API import COMP_GRANT_SOURCES from
@@ -41,6 +48,29 @@ INVITE_GRANT_SUBSCRIPTION_PREFIX = "comp_invite_"
 STAFF_COMP_PRODUCT_ID = "comp_staff_grant"
 STAFF_COMP_PRODUCT_NAME = "Staff complimentary grant"
 STAFF_COMP_SUBSCRIPTION_PREFIX = "comp_staff_"
+SCHOOL_COMP_GRANTED_EVENT_TITLE = "School complimentary access granted"
+
+StaffCompOutcome = Literal["granted", "extended", "unchanged"]
+
+
+class SchoolAccessError(Exception):
+    """Base class for school access business errors."""
+
+
+class SchoolNotFoundError(SchoolAccessError):
+    """The requested school does not exist."""
+
+
+class ActivePaidSubscriptionError(SchoolAccessError):
+    """A paid subscription already controls the school's access."""
+
+
+@dataclass(frozen=True)
+class StaffCompResult:
+    outcome: StaffCompOutcome
+    state: SchoolState
+    access_until: datetime
+    idempotent_replay: bool = False
 
 
 def invite_grant_id(school_wriveted_id) -> str:
@@ -51,77 +81,180 @@ def staff_comp_id(school_wriveted_id) -> str:
     return f"{STAFF_COMP_SUBSCRIPTION_PREFIX}{school_wriveted_id}"
 
 
-async def grant_staff_comp(
-    session: AsyncSession, school: School, days: int
-) -> tuple[str, datetime]:
-    """Staff action: give a school ``days`` of complimentary access, starting now.
+async def lock_school_access_async(
+    session: AsyncSession, school_id: UUID
+) -> School | None:
+    return (
+        await session.execute(
+            select(School)
+            .where(School.wriveted_identifier == school_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
 
-    Unlike the one-per-school invite grant, this is re-grantable: repeating it
-    extends the comp to the later of its current expiry and ``now + days`` (it
-    never shortens existing access). The grant is a comp ``Subscription`` (source
-    ``staff_comp``, so the lapse sweep expires it and a later Stripe subscription
-    retires it) and flips the school to ACTIVE. Returns ``(outcome, expiration)``
-    where outcome is ``"granted"`` (new) or ``"extended"`` (existing comp).
+
+def lock_school_access_sync(session: Session, school_id: UUID) -> School | None:
+    return session.execute(
+        select(School).where(School.wriveted_identifier == school_id).with_for_update()
+    ).scalar_one_or_none()
+
+
+async def ensure_comp_product_async(
+    session: AsyncSession, product_id: str, name: str
+) -> None:
+    await session.execute(
+        pg_insert(Product)
+        .values(id=product_id, name=name)
+        .on_conflict_do_nothing(index_elements=[Product.id])
+    )
+
+
+def ensure_comp_product_sync(session: Session, product_id: str, name: str) -> None:
+    session.execute(
+        pg_insert(Product)
+        .values(id=product_id, name=name)
+        .on_conflict_do_nothing(index_elements=[Product.id])
+    )
+
+
+def _staff_comp_result_from_event(event: Event) -> StaffCompResult:
+    info = event.info or {}
+    return StaffCompResult(
+        outcome=info["outcome"],
+        state=SchoolState(info["state"]),
+        access_until=datetime.fromisoformat(info["access_until"]),
+        idempotent_replay=True,
+    )
+
+
+async def grant_staff_comp(
+    session: AsyncSession,
+    school_id: UUID,
+    *,
+    days: int,
+    account: User | ServiceAccount | None,
+    idempotency_key: str,
+    reason: str | None,
+    campaign_id: str | None,
+) -> StaffCompResult:
+    """Give a school a staff-authorised complimentary access window.
+
+    The school row serialises every access transition. The event is both the audit
+    record and the idempotency record, committed atomically with the subscription.
     """
     now = datetime.utcnow()
-    grant_id = staff_comp_id(school.wriveted_identifier)
+    school = await lock_school_access_async(session, school_id)
+    if school is None:
+        raise SchoolNotFoundError
+
+    prior_event = (
+        await session.execute(
+            select(Event)
+            .where(
+                Event.school_id == school.id,
+                Event.title == SCHOOL_COMP_GRANTED_EVENT_TITLE,
+                Event.info["idempotency_key"].astext == idempotency_key,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if prior_event is not None:
+        return _staff_comp_result_from_event(prior_event)
+
+    has_paying_subscription = (
+        await session.execute(
+            select(Subscription.id)
+            .where(
+                Subscription.school_id == school_id,
+                Subscription.is_active.is_(True),
+                Subscription.stripe_customer_id != "",
+            )
+            .limit(1)
+        )
+    ).first()
+    if has_paying_subscription is not None:
+        raise ActivePaidSubscriptionError
+
+    grant_id = staff_comp_id(school_id)
     target = now + timedelta(days=days)
 
-    await session.merge(Product(id=STAFF_COMP_PRODUCT_ID, name=STAFF_COMP_PRODUCT_NAME))
-    await session.flush()
-
-    async def _apply(existing: Optional[Subscription]) -> tuple[str, datetime]:
-        if existing is not None:
-            # Never shorten an existing comp — extend to the later of the two.
-            new_expiration = max(existing.expiration or now, target)
-            existing.is_active = True
-            existing.expiration = new_expiration
-            existing.info = {"source": STAFF_COMP_GRANT_SOURCE}
-            session.add(existing)
-            return "extended", new_expiration
-        session.add(
-            Subscription(
-                id=grant_id,
-                school_id=school.wriveted_identifier,
-                type=SubscriptionType.SCHOOL,
-                stripe_customer_id="",
-                is_active=True,
-                expiration=target,
-                product_id=STAFF_COMP_PRODUCT_ID,
-                info={"source": STAFF_COMP_GRANT_SOURCE},
-            )
-        )
-        return "granted", target
+    await ensure_comp_product_async(
+        session, STAFF_COMP_PRODUCT_ID, STAFF_COMP_PRODUCT_NAME
+    )
 
     existing = (
         await session.execute(
             select(Subscription).where(Subscription.id == grant_id).with_for_update()
         )
     ).scalar_one_or_none()
-
-    try:
-        # A savepoint so a concurrent first-insert (FOR UPDATE can't lock an
-        # absent row) surfaces as a catchable IntegrityError, not a poisoned txn.
-        async with session.begin_nested():
-            outcome, expiration = await _apply(existing)
-            await session.flush()
-    except IntegrityError:
-        existing = (
-            await session.execute(
-                select(Subscription)
-                .where(Subscription.id == grant_id)
-                .with_for_update()
+    previous_expiration = existing.expiration if existing is not None else None
+    if existing is None:
+        expiration = target
+        outcome: StaffCompOutcome = "granted"
+        session.add(
+            Subscription(
+                id=grant_id,
+                school_id=school_id,
+                type=SubscriptionType.SCHOOL,
+                stripe_customer_id="",
+                is_active=True,
+                expiration=expiration,
+                product_id=STAFF_COMP_PRODUCT_ID,
+                info={"source": STAFF_COMP_GRANT_SOURCE},
             )
-        ).scalar_one()
-        outcome, expiration = await _apply(existing)
-        await session.flush()
+        )
+    else:
+        was_live = (
+            existing.is_active
+            and existing.expiration is not None
+            and existing.expiration > now
+        )
+        expiration = max(existing.expiration or now, target)
+        if not was_live or school.state != SchoolState.ACTIVE:
+            outcome = "granted"
+        elif expiration > existing.expiration:
+            outcome = "extended"
+        else:
+            outcome = "unchanged"
+        existing.is_active = True
+        existing.expiration = expiration
+        existing.info = {"source": STAFF_COMP_GRANT_SOURCE}
 
     if school.state != SchoolState.ACTIVE:
         school.state = SchoolState.ACTIVE
-        session.add(school)
 
-    await session.flush()
-    return outcome, expiration
+    description = (
+        f"{school.name} was granted {days} days complimentary access "
+        f"({outcome}) until {expiration:%Y-%m-%d}."
+    )
+    await event_repository.acreate(
+        session=session,
+        title=SCHOOL_COMP_GRANTED_EVENT_TITLE,
+        description=description,
+        info={
+            "access_until": expiration.isoformat(),
+            "campaign_id": campaign_id,
+            "days": days,
+            "granted_by": str(account.id) if account is not None else None,
+            "idempotency_key": idempotency_key,
+            "outcome": outcome,
+            "previous_expiration": (
+                previous_expiration.isoformat() if previous_expiration else None
+            ),
+            "reason": reason,
+            "source": STAFF_COMP_GRANT_SOURCE,
+            "state": school.state.value,
+        },
+        school=school,
+        account=account,
+        commit=False,
+    )
+    await session.commit()
+    return StaffCompResult(
+        outcome=outcome,
+        state=school.state,
+        access_until=expiration,
+    )
 
 
 async def grant_invite_access(
@@ -143,11 +276,13 @@ async def grant_invite_access(
     now = datetime.utcnow()
     grant_id = invite_grant_id(school.wriveted_identifier)
 
-    # Seed the comp product (FK target for the grant) if absent.
-    await session.merge(
-        Product(id=INVITE_GRANT_PRODUCT_ID, name=INVITE_GRANT_PRODUCT_NAME)
+    school = await lock_school_access_async(session, school.wriveted_identifier)
+    if school is None:
+        raise SchoolNotFoundError
+
+    await ensure_comp_product_async(
+        session, INVITE_GRANT_PRODUCT_ID, INVITE_GRANT_PRODUCT_NAME
     )
-    await session.flush()
 
     existing = (
         await session.execute(

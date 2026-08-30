@@ -28,7 +28,12 @@ from app.schemas.product import ProductCreateIn
 from app.schemas.subscription import SubscriptionCreateIn
 from app.services.email_notification import EmailType, send_email_reliable_sync
 from app.services.events import create_event
-from app.services.school_access import COMP_GRANT_SOURCES
+from app.services.school_access import (
+    COMP_GRANT_SOURCES,
+    CONTRIBUTION_GRANT_SOURCE,
+    ensure_comp_product_sync,
+    lock_school_access_sync,
+)
 from app.services.school_emails import (
     render_contribution_thankyou_html,
     render_school_activated_html,
@@ -44,10 +49,6 @@ settings = get_settings()
 CONTRIBUTION_METADATA_KIND = "school_contribution"
 # Title of the audit event recorded per processed contribution.
 CONTRIBUTION_EVENT_TITLE = "School contribution received"
-# Marks a Subscription as a comped grant funded by a one-off contribution (no
-# auto-renewing Stripe subscription behind it), distinguishable from a real
-# Stripe subscription.
-CONTRIBUTION_GRANT_SOURCE = "contribution_grant"
 # Synthetic Product + Subscription id prefix for contribution grants.
 CONTRIBUTION_GRANT_PRODUCT_ID = "comp_school_contribution"
 CONTRIBUTION_GRANT_PRODUCT_NAME = "School contribution (comped)"
@@ -426,7 +427,7 @@ def _handle_checkout_session_completed(
             _activate_school_after_payment(session, school, stripe_customer_email)
             # A paying Stripe subscription supersedes any comped contribution
             # grant, so retire it to keep a single active subscription row.
-            _retire_contribution_grants(session, school.wriveted_identifier)
+            _retire_comp_grants(session, school.wriveted_identifier)
         else:
             logger.warning(
                 "School checkout completed without cleared payment; leaving inactive",
@@ -505,6 +506,9 @@ def _activate_school_after_payment(session, school: School, customer_email):
     Idempotent: Stripe redelivers events, so an already-active school is a
     no-op (and does not re-send the receipt).
     """
+    school = lock_school_access_sync(session, school.wriveted_identifier)
+    if school is None:
+        return
     if school.state == SchoolState.ACTIVE:
         logger.info("School already active; ignoring duplicate", school=school.name)
         return
@@ -590,7 +594,7 @@ def _get_active_stripe_subscription(session, school: School) -> Optional[Subscri
     )
 
 
-def _get_active_contribution_grant(session, school_id) -> Optional[Subscription]:
+def _get_active_comp_grant(session, school_id) -> Optional[Subscription]:
     """Return a school's active, unexpired comped grant (any source), if any.
 
     Used when a Stripe subscription is cancelled to decide whether the school
@@ -613,7 +617,7 @@ def _get_active_contribution_grant(session, school_id) -> Optional[Subscription]
     )
 
 
-def _retire_contribution_grants(session, school_id) -> None:
+def _retire_comp_grants(session, school_id) -> None:
     """Deactivate a school's comped grants (contribution or invite).
 
     Called when a school gains/uses a real auto-renewing Stripe subscription, so
@@ -621,6 +625,8 @@ def _retire_contribution_grants(session, school_id) -> None:
     row — which would make ``School.subscription`` (uselist=False) non-deterministic
     and the "supporter"/"paying" flags unreliable.
     """
+    if lock_school_access_sync(session, school_id) is None:
+        return
     grants = (
         session.execute(
             select(Subscription).where(
@@ -635,7 +641,7 @@ def _retire_contribution_grants(session, school_id) -> None:
     for grant in grants:
         grant.is_active = False
         logger.info(
-            "Retired contribution grant superseded by Stripe subscription",
+            "Retired complimentary grant superseded by Stripe subscription",
             grant_id=grant.id,
         )
 
@@ -704,6 +710,10 @@ def _handle_contribution_checkout_completed(
         )
         return
 
+    school = lock_school_access_sync(session, school.wriveted_identifier)
+    if school is None:
+        return
+
     amount_total = event_data.get("amount_total")
     currency = (event_data.get("currency") or "aud").lower()
     payer_email = (event_data.get("customer_details") or {}).get(
@@ -727,7 +737,7 @@ def _handle_contribution_checkout_completed(
             checkout_session_id=checkout_session_id,
         )
         # The live Stripe subscription supersedes any leftover comp grant row.
-        _retire_contribution_grants(session, school.wriveted_identifier)
+        _retire_comp_grants(session, school.wriveted_identifier)
         outcome = "credited" if credited else "received"
         crediting = "balance_credit" if credited else "credit_failed"
     else:
@@ -844,11 +854,13 @@ def _apply_or_extend_contribution_grant(
     grant_days = _contribution_grant_days(amount_total)
     grant_id = f"{CONTRIBUTION_GRANT_SUBSCRIPTION_PREFIX}{school.wriveted_identifier}"
 
-    # Ensure the synthetic comp product exists (FK target for the grant).
-    session.merge(
-        Product(id=CONTRIBUTION_GRANT_PRODUCT_ID, name=CONTRIBUTION_GRANT_PRODUCT_NAME)
+    school = lock_school_access_sync(session, school.wriveted_identifier)
+    if school is None:
+        raise ValueError("School disappeared while applying contribution grant")
+
+    ensure_comp_product_sync(
+        session, CONTRIBUTION_GRANT_PRODUCT_ID, CONTRIBUTION_GRANT_PRODUCT_NAME
     )
-    session.flush()
 
     # FOR UPDATE so concurrent contributions for the same school stack instead of
     # clobbering each other's expiry.
@@ -1099,7 +1111,9 @@ def _handle_subscription_created(
         and subscription.is_active
         and subscription.stripe_customer_id
     ):
-        _retire_contribution_grants(session, school.wriveted_identifier)
+        school = lock_school_access_sync(session, school.wriveted_identifier)
+        if school is not None:
+            _retire_comp_grants(session, school.wriveted_identifier)
 
 
 def _handle_subscription_updated(
@@ -1163,6 +1177,16 @@ def _handle_subscription_updated(
         logger.info("Updating school subscription with school id")
         subscription.school_id = school.wriveted_identifier
 
+    if (
+        school is not None
+        and subscription.type == SubscriptionType.SCHOOL
+        and subscription.is_active
+        and subscription.stripe_customer_id
+    ):
+        school = lock_school_access_sync(session, school.wriveted_identifier)
+        if school is not None:
+            _retire_comp_grants(session, school.wriveted_identifier)
+
     # Use unified event workflow instead of direct crud.event.create
     create_event(
         session=session,
@@ -1205,13 +1229,13 @@ def _handle_subscription_cancelled(
             school = school_repository.get_by_wriveted_id(
                 session, str(subscription.school_id)
             )
+        if school is not None:
+            school = lock_school_access_sync(session, school.wriveted_identifier)
         if school is not None and school.state == SchoolState.ACTIVE:
             # Don't deactivate a school that still has paid access via an
             # unexpired comped contribution grant (the lapse sweep will retire it
             # when it expires).
-            live_grant = _get_active_contribution_grant(
-                session, school.wriveted_identifier
-            )
+            live_grant = _get_active_comp_grant(session, school.wriveted_identifier)
             if live_grant is not None:
                 logger.info(
                     "School retains access via active contribution grant; "
