@@ -275,7 +275,12 @@ class EventOutboxService:
 
     async def retry_event(self, db: AsyncSession, event_id: UUID) -> bool:
         """Manually retry a failed event."""
-        query = select(EventOutbox).where(EventOutbox.id == event_id)
+        query = (
+            select(EventOutbox)
+            .where(EventOutbox.id == event_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         result = await db.execute(query)
         event = result.scalar_one_or_none()
 

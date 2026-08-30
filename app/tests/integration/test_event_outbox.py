@@ -4,13 +4,15 @@ Integration tests for the Event Outbox Service.
 These tests verify the Event Outbox Pattern implementation for reliable event delivery.
 """
 
+import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
+from app.db.session import get_async_session_maker
 from app.models.event_outbox import EventOutbox, EventPriority, EventStatus
 from app.services.event_outbox_service import EventOutboxService
 
@@ -268,6 +270,43 @@ class TestEventOutboxService:
         assert failed_event.status == EventStatus.PENDING
         assert failed_event.retry_count == 0
         assert failed_event.last_error is None
+
+    async def test_retry_waits_for_processing_lock_and_revalidates(self, async_session):
+        event = EventOutbox(
+            event_type="email_notification",
+            destination="email:notification",
+            payload={"email_type": "notification", "email_data": {"to_emails": []}},
+            status=EventStatus.FAILED,
+            retry_count=1,
+            last_error="Provider unavailable",
+        )
+        async_session.add(event)
+        await async_session.commit()
+
+        session_factory = get_async_session_maker()
+        service = EventOutboxService()
+        async with session_factory() as processing_session:
+            result = await processing_session.execute(
+                select(EventOutbox).where(EventOutbox.id == event.id).with_for_update()
+            )
+            processing_event = result.scalar_one()
+            processing_event.status = EventStatus.PUBLISHED
+            processing_event.payload = {"email_type": "notification", "redacted": True}
+            await processing_session.flush()
+
+            async with session_factory() as retry_session:
+                retry_task = asyncio.create_task(
+                    service.retry_event(retry_session, event.id)
+                )
+                await asyncio.sleep(0.05)
+                assert not retry_task.done()
+
+                await processing_session.commit()
+                assert await asyncio.wait_for(retry_task, timeout=1) is False
+
+        await async_session.refresh(event)
+        assert event.status == EventStatus.PUBLISHED
+        assert event.payload == {"email_type": "notification", "redacted": True}
 
     async def test_event_priority_ordering(self, async_session):
         """Test that events are processed in priority order."""
