@@ -19,6 +19,7 @@ from app.models import School, SchoolAdmin, SchoolState
 from app.models.school import SchoolBookbotType
 from app.models.user import User, UserAccountType
 from app.repositories.event_repository import event_repository
+from app.schemas.school import normalize_school_info
 from app.services.background_tasks import queue_background_task
 from app.services.email_notification import EmailType, send_email_reliable
 from app.services.experiments import get_experiments
@@ -157,9 +158,9 @@ async def onboard_school(
         }
     }
     if school.info is None:
-        school.info = onboarding_info
+        school.info = normalize_school_info(onboarding_info)
     else:
-        school.info = {**school.info, **onboarding_info}
+        school.info = normalize_school_info({**school.info, **onboarding_info})
 
     school.state = SchoolState.PENDING
 

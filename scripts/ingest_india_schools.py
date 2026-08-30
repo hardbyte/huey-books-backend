@@ -38,6 +38,8 @@ import httpx
 import psycopg2
 from psycopg2.extras import execute_values
 
+from app.schemas.school import normalize_school_info
+
 CKAN_URL = "https://ckandev.indiadataportal.com/api/3/action/datastore_search"
 # "UDISE - Basic Details of Schools" resource on the India Data Portal.
 RESOURCE_ID = "457fddf1-982f-4c85-855d-5095578accc1"
@@ -102,7 +104,7 @@ def to_row(rec: dict):
         "year_of_establishment": rec.get("year_of_establishment"),
         "status": rec.get("status"),
     }
-    return (code, name[:256], json.dumps(info))
+    return (code, name[:256], json.dumps(normalize_school_info(info)))
 
 
 def main() -> None:
@@ -127,9 +129,13 @@ def main() -> None:
         sys.exit("No database URL: pass --database-url or set SQLALCHEMY_DATABASE_URI")
 
     scope_label = "ALL India" if args.all else args.state
-    print(f"Importing UDISE schools: {scope_label}{' (dry run)' if args.dry_run else ''}")
+    print(
+        f"Importing UDISE schools: {scope_label}{' (dry run)' if args.dry_run else ''}"
+    )
 
-    conn = None if args.dry_run else psycopg2.connect(normalize_db_url(args.database_url))
+    conn = (
+        None if args.dry_run else psycopg2.connect(normalize_db_url(args.database_url))
+    )
     total = skipped = 0
     try:
         for page in fetch_pages(None if args.all else args.state):
@@ -147,7 +153,9 @@ def main() -> None:
                 rows = list({row[0]: row for row in rows}.values())
             if rows and not args.dry_run:
                 with conn.cursor() as cur:
-                    execute_values(cur, UPSERT_SQL, rows, template=ROW_TEMPLATE, page_size=1000)
+                    execute_values(
+                        cur, UPSERT_SQL, rows, template=ROW_TEMPLATE, page_size=1000
+                    )
                 conn.commit()  # commit per page so long runs make steady progress
             total += len(rows)
             print(f"  upserted {total} (skipped {skipped})...", flush=True)
@@ -156,7 +164,9 @@ def main() -> None:
             conn.close()
 
     verb = "would upsert" if args.dry_run else "upserted"
-    print(f"Done. {verb} {total} India schools ({scope_label}); skipped {skipped} rows.")
+    print(
+        f"Done. {verb} {total} India schools ({scope_label}); skipped {skipped} rows."
+    )
 
 
 if __name__ == "__main__":
