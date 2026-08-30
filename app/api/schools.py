@@ -347,6 +347,11 @@ async def create_school_checkout(
         checkout_url = await create_school_checkout_session(
             school, session=session, price_id=price_id
         )
+    except SchoolInvoiceConflictError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This school already has an active Stripe subscription.",
+        ) from None
     except SchoolBillingError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
     return SchoolCheckoutResponse(checkout_url=checkout_url)
@@ -427,6 +432,8 @@ async def create_school_invoice_subscription_endpoint(
             status.HTTP_409_CONFLICT,
             "This school already has an active Stripe subscription.",
         ) from None
+    except SchoolNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found.") from None
     except SchoolBillingError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
     # get_async_session does not commit on teardown; persist the invoice_pending

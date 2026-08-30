@@ -11,7 +11,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 import stripe
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -19,8 +19,10 @@ from app.config import get_settings
 from app.models.school import School
 from app.models.subscription import Subscription
 from app.services.school_access import (
+    SchoolNotFoundError,
     get_active_stripe_subscription_async,
     grant_invoice_pending_access,
+    has_live_subscription_async,
     known_stripe_customer_id_async,
     lock_school_access_async,
 )
@@ -77,6 +79,21 @@ async def create_school_checkout_session(
         raise SchoolBillingError("STRIPE_SECRET_KEY is not configured")
 
     price_id = _select_school_price_id(school, price_id)
+
+    # One open subscription per school: refuse a card Checkout when a live
+    # subscription already controls access (card/invoice Stripe sub OR a comp
+    # grant, incl. the empty-customer invoice_pending grant a just-requested
+    # invoice leaves) so the two paths cannot leave two collectible obligations.
+    if session is not None:
+        locked_school = await lock_school_access_async(
+            session, school.wriveted_identifier
+        )
+        if locked_school is not None:
+            school = locked_school
+        if await has_live_subscription_async(session, school.wriveted_identifier):
+            raise SchoolInvoiceConflictError(
+                "School already has an active subscription or pending invoice grant"
+            )
 
     stripe.api_key = settings.STRIPE_SECRET_KEY
     app_url = settings.HUEY_BOOKS_APP_URL.rstrip("/")
@@ -265,28 +282,20 @@ async def create_school_invoice_subscription(
 
     resolved_price_id = _select_school_price_id(school, price_id)
 
-    # Lock the school row BEFORE the existence check and the Stripe calls so two
-    # concurrent POSTs cannot both pass the guard and double-bill. The lock is
-    # released when the caller commits/rolls back the request transaction.
+    # Lock the school row and confirm it still exists BEFORE any Stripe call, so
+    # two concurrent POSTs cannot both pass the guard and double-bill AND we never
+    # emit an invoice for a school that has vanished. The lock is released when
+    # the caller commits/rolls back the request transaction.
     locked_school = await lock_school_access_async(session, school.wriveted_identifier)
-    if locked_school is not None:
-        school = locked_school
+    if locked_school is None:
+        raise SchoolNotFoundError
+    school = locked_school
 
     # One open subscription per school: refuse if ANY live subscription already
     # controls access — a card/invoice Stripe sub OR a comp grant (including the
     # empty-customer invoice_pending grant, which the Stripe-only predicate can't
     # see) — so a repeat POST does not issue a second invoice.
-    existing_live = (
-        await session.execute(
-            select(Subscription.id)
-            .where(
-                Subscription.school_id == school.wriveted_identifier,
-                Subscription.is_active.is_(True),
-            )
-            .limit(1)
-        )
-    ).first()
-    if existing_live is not None:
+    if await has_live_subscription_async(session, school.wriveted_identifier):
         raise SchoolInvoiceConflictError(
             "School already has an active subscription or pending invoice grant"
         )
@@ -299,8 +308,23 @@ async def create_school_invoice_subscription(
 
     # Deterministic idempotency keys keyed on the school so a retried/duplicated
     # request reuses the same Stripe Customer + Subscription instead of creating
-    # duplicates (and double-emitting invoices).
-    idempotency_key = f"invoice-sub-{wriveted_id}"
+    # duplicates (and double-emitting invoices). A per-attempt nonce (the count of
+    # prior dead Stripe subs) makes a genuinely NEW attempt after a
+    # cancelled/voided first one get a fresh key, instead of replaying Stripe's
+    # cached response for the dead original within its 24h idempotency window.
+    prior_dead_subs = (
+        await session.execute(
+            select(func.count())
+            .select_from(Subscription)
+            .where(
+                Subscription.school_id == school.wriveted_identifier,
+                Subscription.stripe_customer_id != "",
+                Subscription.is_active.is_(False),
+            )
+        )
+    ).scalar_one()
+    attempt_suffix = f"-{prior_dead_subs}" if prior_dead_subs else ""
+    idempotency_key = f"invoice-sub-{wriveted_id}{attempt_suffix}"
 
     customer_params: dict = {
         "email": billing_email,

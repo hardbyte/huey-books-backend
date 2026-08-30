@@ -28,17 +28,20 @@ from app.models.school import School, SchoolState
 from app.models.subscription import Subscription, SubscriptionType
 from app.repositories.school_repository import school_repository
 from app.repositories.subscription_repository import subscription_repository
+from app.services import school_billing as school_billing_module
 from app.services.school_access import (
     INVOICE_PENDING_GRANT_SOURCE,
     INVOICE_PENDING_PRODUCT_ID,
     STAFF_COMP_GRANT_SOURCE,
     STAFF_COMP_PRODUCT_ID,
+    SchoolNotFoundError,
     invoice_pending_grant_id,
     staff_comp_id,
 )
 from app.services.school_billing import (
     SchoolInvoiceConflictError,
     create_school_billing_portal_session,
+    create_school_checkout_session,
     create_school_invoice_subscription,
 )
 from app.services.stripe_events import (
@@ -585,6 +588,144 @@ async def test_create_invoice_subscription_second_call_conflicts_no_double_bill(
         sub_kwargs["idempotency_key"]
         == f"invoice-sub-{school.wriveted_identifier}-subscription"
     )
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_create_invoice_subscription_new_attempt_uses_fresh_idempotency_key(
+    mock_stripe, async_session, monkeypatch
+):
+    """A genuinely new invoice attempt AFTER a cancelled/voided first one (which
+    passes the 409 guard because nothing is live) must NOT replay Stripe's cached
+    response for the dead original: the per-attempt nonce (count of prior dead
+    Stripe subs) makes the idempotency key differ from the first attempt's."""
+    _configure_billing_settings(monkeypatch)
+    school = await _new_school(async_session)
+    await _price_product(async_session)
+    # A prior invoice subscription that was created then cancelled/voided: a real
+    # (non-empty customer) Stripe sub, now inactive. Nothing live remains.
+    async_session.add(
+        Subscription(
+            id="sub_dead",
+            school_id=school.wriveted_identifier,
+            type=SubscriptionType.SCHOOL,
+            stripe_customer_id="cus_existing",
+            is_active=False,
+            expiration=datetime.utcnow() - timedelta(days=1),
+            product_id=INVOICE_PRICE_ID,
+        )
+    )
+    await async_session.flush()
+
+    sub_obj = MagicMock()
+    sub_obj.id = "sub_retry"
+    sub_obj.get.return_value = {"hosted_invoice_url": "https://pay.stripe.test/i/y"}
+    mock_stripe.Subscription.create.return_value = sub_obj
+
+    await create_school_invoice_subscription(
+        async_session, school, billing_email="bursar@school.example"
+    )
+
+    _, sub_kwargs = mock_stripe.Subscription.create.call_args
+    wid = school.wriveted_identifier
+    # Differs from a first-attempt key (which would be ``invoice-sub-<wid>-...``);
+    # the nonce (1 prior dead sub) yields a fresh key so Stripe does not replay.
+    assert sub_kwargs["idempotency_key"] == f"invoice-sub-{wid}-1-subscription"
+    assert sub_kwargs["idempotency_key"] != f"invoice-sub-{wid}-subscription"
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_create_invoice_subscription_missing_school_404_before_stripe(
+    mock_stripe, async_session, monkeypatch
+):
+    """A school that has vanished (no row to lock) must be rejected BEFORE any
+    Stripe call, so no invoice is ever emitted for a non-existent school."""
+    _configure_billing_settings(monkeypatch)
+    # A detached School never persisted: the lock SELECT finds no row.
+    ghost = School(
+        name="Ghost School",
+        wriveted_identifier=uuid4(),
+        country_code="ATA",
+        state=SchoolState.INACTIVE,
+    )
+
+    with pytest.raises(SchoolNotFoundError):
+        await create_school_invoice_subscription(
+            async_session, ghost, billing_email="bursar@school.example"
+        )
+
+    mock_stripe.Customer.create.assert_not_called()
+    mock_stripe.Subscription.create.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# card checkout: cross-path double-bill guard
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_checkout_conflicts_with_live_invoice_pending_grant(
+    mock_stripe, async_session, monkeypatch
+):
+    """A school that just requested an invoice (live invoice_pending grant + open
+    send_invoice Stripe sub) must NOT be able to start a card Checkout: the
+    checkout path shares the invoice path's live-subscription guard, so it 409s
+    instead of leaving two collectible obligations."""
+    _configure_billing_settings(monkeypatch)
+    monkeypatch.setattr(
+        school_billing_module.settings,
+        "HUEY_BOOKS_APP_URL",
+        "https://app.hueybooks.test",
+    )
+    school = await _new_school(async_session)
+    await async_session.merge(
+        Product(id=INVOICE_PENDING_PRODUCT_ID, name="Invoice pending")
+    )
+    await async_session.flush()
+    async_session.add(
+        Subscription(
+            id=invoice_pending_grant_id(school.wriveted_identifier),
+            school_id=school.wriveted_identifier,
+            type=SubscriptionType.SCHOOL,
+            stripe_customer_id="",
+            is_active=True,
+            expiration=datetime.utcnow() + timedelta(days=44),
+            product_id=INVOICE_PENDING_PRODUCT_ID,
+            info={"source": INVOICE_PENDING_GRANT_SOURCE},
+        )
+    )
+    await async_session.flush()
+
+    with pytest.raises(SchoolInvoiceConflictError):
+        await create_school_checkout_session(school, session=async_session)
+
+    mock_stripe.checkout.Session.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_checkout_clean_school_returns_url(
+    mock_stripe, async_session, monkeypatch
+):
+    """A clean school (no live subscription) still gets a card Checkout URL."""
+    _configure_billing_settings(monkeypatch)
+    monkeypatch.setattr(
+        school_billing_module.settings,
+        "HUEY_BOOKS_APP_URL",
+        "https://app.hueybooks.test",
+    )
+    school = await _new_school(async_session)
+
+    mock_stripe.checkout.Session.create.return_value = Mock(
+        id="cs_1", url="https://checkout.stripe.test/c/cs_1"
+    )
+
+    url = await create_school_checkout_session(school, session=async_session)
+
+    assert url == "https://checkout.stripe.test/c/cs_1"
+    mock_stripe.checkout.Session.create.assert_called_once()
 
 
 # --------------------------------------------------------------------------- #

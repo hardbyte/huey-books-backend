@@ -92,6 +92,27 @@ async def get_active_stripe_subscription_async(
     ).scalar_one_or_none()
 
 
+async def has_live_subscription_async(session: AsyncSession, school_id) -> bool:
+    """Whether ANY live subscription already controls the school's access.
+
+    One open subscription per school: this counts a card/invoice Stripe sub OR a
+    comp grant — including the empty-customer ``invoice_pending`` grant that the
+    Stripe-only predicate cannot see. Shared by both billing entry points (card
+    checkout and invoice subscription) so neither can start a second collectible
+    obligation while one is already live.
+    """
+    return (
+        await session.execute(
+            select(Subscription.id)
+            .where(
+                Subscription.school_id == school_id,
+                Subscription.is_active.is_(True),
+            )
+            .limit(1)
+        )
+    ).first() is not None
+
+
 async def known_stripe_customer_id_async(
     session: AsyncSession, school_id
 ) -> str | None:
