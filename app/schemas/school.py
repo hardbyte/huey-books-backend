@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, StringConstraints
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, StringConstraints
 from typing_extensions import Annotated
 
 from app.models import SchoolState
@@ -61,6 +61,17 @@ def normalize_school_info(
     canonical_location = SchoolLocation.model_validate(location).model_dump()
     merged_location = {**location, **canonical_location}
     return {**info, "location": merged_location}
+
+
+class CompGrantRequest(BaseModel):
+    # Complimentary access length. Common presets are 1/3/6/12 months.
+    days: int = Field(90, ge=1, le=3650)
+
+
+class CompGrantResponse(BaseModel):
+    outcome: Literal["granted", "extended"]
+    state: str
+    access_until: datetime
 
 
 class SchoolBrief(SchoolIdentity):

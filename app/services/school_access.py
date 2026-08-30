@@ -12,8 +12,10 @@ flow) and the source registry both share.
 """
 
 from datetime import datetime, timedelta
+from typing import Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -25,17 +27,101 @@ from app.models.subscription import Subscription, SubscriptionType
 # here, so importing it from stripe_events would be circular).
 CONTRIBUTION_GRANT_SOURCE = "contribution_grant"
 INVITE_GRANT_SOURCE = "invite_grant"
+STAFF_COMP_GRANT_SOURCE = "staff_comp"
 # Every comped (non-paying) grant source. The lapse sweep and Stripe-conversion
 # retirement operate over this whole set, not just contributions.
-COMP_GRANT_SOURCES = frozenset({CONTRIBUTION_GRANT_SOURCE, INVITE_GRANT_SOURCE})
+COMP_GRANT_SOURCES = frozenset(
+    {CONTRIBUTION_GRANT_SOURCE, INVITE_GRANT_SOURCE, STAFF_COMP_GRANT_SOURCE}
+)
 
 INVITE_GRANT_PRODUCT_ID = "comp_school_invite"
 INVITE_GRANT_PRODUCT_NAME = "School invite (comped)"
 INVITE_GRANT_SUBSCRIPTION_PREFIX = "comp_invite_"
 
+STAFF_COMP_PRODUCT_ID = "comp_staff_grant"
+STAFF_COMP_PRODUCT_NAME = "Staff complimentary grant"
+STAFF_COMP_SUBSCRIPTION_PREFIX = "comp_staff_"
+
 
 def invite_grant_id(school_wriveted_id) -> str:
     return f"{INVITE_GRANT_SUBSCRIPTION_PREFIX}{school_wriveted_id}"
+
+
+def staff_comp_id(school_wriveted_id) -> str:
+    return f"{STAFF_COMP_SUBSCRIPTION_PREFIX}{school_wriveted_id}"
+
+
+async def grant_staff_comp(
+    session: AsyncSession, school: School, days: int
+) -> tuple[str, datetime]:
+    """Staff action: give a school ``days`` of complimentary access, starting now.
+
+    Unlike the one-per-school invite grant, this is re-grantable: repeating it
+    extends the comp to the later of its current expiry and ``now + days`` (it
+    never shortens existing access). The grant is a comp ``Subscription`` (source
+    ``staff_comp``, so the lapse sweep expires it and a later Stripe subscription
+    retires it) and flips the school to ACTIVE. Returns ``(outcome, expiration)``
+    where outcome is ``"granted"`` (new) or ``"extended"`` (existing comp).
+    """
+    now = datetime.utcnow()
+    grant_id = staff_comp_id(school.wriveted_identifier)
+    target = now + timedelta(days=days)
+
+    await session.merge(Product(id=STAFF_COMP_PRODUCT_ID, name=STAFF_COMP_PRODUCT_NAME))
+    await session.flush()
+
+    async def _apply(existing: Optional[Subscription]) -> tuple[str, datetime]:
+        if existing is not None:
+            # Never shorten an existing comp — extend to the later of the two.
+            new_expiration = max(existing.expiration or now, target)
+            existing.is_active = True
+            existing.expiration = new_expiration
+            existing.info = {"source": STAFF_COMP_GRANT_SOURCE}
+            session.add(existing)
+            return "extended", new_expiration
+        session.add(
+            Subscription(
+                id=grant_id,
+                school_id=school.wriveted_identifier,
+                type=SubscriptionType.SCHOOL,
+                stripe_customer_id="",
+                is_active=True,
+                expiration=target,
+                product_id=STAFF_COMP_PRODUCT_ID,
+                info={"source": STAFF_COMP_GRANT_SOURCE},
+            )
+        )
+        return "granted", target
+
+    existing = (
+        await session.execute(
+            select(Subscription).where(Subscription.id == grant_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+
+    try:
+        # A savepoint so a concurrent first-insert (FOR UPDATE can't lock an
+        # absent row) surfaces as a catchable IntegrityError, not a poisoned txn.
+        async with session.begin_nested():
+            outcome, expiration = await _apply(existing)
+            await session.flush()
+    except IntegrityError:
+        existing = (
+            await session.execute(
+                select(Subscription)
+                .where(Subscription.id == grant_id)
+                .with_for_update()
+            )
+        ).scalar_one()
+        outcome, expiration = await _apply(existing)
+        await session.flush()
+
+    if school.state != SchoolState.ACTIVE:
+        school.state = SchoolState.ACTIVE
+        session.add(school)
+
+    await session.flush()
+    return outcome, expiration
 
 
 async def grant_invite_access(
