@@ -17,9 +17,15 @@ from app.schemas.users import UserBrief
 
 
 class SchoolLocation(BaseModel):
+    # All fields are optional and lat/long are coerced from numbers: location
+    # data comes from varied sources and stores coordinates numerically or as
+    # strings. (Pydantic v2 no longer coerces numbers to str implicitly, so a
+    # numeric lat/long would otherwise fail response serialization.)
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+
     suburb: Optional[str] = None
-    state: str
-    postcode: str
+    state: Optional[str] = None
+    postcode: Optional[str] = None
     geolocation: Optional[str] = None
     lat: Optional[str] = None
     long: Optional[str] = None
