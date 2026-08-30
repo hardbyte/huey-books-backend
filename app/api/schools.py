@@ -5,7 +5,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi_permissions import Allow, Authenticated, Deny, has_permission
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette import status
@@ -27,7 +26,6 @@ from app.api.dependencies.security import (
 from app.config import get_settings
 from app.db.session import get_session
 from app.models import Educator, School, SchoolAdmin, ServiceAccount
-from app.models.subscription import Subscription
 from app.models.user import User
 from app.permissions import Permission
 from app.repositories.event_repository import event_repository
@@ -43,7 +41,11 @@ from app.schemas.school import (
 )
 from app.services.email_notification import EmailType, send_email_reliable_sync
 from app.services.experiments import get_experiments
-from app.services.school_access import grant_staff_comp
+from app.services.school_access import (
+    ActivePaidSubscriptionError,
+    SchoolNotFoundError,
+    grant_staff_comp,
+)
 from app.services.school_billing import (
     SchoolBillingError,
     create_school_checkout_session,
@@ -593,58 +595,38 @@ async def grant_school_comp(
     session: DBSessionDep,
     account=Depends(get_current_active_superuser),
 ):
-    """Staff action: grant a school complimentary access for ``payload.days``,
-    activating it. Re-running renews the comp for a fresh window."""
-    school = (
-        await session.execute(
-            select(School).where(School.wriveted_identifier == wriveted_identifier)
+    """Grant or renew staff-authorised complimentary school access."""
+    try:
+        result = await grant_staff_comp(
+            session,
+            wriveted_identifier,
+            days=payload.days,
+            account=account,
+            idempotency_key=payload.idempotency_key,
+            reason=payload.reason,
+            campaign_id=payload.campaign_id,
         )
-    ).scalar_one_or_none()
-    if school is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found.")
-
-    # Don't stack a comp on top of a real paying subscription — that produces two
-    # active subscription rows and breaks School.subscription (uselist=False).
-    has_paying_sub = (
-        await session.execute(
-            select(Subscription.id)
-            .where(
-                Subscription.school_id == wriveted_identifier,
-                Subscription.is_active.is_(True),
-                Subscription.stripe_customer_id != "",
-            )
-            .limit(1)
-        )
-    ).first()
-    if has_paying_sub is not None:
+    except SchoolNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found.") from None
+    except ActivePaidSubscriptionError:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "This school already has an active paid subscription.",
-        )
+        ) from None
 
-    outcome, expiration = await grant_staff_comp(session, school, payload.days)
-    school_name = school.name
-    await event_repository.acreate(
-        session=session,
-        title="School complimentary access granted",
-        description=(
-            f"{school_name} granted {payload.days} days complimentary access "
-            f"({outcome}) until {expiration:%Y-%m-%d}."
-        ),
-        school=school,
-        account=account,
-        commit=False,
-    )
-    await session.commit()
     logger.info(
         "Staff comp granted",
-        school=school_name,
+        school_id=str(wriveted_identifier),
         days=payload.days,
-        outcome=outcome,
-        access_until=str(expiration),
+        outcome=result.outcome,
+        access_until=str(result.access_until),
+        idempotent_replay=result.idempotent_replay,
     )
     return CompGrantResponse(
-        outcome=outcome, state=school.state.value, access_until=expiration
+        outcome=result.outcome,
+        state=result.state,
+        access_until=result.access_until,
+        idempotent_replay=result.idempotent_replay,
     )
 
 

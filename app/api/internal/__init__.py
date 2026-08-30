@@ -35,7 +35,7 @@ from app.services.commerce import (
 from app.services.events import handle_event_to_slack_alert, process_events
 from app.services.hydration import hydrate_bulk
 from app.services.labelling import label_and_update_work
-from app.services.school_access import COMP_GRANT_SOURCES
+from app.services.school_access import COMP_GRANT_SOURCES, lock_school_access_async
 from app.services.stripe_events import process_stripe_event
 
 
@@ -321,27 +321,40 @@ async def handle_lapse_expired_schools(session: DBSessionDep):
     separately in the infrastructure repo.
     """
     now = datetime.utcnow()
-    expired_grants = (
-        (
-            await session.execute(
-                select(Subscription).where(
-                    Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
-                    Subscription.is_active.is_(True),
-                    Subscription.expiration < now,
-                )
+    expired_grant_candidates = (
+        await session.execute(
+            select(Subscription.id, Subscription.school_id).where(
+                Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
+                Subscription.is_active.is_(True),
+                Subscription.expiration < now,
             )
         )
-        .scalars()
-        .all()
-    )
+    ).all()
 
     lapsed = 0
-    for grant in expired_grants:
-        # The grant itself has expired regardless of what happens to the school.
-        grant.is_active = False
+    grants_expired = 0
+    for grant_id, school_id in expired_grant_candidates:
+        school = await lock_school_access_async(session, school_id)
+        if school is None:
+            continue
+        grant = (
+            await session.execute(
+                select(Subscription)
+                .where(Subscription.id == grant_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if (
+            grant is None
+            or not grant.is_active
+            or grant.expiration is None
+            or grant.expiration >= now
+        ):
+            continue
 
-        # If the school now has an active auto-renewing Stripe subscription, leave
-        # it active — Stripe drives that lifecycle.
+        grant.is_active = False
+        grants_expired += 1
+
         has_stripe_sub = (
             await session.execute(
                 select(Subscription.id)
@@ -356,8 +369,6 @@ async def handle_lapse_expired_schools(session: DBSessionDep):
         if has_stripe_sub is not None:
             continue
 
-        # A school can hold more than one comp grant (e.g. an invite trial plus a
-        # later contribution). Only lapse it once *every* comp grant has expired.
         other_live_comp_grant = (
             await session.execute(
                 select(Subscription.id)
@@ -374,23 +385,15 @@ async def handle_lapse_expired_schools(session: DBSessionDep):
         if other_live_comp_grant is not None:
             continue
 
-        school = (
-            await session.execute(
-                select(School).where(School.wriveted_identifier == grant.school_id)
-            )
-        ).scalar_one_or_none()
-        if school is not None and school.state == SchoolState.ACTIVE:
+        if school.state == SchoolState.ACTIVE:
             school.state = SchoolState.INACTIVE
             lapsed += 1
             logger.info(
-                "Lapsed school after contribution grant expired",
+                "Lapsed school after complimentary grant expired",
                 school=school.name,
                 grant_id=grant.id,
             )
 
-    # get_async_session does not commit on teardown; persist the sweep.
     await session.commit()
-    logger.info(
-        "Lapse sweep complete", lapsed=lapsed, grants_expired=len(expired_grants)
-    )
-    return {"msg": "ok", "lapsed": lapsed, "grants_expired": len(expired_grants)}
+    logger.info("Lapse sweep complete", lapsed=lapsed, grants_expired=grants_expired)
+    return {"msg": "ok", "lapsed": lapsed, "grants_expired": grants_expired}
