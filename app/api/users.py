@@ -27,6 +27,7 @@ from app.schemas.pagination import Pagination
 from app.schemas.users.user_create import UserCreateIn
 from app.schemas.users.user_list import UserListsResponse
 from app.schemas.users.user_update import InternalUserUpdateIn, UserUpdateIn
+from app.services.email_notification import trigger_email_delivery_async
 from app.services.users import handle_user_creation
 
 logger = get_logger()
@@ -97,6 +98,7 @@ async def create_user(
     logger.debug("Creating a user", data=user_data)
     try:
         new_user = handle_user_creation(session, user_data, generate_pathway_lists)
+        await trigger_email_delivery_async()
         return new_user
 
     except ValueError as e:

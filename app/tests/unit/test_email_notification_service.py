@@ -10,6 +10,8 @@ These tests validate:
 6. Backward compatibility functions
 """
 
+import json
+
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
@@ -75,7 +77,7 @@ class TestEmailNotificationService:
         call_args = service.event_outbox_service.publish_event.call_args
 
         assert call_args[1]["event_type"] == "email_notification"
-        assert call_args[1]["destination"] == "sendgrid:notification"
+        assert call_args[1]["destination"] == "email:notification"
         assert (
             call_args[1]["priority"] == EventPriority.HIGH
         )  # NOTIFICATION maps to HIGH
@@ -145,6 +147,23 @@ class TestEmailNotificationService:
                 email_type=EmailType.NOTIFICATION,
             )
 
+    @pytest.mark.asyncio
+    async def test_processes_legacy_json_string_payload(
+        self, service, sample_email_data
+    ):
+        service._send_email = AsyncMock(return_value=True)
+        payload = {
+            "email_data": sample_email_data.model_dump(mode="json"),
+            "email_type": "notification",
+        }
+
+        result = await service.process_outbox_email_notification(
+            json.dumps(payload)
+        )
+
+        assert result is True
+        service._send_email.assert_awaited_once()
+
     def test_send_email_via_outbox_sync(self, service, sample_email_data):
         """Test synchronous version of outbox email sending."""
         mock_db = Mock()
@@ -161,7 +180,7 @@ class TestEmailNotificationService:
         call_args = service.event_outbox_service.publish_event_sync.call_args
 
         assert call_args[1]["event_type"] == "email_notification"
-        assert call_args[1]["destination"] == "sendgrid:onboarding"
+        assert call_args[1]["destination"] == "email:onboarding"
         assert call_args[1]["priority"] == EventPriority.HIGH
 
     @pytest.mark.asyncio

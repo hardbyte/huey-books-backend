@@ -1,6 +1,5 @@
 """Self-service onboarding endpoints for schools and families."""
 
-import asyncio
 from typing import Optional
 from uuid import UUID
 
@@ -20,8 +19,11 @@ from app.models.school import SchoolBookbotType
 from app.models.user import User, UserAccountType
 from app.repositories.event_repository import event_repository
 from app.schemas.school import normalize_school_info
-from app.services.background_tasks import queue_background_task
-from app.services.email_notification import EmailType, send_email_reliable
+from app.services.email_notification import (
+    EmailType,
+    send_email_reliable,
+    trigger_email_delivery_async,
+)
 from app.services.experiments import get_experiments
 from app.services.school_emails import (
     render_school_registered_html,
@@ -202,7 +204,7 @@ async def onboard_school(
     try:
         await _queue_onboarding_emails(db, school, request)
         await db.commit()
-        await _nudge_outbox()
+        await trigger_email_delivery_async()
     except Exception as e:
         logger.warning("Failed to queue onboarding emails", error=str(e))
 
@@ -268,14 +270,6 @@ async def _queue_onboarding_emails(db, school, request):
             },
             email_type=EmailType.ONBOARDING,
         )
-
-
-async def _nudge_outbox():
-    """Best-effort: ask the internal API to deliver the queued emails now."""
-    try:
-        await asyncio.to_thread(queue_background_task, "process-outbox-events")
-    except Exception as e:
-        logger.warning("Failed to nudge outbox after onboarding", error=str(e))
 
 
 # ── Family onboarding ─────────────────────────────────────────────────

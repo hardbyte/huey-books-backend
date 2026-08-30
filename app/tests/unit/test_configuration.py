@@ -1,9 +1,22 @@
+import pytest
+from pydantic import ValidationError
+
 from app.config import Settings
 
 
 def test_can_create_settings():
     config = Settings(POSTGRESQL_PASSWORD="test", SECRET_KEY="test")
     assert hasattr(config, "SECRET_KEY")
+
+
+def test_email_provider_rejects_unknown_value():
+    with pytest.raises(ValidationError, match="EMAIL_PROVIDER"):
+        Settings(
+            POSTGRESQL_PASSWORD="test",
+            SECRET_KEY="test",
+            SHOPIFY_HMAC_SECRET="test",
+            EMAIL_PROVIDER="smtp",
+        )
 
 
 def test_list_env_fields_parse_bare_csv_and_json(monkeypatch):

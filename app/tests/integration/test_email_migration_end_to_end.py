@@ -63,7 +63,7 @@ def test_email_migration_creates_outbox_events(session):
 
     # Verify event properties
     assert email_event.event_type == "email_notification"
-    assert email_event.destination == "sendgrid:notification"
+    assert email_event.destination == "email:notification"
     assert (
         email_event.priority == "HIGH"
     )  # NOTIFICATION emails are HIGH priority (uppercase in DB)
@@ -100,10 +100,6 @@ def test_email_type_priority_mapping(session):
     }
 
     for email_type, expected_priority, expected_retries in test_cases:
-        # Get initial count
-        result = session.execute(text("SELECT COUNT(*) FROM event_outbox"))
-        initial_count = result.scalar()
-
         # Send email with specific type
         send_email_reliable_sync(
             db=session,
@@ -128,9 +124,9 @@ def test_email_type_priority_mapping(session):
         event = result.fetchone()
         assert event is not None, f"No event created for {email_type}"
         assert event.priority == expected_priority, f"Wrong priority for {email_type}"
-        assert (
-            event.max_retries == expected_retries
-        ), f"Wrong retry count for {email_type}"
+        assert event.max_retries == expected_retries, (
+            f"Wrong retry count for {email_type}"
+        )
 
 
 def test_email_outbox_processing_simulation(session):

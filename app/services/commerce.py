@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 from json import loads
-from typing import Container, ItemsView, Union
+from typing import Container, ItemsView
 from urllib.error import HTTPError
 from uuid import UUID
 
@@ -9,7 +9,6 @@ from pydantic import EmailStr, parse_obj_as
 from python_http_client.client import Response
 from python_http_client.exceptions import NotFoundError
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import From, Mail
 from sqlalchemy.orm import Session
 from structlog import get_logger
 from twilio.rest import Client as TwilioClient
@@ -23,7 +22,6 @@ from app.schemas.sendgrid import (
     CustomSendGridContactData,
     SendGridContactData,
     SendGridCustomField,
-    SendGridEmailData,
 )
 from app.schemas.shopify import ShopifyEventRoot
 from app.services.account_refs import AccountRefType, load_account_ref
@@ -228,51 +226,6 @@ def upsert_sendgrid_contact_background(
         upsert_sendgrid_contact(
             data, session, account, get_sendgrid_api(), increment_children
         )
-
-
-def send_sendgrid_email(
-    data: SendGridEmailData,
-    session: Session,
-    sg: SendGridAPIClient,
-    account: Union[ServiceAccount, User] = None,
-):
-    """
-    Send a dynamic email to a list of email addresses, logging an event
-    """
-    message = Mail(from_email=data.from_email, to_emails=data.to_emails)
-
-    if data.template_data:
-        message.dynamic_template_data = data.template_data
-    if data.template_id:
-        message.template_id = data.template_id
-    if data.from_name:
-        message.from_email = From(data.from_email, data.from_name)
-
-    error = None
-    try:
-        response = sg.send(message)
-        output = {
-            "code": str(response.status_code),
-            "body": str(response.body),
-            "headers": str(response.headers),
-        }
-
-    except HTTPError as e:
-        error = f"Error: {e}"
-
-    crud.event.create(
-        session=session,
-        title="SendGrid email sent",
-        description="An email was sent to a user via SendGrid",
-        info={
-            "result": "success" if not error else "error",
-            "detail": error or output,
-            "data": data.dict(),
-        },
-        account=account,
-        commit=True,
-        level="warning" if error else "debug",
-    )
 
 
 def upsert_sendgrid_from_shopify_order(

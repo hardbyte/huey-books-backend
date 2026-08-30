@@ -4,12 +4,15 @@ Integration tests for the Event Outbox Service.
 These tests verify the Event Outbox Pattern implementation for reliable event delivery.
 """
 
+import asyncio
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
+from app.db.session import get_async_session_maker
 from app.models.event_outbox import EventOutbox, EventPriority, EventStatus
 from app.services.event_outbox_service import EventOutboxService
 
@@ -101,6 +104,30 @@ class TestEventOutboxService:
         assert event.status == EventStatus.PUBLISHED
         assert event.processed_at is not None
 
+    async def test_published_email_payload_is_redacted(self, async_session):
+        service = EventOutboxService()
+        service._deliver_event = AsyncMock(return_value=True)
+        event = await service.publish_event(
+            async_session,
+            event_type="email_notification",
+            destination="email:marketing",
+            payload={
+                "email_type": "marketing",
+                "email_data": {
+                    "to_emails": ["recipient@example.com"],
+                    "subject": "Sensitive subject",
+                    "html_content": "<p>Sensitive body</p>",
+                },
+            },
+        )
+        await async_session.commit()
+
+        await service.process_pending_events(async_session)
+
+        await async_session.refresh(event)
+        assert event.status == EventStatus.PUBLISHED
+        assert event.payload == {"email_type": "marketing", "redacted": True}
+
     async def test_process_pending_events_failure_with_retry(self, async_session):
         """Test processing events that fail and get retried."""
         service = EventOutboxService()
@@ -130,6 +157,33 @@ class TestEventOutboxService:
         assert event.next_retry_at is not None
         assert event.next_retry_at > datetime.utcnow()
         assert event.last_error is not None
+
+    async def test_dead_lettered_email_payload_is_redacted(self, async_session):
+        service = EventOutboxService()
+        service._deliver_event = AsyncMock(return_value=False)
+        event = await service.publish_event(
+            async_session,
+            event_type="email_notification",
+            destination="email:marketing",
+            payload={
+                "email_type": "marketing",
+                "email_data": {
+                    "to_emails": ["recipient@example.com"],
+                    "subject": "Sensitive subject",
+                    "html_content": "<p>Sensitive body</p>",
+                },
+            },
+            max_retries=0,
+        )
+        await async_session.commit()
+
+        stats = await service.process_pending_events(async_session)
+
+        await async_session.refresh(event)
+        assert stats["dead_lettered"] == 1
+        assert event.status == EventStatus.DEAD_LETTER
+        assert event.payload == {"email_type": "marketing", "redacted": True}
+        assert await service.retry_event(async_session, event.id) is False
 
     async def test_event_dead_letter_queue(self, async_session):
         """Test that events move to dead letter queue after max retries."""
@@ -216,6 +270,85 @@ class TestEventOutboxService:
         assert failed_event.status == EventStatus.PENDING
         assert failed_event.retry_count == 0
         assert failed_event.last_error is None
+
+    async def test_retry_waits_for_processing_lock_and_revalidates(self, async_session):
+        event = EventOutbox(
+            event_type="email_notification",
+            destination="email:notification",
+            payload={"email_type": "notification", "email_data": {"to_emails": []}},
+            status=EventStatus.FAILED,
+            retry_count=1,
+            last_error="Provider unavailable",
+        )
+        async_session.add(event)
+        await async_session.commit()
+
+        session_factory = get_async_session_maker()
+        service = EventOutboxService()
+        async with session_factory() as retry_session:
+            retry_backend_pid = await retry_session.scalar(
+                text("SELECT pg_backend_pid()")
+            )
+            result = await retry_session.execute(
+                select(EventOutbox).where(EventOutbox.id == event.id)
+            )
+            stale_retry_event = result.scalar_one()
+            assert stale_retry_event.status == EventStatus.FAILED
+
+            async with session_factory() as processing_session:
+                result = await processing_session.execute(
+                    select(EventOutbox)
+                    .where(EventOutbox.id == event.id)
+                    .with_for_update()
+                )
+                processing_event = result.scalar_one()
+                processing_event.status = EventStatus.PUBLISHED
+                processing_event.payload = {
+                    "email_type": "notification",
+                    "redacted": True,
+                }
+                await processing_session.flush()
+
+                retry_task = asyncio.create_task(
+                    service.retry_event(retry_session, event.id)
+                )
+
+                for _ in range(100):
+                    retry_is_waiting = await processing_session.scalar(
+                        text(
+                            "SELECT wait_event_type = 'Lock' "
+                            "FROM pg_stat_activity WHERE pid = :pid"
+                        ),
+                        {"pid": retry_backend_pid},
+                    )
+                    if retry_is_waiting:
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    pytest.fail("retry query did not wait for the processing lock")
+
+                assert not retry_task.done()
+
+                await processing_session.commit()
+                assert await asyncio.wait_for(retry_task, timeout=1) is False
+
+            async with session_factory() as verification_session:
+                result = await verification_session.execute(
+                    select(EventOutbox)
+                    .where(EventOutbox.id == event.id)
+                    .with_for_update(nowait=True)
+                )
+                verified_event = result.scalar_one()
+                assert verified_event.status == EventStatus.PUBLISHED
+                assert verified_event.payload == {
+                    "email_type": "notification",
+                    "redacted": True,
+                }
+                await verification_session.rollback()
+
+        await async_session.refresh(event)
+        assert event.status == EventStatus.PUBLISHED
+        assert event.payload == {"email_type": "notification", "redacted": True}
 
     async def test_event_priority_ordering(self, async_session):
         """Test that events are processed in priority order."""

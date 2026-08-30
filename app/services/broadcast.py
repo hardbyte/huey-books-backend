@@ -9,9 +9,10 @@ same message only to the requesting staff member.
 
 from html import escape
 from typing import Optional
+from uuid import UUID
 
 from jose import jwt
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from structlog import get_logger
 
@@ -23,8 +24,11 @@ from app.models.student import Student
 from app.models.user import User
 from app.schemas.broadcast import BroadcastAudience
 from app.schemas.sendgrid import SendGridEmailData
-from app.services.background_tasks import queue_background_task
-from app.services.email_notification import EmailType, create_email_notification_service
+from app.services.email_notification import (
+    EmailType,
+    create_email_notification_service,
+    trigger_email_delivery,
+)
 
 logger = get_logger()
 
@@ -94,7 +98,16 @@ def _school_member_condition(internal_school_id_subquery):
     )
 
 
-def _resolve_recipients_query(db: Session, audience: BroadcastAudience):
+class BroadcastAudienceTooLarge(ValueError):
+    def __init__(self, recipient_count: int, maximum: int):
+        self.recipient_count = recipient_count
+        self.maximum = maximum
+        super().__init__(
+            f"Audience has {recipient_count} recipients; maximum is {maximum}."
+        )
+
+
+def _resolve_recipients_query(audience: BroadcastAudience):
     query = select(User).where(
         User.is_active.is_(True),
         User.email.isnot(None),
@@ -112,23 +125,54 @@ def _resolve_recipients_query(db: Session, audience: BroadcastAudience):
         query = query.where(_school_member_condition(country_school_ids))
 
     if audience.school_id is not None:
-        internal_school_id = db.scalar(
-            select(School.id).where(School.wriveted_identifier == audience.school_id)
+        internal_school_ids = select(School.id).where(
+            School.wriveted_identifier == audience.school_id
         )
-        if internal_school_id is None:
-            query = query.where(False)
-        else:
-            query = query.where(
-                _school_member_condition(
-                    select(School.id).where(School.id == internal_school_id)
-                )
-            )
+        query = query.where(_school_member_condition(internal_school_ids))
 
-    return query
+    return query.order_by(User.id)
 
 
 def resolve_recipients(db: Session, audience: BroadcastAudience) -> list[User]:
-    return list(db.scalars(_resolve_recipients_query(db, audience)).all())
+    return list(db.scalars(_resolve_recipients_query(audience)).all())
+
+
+def count_recipients(db: Session, audience: BroadcastAudience) -> int:
+    query = select(func.count()).select_from(
+        _resolve_recipients_query(audience).order_by(None).subquery()
+    )
+    return db.scalar(query) or 0
+
+
+def sample_recipient_names(
+    db: Session, audience: BroadcastAudience, *, limit: int = 5
+) -> list[str]:
+    query = (
+        _resolve_recipients_query(audience)
+        .with_only_columns(User.name)
+        .where(User.name.isnot(None), User.name != "")
+        .limit(limit)
+    )
+    return list(db.scalars(query).all())
+
+
+def get_audience_school_name(db: Session, audience: BroadcastAudience) -> str | None:
+    if audience.school_id is None:
+        return None
+    return db.scalar(
+        select(School.name).where(School.wriveted_identifier == audience.school_id)
+    )
+
+
+def resolve_recipient_addresses(
+    db: Session, audience: BroadcastAudience, *, limit: int
+) -> list[tuple[UUID, str]]:
+    query = (
+        _resolve_recipients_query(audience)
+        .with_only_columns(User.id, User.email)
+        .limit(limit)
+    )
+    return [(user_id, email) for user_id, email in db.execute(query).all()]
 
 
 def render_email_html(body: str, unsubscribe_link: str) -> str:
@@ -175,21 +219,6 @@ def _queue_email(
     )
 
 
-def _trigger_outbox_processing() -> None:
-    """Ask the internal API to deliver queued outbox events now.
-
-    Best-effort: the periodic outbox sweep will still deliver anything queued
-    if this nudge fails, so a Cloud Tasks hiccup must not fail the request.
-    """
-    try:
-        queue_background_task("process-outbox-events")
-    except Exception as e:
-        logger.warning(
-            "Failed to trigger outbox processing; the scheduled sweep will deliver",
-            error=str(e),
-        )
-
-
 def send_broadcast(
     db: Session,
     *,
@@ -199,47 +228,53 @@ def send_broadcast(
     account=None,
 ) -> int:
     """Enqueue the broadcast to all matching recipients. Returns the count."""
-    recipients = resolve_recipients(db, audience)
+    recipients = resolve_recipient_addresses(
+        db, audience, limit=settings.BROADCAST_MAX_RECIPIENTS + 1
+    )
+    recipient_count = len(recipients)
+    if recipient_count > settings.BROADCAST_MAX_RECIPIENTS:
+        raise BroadcastAudienceTooLarge(
+            recipient_count, settings.BROADCAST_MAX_RECIPIENTS
+        )
 
-    for user in recipients:
-        html = render_email_html(body, unsubscribe_url(user.id))
+    for user_id, email in recipients:
+        html = render_email_html(body, unsubscribe_url(user_id))
         _queue_email(
             db,
-            to_email=user.email,
+            to_email=email,
             subject=subject,
             html=html,
-            user_id=user.id,
-            headers=_unsubscribe_headers(user.id),
+            user_id=user_id,
+            headers=_unsubscribe_headers(user_id),
         )
 
     logger.info(
         "Broadcast queued",
-        recipients=len(recipients),
+        recipients=recipient_count,
         user_types=[t.value for t in audience.user_types],
         country_code=audience.country_code,
         school_id=str(audience.school_id) if audience.school_id else None,
-        subject=subject,
     )
 
-    if recipients:
+    if recipient_count:
         crud.event.create(
             db,
             title="Broadcast sent",
-            description=f"'{subject}' queued to {len(recipients)} users",
+            description=f"Broadcast queued to {recipient_count} users",
             info={
-                "subject": subject,
-                "recipients": len(recipients),
+                "recipients": recipient_count,
                 "user_types": [t.value for t in audience.user_types],
                 "country_code": audience.country_code,
+                "school_id": str(audience.school_id) if audience.school_id else None,
             },
             account=account,
         )
         # The request session never commits on its own; without this the
         # queued outbox rows are rolled back when the session closes.
         db.commit()
-        _trigger_outbox_processing()
+        trigger_email_delivery()
 
-    return len(recipients)
+    return recipient_count
 
 
 def send_test(db: Session, *, subject: str, body: str, account) -> int:
@@ -257,8 +292,8 @@ def send_test(db: Session, *, subject: str, body: str, account) -> int:
     # The request session never commits on its own; without this the
     # queued outbox row is rolled back when the session closes.
     db.commit()
-    _trigger_outbox_processing()
-    logger.info("Broadcast test queued", to=account.email, subject=subject)
+    trigger_email_delivery()
+    logger.info("Broadcast test queued")
     return 1
 
 

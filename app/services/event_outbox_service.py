@@ -9,6 +9,7 @@ This service implements the Event Outbox Pattern with dual strategy:
 
 import hashlib
 import hmac
+import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -274,11 +275,28 @@ class EventOutboxService:
 
     async def retry_event(self, db: AsyncSession, event_id: UUID) -> bool:
         """Manually retry a failed event."""
-        query = select(EventOutbox).where(EventOutbox.id == event_id)
+        query = (
+            select(EventOutbox)
+            .where(EventOutbox.id == event_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         result = await db.execute(query)
         event = result.scalar_one_or_none()
 
         if not event:
+            await db.rollback()
+            return False
+
+        if event.status not in (EventStatus.FAILED, EventStatus.DEAD_LETTER):
+            await db.rollback()
+            return False
+        if (
+            event.event_type == "email_notification"
+            and isinstance(event.payload, dict)
+            and event.payload.get("redacted") is True
+        ):
+            await db.rollback()
             return False
 
         # Reset for retry
@@ -317,6 +335,7 @@ class EventOutboxService:
                 EventOutbox.priority.desc(),  # High priority first
                 EventOutbox.created_at.asc(),  # Older events first
             )
+            .with_for_update(skip_locked=True)
             .limit(self.batch_size)
         )
 
@@ -693,7 +712,22 @@ class EventOutboxService:
         event.status = EventStatus.PUBLISHED
         event.processed_at = datetime.utcnow()
         event.updated_at = datetime.utcnow()
+        self._redact_email_payload(event)
         await db.flush()
+
+    @staticmethod
+    def _redact_email_payload(event: EventOutbox) -> None:
+        if event.event_type != "email_notification":
+            return
+
+        payload = event.payload
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (TypeError, ValueError):
+                payload = {}
+        email_type = payload.get("email_type") if isinstance(payload, dict) else None
+        event.payload = {"email_type": email_type, "redacted": True}
 
     async def _handle_delivery_failure(
         self, db: AsyncSession, event: EventOutbox, error_message: str
@@ -705,6 +739,7 @@ class EventOutboxService:
 
         if event.should_move_to_dead_letter:
             event.status = EventStatus.DEAD_LETTER
+            self._redact_email_payload(event)
             logger.warning(
                 "Event moved to dead letter queue",
                 event_id=event.id,

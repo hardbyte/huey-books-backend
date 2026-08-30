@@ -5,13 +5,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
-from sendgrid import SendGridAPIClient
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from structlog import get_logger
 from twilio.rest import Client as TwilioClient
 
-from app import crud
 from app.api.dependencies.async_db_dep import DBSessionDep
 
 # Import tasks router
@@ -21,16 +19,16 @@ from app.models.event import EventSlackChannel
 from app.models.school import School, SchoolState
 from app.models.subscription import Subscription
 from app.repositories.chat_repository import chat_repo
-from app.repositories.service_account_repository import service_account_repository
 from app.repositories.work_repository import work_repository
 from app.schemas.feedback import SendEmailPayload, SendSmsPayload
 from app.schemas.users.huey_attributes import HueyAttributes
 from app.services import search
 from app.services.booklists import generate_reading_pathway_lists
-from app.services.commerce import (
-    get_sendgrid_api,
-    get_twilio_client,
-    send_sendgrid_email,
+from app.services.commerce import get_twilio_client
+from app.services.email_notification import (
+    EmailType,
+    send_email_reliable_sync,
+    trigger_email_delivery,
 )
 from app.services.events import handle_event_to_slack_alert, process_events
 from app.services.hydration import hydrate_bulk
@@ -145,10 +143,12 @@ class StripeInternalEventPayload(BaseModel):
 def handle_stripe_event(data: StripeInternalEventPayload):
     logger.info("Internal API processing a stripe event", data=data)
 
-    return process_stripe_event(
+    result = process_stripe_event(
         event_type=data.stripe_event_type,
         event_data=data.stripe_event_data,
     )
+    trigger_email_delivery()
+    return result
 
 
 class GenerateReadingPathwaysPayload(BaseModel):
@@ -222,13 +222,18 @@ async def regenerate_flow_snapshots(
 def handle_send_email(
     data: SendEmailPayload,
     session: Session = Depends(get_session),
-    sg: SendGridAPIClient = Depends(get_sendgrid_api),
 ):
-    logger.info("Internal API sending emails")
-    user_account = crud.user.get(db=session, id=data.user_id)
-    svc_account = service_account_repository.get(db=session, id=data.service_account_id)
-    account = user_account or svc_account
-    send_sendgrid_email(data.email_data, session, sg, account=account)
+    logger.info("Internal API queueing email")
+    send_email_reliable_sync(
+        db=session,
+        email_data=data.email_data,
+        email_type=EmailType.SYSTEM,
+        user_id=data.user_id,
+        service_account_id=data.service_account_id,
+    )
+    session.commit()
+    trigger_email_delivery()
+    return {"msg": "Email queued for reliable delivery"}
 
 
 @router.post("/send-sms")

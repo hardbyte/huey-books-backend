@@ -11,6 +11,8 @@ This replaces direct queue_background_task("send-email") calls with
 reliable event-driven delivery.
 """
 
+import asyncio
+import json
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -122,14 +124,12 @@ class EmailNotificationService:
             await self.event_outbox_service.publish_event(
                 db=db,
                 event_type="email_notification",
-                destination=f"sendgrid:{email_type.value}",
+                destination=f"email:{email_type.value}",
                 payload=outbox_payload,
                 priority=priority,
                 routing_key="emails",
                 headers={
                     "email_type": email_type.value,
-                    "to_emails": str(email_data_dict.get("to_emails", [])),
-                    "subject": email_data_dict.get("subject", ""),
                 },
                 max_retries=max_retries,
                 user_id=user_id,
@@ -143,7 +143,6 @@ class EmailNotificationService:
                 priority=priority.value,
                 max_retries=max_retries,
                 user_id=user_id,
-                subject=email_data_dict.get("subject", "Unknown"),
             )
 
         except Exception as e:
@@ -200,14 +199,12 @@ class EmailNotificationService:
             self.event_outbox_service.publish_event_sync(
                 db=db,
                 event_type="email_notification",
-                destination=f"sendgrid:{email_type.value}",
+                destination=f"email:{email_type.value}",
                 payload=outbox_payload,
                 priority=priority,
                 routing_key="emails",
                 headers={
                     "email_type": email_type.value,
-                    "to_emails": str(email_data_dict.get("to_emails", [])),
-                    "subject": email_data_dict.get("subject", ""),
                 },
                 max_retries=max_retries,
                 user_id=user_id,
@@ -219,7 +216,6 @@ class EmailNotificationService:
                 priority=priority.value,
                 max_retries=max_retries,
                 user_id=user_id,
-                subject=email_data_dict.get("subject", "Unknown"),
             )
 
         except Exception as e:
@@ -231,7 +227,9 @@ class EmailNotificationService:
             )
             raise EmailNotificationError(f"Failed to queue email notification: {e}")
 
-    async def process_outbox_email_notification(self, payload: Dict[str, Any]) -> bool:
+    async def process_outbox_email_notification(
+        self, payload: Dict[str, Any] | str
+    ) -> bool:
         """
         Process an email notification from the Event Outbox.
 
@@ -241,6 +239,12 @@ class EmailNotificationService:
         Returns True if successful, False to trigger retry.
         """
         try:
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if not isinstance(payload, dict):
+                logger.error("Invalid email notification payload type")
+                return False
+
             # Extract payload data
             email_data_dict = payload.get("email_data")
             email_type = payload.get("email_type", EmailType.NOTIFICATION.value)
@@ -249,7 +253,6 @@ class EmailNotificationService:
             if not email_data_dict:
                 logger.error(
                     "Invalid email notification payload - missing email_data",
-                    payload=payload,
                 )
                 return False  # Don't retry invalid payloads
 
@@ -259,7 +262,6 @@ class EmailNotificationService:
             except Exception as e:
                 logger.error(
                     "Invalid email data structure in outbox payload",
-                    email_data=email_data_dict,
                     error=str(e),
                 )
                 return False  # Don't retry malformed payloads
@@ -272,15 +274,12 @@ class EmailNotificationService:
                     "Outbox email notification delivered",
                     email_type=email_type,
                     user_id=user_id,
-                    subject=email_data_dict.get("subject", "Unknown"),
-                    to_emails=email_data_dict.get("to_emails", []),
                 )
             else:
                 logger.warning(
                     "Outbox email notification failed",
                     email_type=email_type,
                     user_id=user_id,
-                    subject=email_data_dict.get("subject", "Unknown"),
                 )
 
             return success
@@ -288,7 +287,6 @@ class EmailNotificationService:
         except Exception as e:
             logger.error(
                 "Error processing outbox email notification",
-                payload=payload,
                 error=str(e),
             )
             return False  # Trigger retry
@@ -392,16 +390,11 @@ class EmailNotificationService:
 
             success = response.status_code in (200, 201)
             if success:
-                logger.info(
-                    "Email sent via Resend",
-                    subject=payload["subject"],
-                    to_emails=payload["to"],
-                )
+                logger.info("Email sent via Resend")
             else:
                 logger.warning(
                     "Resend returned non-2xx status",
                     status_code=response.status_code,
-                    body=response.text[:500],
                 )
             return success
         except Exception as e:
@@ -466,17 +459,13 @@ class EmailNotificationService:
                 message.dynamic_template_data = template_data
 
             # Send the email
-            response = sg.send(message)
+            response = await asyncio.to_thread(sg.send, message)
 
             # Check if successful (SendGrid returns 202 for accepted)
             success = response.status_code == 202
 
             if success:
-                logger.info(
-                    "Email sent via SendGrid",
-                    subject=data.get("subject", ""),
-                    to_emails=data.get("to_emails", []),
-                )
+                logger.info("Email sent via SendGrid")
             else:
                 logger.warning(
                     "SendGrid returned non-202 status", status_code=response.status_code
@@ -670,6 +659,30 @@ def send_email_reliable_sync(
         service_account_id=service_account_id,
         priority=priority,
     )
+
+
+def trigger_email_delivery() -> None:
+    """Best-effort nudge after the caller has committed queued email rows."""
+    from app.services.background_tasks import queue_background_task
+
+    try:
+        queue_background_task("process-outbox-events")
+    except Exception as exc:
+        logger.warning(
+            "Failed to trigger email delivery; the scheduled sweep will retry",
+            error=str(exc),
+        )
+
+
+async def trigger_email_delivery_async() -> None:
+    """Async wrapper which avoids blocking the request event loop."""
+    try:
+        await asyncio.to_thread(trigger_email_delivery)
+    except Exception as exc:
+        logger.warning(
+            "Failed to schedule email delivery nudge; the sweep will retry",
+            error=str(exc),
+        )
 
 
 # Specialized convenience functions for common email types

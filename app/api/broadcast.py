@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from structlog import get_logger
@@ -30,10 +30,10 @@ def preview_broadcast(
     session: Session = Depends(get_session),
 ):
     """Count (and sample) the recipients a broadcast would reach. Staff only."""
-    recipients = broadcast_service.resolve_recipients(session, audience)
     return BroadcastPreview(
-        recipient_count=len(recipients),
-        sample_names=[r.name for r in recipients[:5] if r.name],
+        recipient_count=broadcast_service.count_recipients(session, audience),
+        sample_names=broadcast_service.sample_recipient_names(session, audience),
+        school_name=broadcast_service.get_audience_school_name(session, audience),
     )
 
 
@@ -47,13 +47,22 @@ def send_broadcast(
     session: Session = Depends(get_session),
 ):
     """Queue a broadcast email to the chosen audience. Staff only."""
-    queued = broadcast_service.send_broadcast(
-        session,
-        subject=data.subject,
-        body=data.body,
-        audience=data.audience,
-        account=account,
-    )
+    try:
+        queued = broadcast_service.send_broadcast(
+            session,
+            subject=data.subject,
+            body=data.body,
+            audience=data.audience,
+            account=account,
+        )
+    except broadcast_service.BroadcastAudienceTooLarge as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=(
+                f"Audience has {exc.recipient_count} recipients; "
+                f"the safety limit is {exc.maximum}. Narrow the audience."
+            ),
+        ) from exc
     return BroadcastSendResult(queued=queued)
 
 

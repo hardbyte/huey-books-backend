@@ -1,7 +1,8 @@
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+from typing_extensions import Annotated
 
 from app.models.user import UserAccountType
 
@@ -27,21 +28,30 @@ class BroadcastAudience(BaseModel):
 
 class BroadcastPreview(BaseModel):
     recipient_count: int
-    sample_names: list[str] = []
+    sample_names: list[str] = Field(default_factory=list)
+    school_name: str | None = None
+
+
+BroadcastSubject = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+]
+BroadcastBody = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50_000)
+]
 
 
 class BroadcastSendIn(BaseModel):
-    subject: str = Field(min_length=1, max_length=200)
+    subject: BroadcastSubject
     # Plain text (blank lines separate paragraphs); rendered to safe HTML.
-    body: str = Field(min_length=1)
-    audience: BroadcastAudience = Field(default_factory=BroadcastAudience)
+    body: BroadcastBody
+    audience: BroadcastAudience
 
 
 class BroadcastTestIn(BaseModel):
     """Send the composed email only to the requesting staff member."""
 
-    subject: str = Field(min_length=1, max_length=200)
-    body: str = Field(min_length=1)
+    subject: BroadcastSubject
+    body: BroadcastBody
 
 
 class BroadcastSendResult(BaseModel):

@@ -105,7 +105,7 @@ def test_stripe_welcome_email_creates_outbox_event(session):
         # Verify event properties
         assert email_event.event_type == "email_notification"
         assert (
-            email_event.destination == "sendgrid:transactional"
+            email_event.destination == "email:transactional"
         )  # Email type appended to destination
         assert (
             email_event.priority.lower() == EventPriority.CRITICAL.value.lower()
