@@ -156,6 +156,33 @@ class TestEventOutboxService:
         assert event.next_retry_at > datetime.utcnow()
         assert event.last_error is not None
 
+    async def test_dead_lettered_email_payload_is_redacted(self, async_session):
+        service = EventOutboxService()
+        service._deliver_event = AsyncMock(return_value=False)
+        event = await service.publish_event(
+            async_session,
+            event_type="email_notification",
+            destination="email:marketing",
+            payload={
+                "email_type": "marketing",
+                "email_data": {
+                    "to_emails": ["recipient@example.com"],
+                    "subject": "Sensitive subject",
+                    "html_content": "<p>Sensitive body</p>",
+                },
+            },
+            max_retries=0,
+        )
+        await async_session.commit()
+
+        stats = await service.process_pending_events(async_session)
+
+        await async_session.refresh(event)
+        assert stats["dead_lettered"] == 1
+        assert event.status == EventStatus.DEAD_LETTER
+        assert event.payload == {"email_type": "marketing", "redacted": True}
+        assert await service.retry_event(async_session, event.id) is False
+
     async def test_event_dead_letter_queue(self, async_session):
         """Test that events move to dead letter queue after max retries."""
         service = EventOutboxService()

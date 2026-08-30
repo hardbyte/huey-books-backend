@@ -282,6 +282,15 @@ class EventOutboxService:
         if not event:
             return False
 
+        if event.status not in (EventStatus.FAILED, EventStatus.DEAD_LETTER):
+            return False
+        if (
+            event.event_type == "email_notification"
+            and isinstance(event.payload, dict)
+            and event.payload.get("redacted") is True
+        ):
+            return False
+
         # Reset for retry
         event.status = EventStatus.PENDING
         event.retry_count = 0
@@ -695,18 +704,22 @@ class EventOutboxService:
         event.status = EventStatus.PUBLISHED
         event.processed_at = datetime.utcnow()
         event.updated_at = datetime.utcnow()
-        if event.event_type == "email_notification":
-            payload = event.payload
-            if isinstance(payload, str):
-                try:
-                    payload = json.loads(payload)
-                except (TypeError, ValueError):
-                    payload = {}
-            email_type = (
-                payload.get("email_type") if isinstance(payload, dict) else None
-            )
-            event.payload = {"email_type": email_type, "redacted": True}
+        self._redact_email_payload(event)
         await db.flush()
+
+    @staticmethod
+    def _redact_email_payload(event: EventOutbox) -> None:
+        if event.event_type != "email_notification":
+            return
+
+        payload = event.payload
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (TypeError, ValueError):
+                payload = {}
+        email_type = payload.get("email_type") if isinstance(payload, dict) else None
+        event.payload = {"email_type": email_type, "redacted": True}
 
     async def _handle_delivery_failure(
         self, db: AsyncSession, event: EventOutbox, error_message: str
@@ -718,6 +731,7 @@ class EventOutboxService:
 
         if event.should_move_to_dead_letter:
             event.status = EventStatus.DEAD_LETTER
+            self._redact_email_payload(event)
             logger.warning(
                 "Event moved to dead letter queue",
                 event_id=event.id,
