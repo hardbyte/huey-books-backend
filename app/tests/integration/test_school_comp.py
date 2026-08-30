@@ -81,6 +81,21 @@ def test_staff_can_comp_a_school(client, session, test_wrivetedadmin_account_hea
     assert school.state == SchoolState.ACTIVE
 
 
+def test_comp_remains_compatible_with_pre_idempotency_clients(
+    client, session, test_wrivetedadmin_account_headers
+):
+    school = _make_inactive_school(session)
+
+    response = client.post(
+        f"/v1/admin/schools/{school.wriveted_identifier}/comp",
+        headers=test_wrivetedadmin_account_headers,
+        json={"days": 90},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "granted"
+
+
 def test_comp_re_grant_extends_never_shortens(
     client, session, test_wrivetedadmin_account_headers
 ):

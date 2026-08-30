@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Literal, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, StringConstraints
 from typing_extensions import Annotated
@@ -65,7 +65,9 @@ def normalize_school_info(
 
 class CompGrantRequest(BaseModel):
     days: int = Field(90, ge=1, le=3650)
-    idempotency_key: str = Field(min_length=1, max_length=128)
+    idempotency_key: str = Field(
+        default_factory=lambda: str(uuid4()), min_length=1, max_length=128
+    )
     reason: str | None = Field(default=None, max_length=500)
     campaign_id: str | None = Field(default=None, max_length=128)
 
