@@ -19,7 +19,7 @@ from app.models.collection import Collection
 from app.models.educator import Educator
 from app.models.school_admin import SchoolAdmin
 from app.models.user import User, UserAccountType
-from app.schemas.school import SchoolCreateIn, SchoolPatchOptions
+from app.schemas.school import SchoolCreateIn, SchoolPatchOptions, normalize_school_info
 
 logger = get_logger()
 
@@ -382,6 +382,8 @@ class SchoolRepositoryImpl(SchoolRepository):
     ) -> School:
         """Create a new school."""
         obj_in_data = obj_in.model_dump()
+        if "info" in obj_in_data:
+            obj_in_data["info"] = normalize_school_info(obj_in_data["info"])
         db_obj = School(**obj_in_data)
         db.add(db_obj)
         if commit:
@@ -398,6 +400,8 @@ class SchoolRepositoryImpl(SchoolRepository):
     ) -> School:
         """Update an existing school."""
         update_data = obj_in.model_dump(exclude_unset=True)
+        if "info" in update_data:
+            update_data["info"] = normalize_school_info(update_data["info"])
         for field, value in update_data.items():
             setattr(db_obj, field, value)
         db.add(db_obj)
@@ -415,6 +419,8 @@ class SchoolRepositoryImpl(SchoolRepository):
     ) -> School:
         """Async version of update."""
         update_data = obj_in.model_dump(exclude_unset=True)
+        if "info" in update_data:
+            update_data["info"] = normalize_school_info(update_data["info"])
         for field, value in update_data.items():
             setattr(db_obj, field, value)
         db.add(db_obj)

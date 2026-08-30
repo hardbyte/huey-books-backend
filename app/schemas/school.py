@@ -42,6 +42,27 @@ class SchoolInfo(BaseModel):
     terms_acceptance: Optional[dict[str, Any]] = None
 
 
+def normalize_school_info(
+    info: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    """Coerce a School.info dict's location coordinates to the canonical shape.
+
+    School.info is untyped JSONB written by several sources that store the
+    location block's coordinates inconsistently (lat/long as numbers or as
+    strings). Coordinates are coerced to strings via SchoolLocation so stored
+    data matches the serialized response shape. Every other info key, and any
+    unmodelled key inside location, is preserved.
+    """
+    if not isinstance(info, dict):
+        return info
+    location = info.get("location")
+    if not isinstance(location, dict):
+        return info
+    canonical_location = SchoolLocation.model_validate(location).model_dump()
+    merged_location = {**location, **canonical_location}
+    return {**info, "location": merged_location}
+
+
 class SchoolBrief(SchoolIdentity):
     name: str
     state: SchoolState | None = None
