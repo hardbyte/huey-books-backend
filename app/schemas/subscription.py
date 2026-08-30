@@ -37,6 +37,10 @@ class SubscriptionCreateIn(BaseModel):
     info: dict | None = None
     latest_checkout_session_id: str | None = None
     expiration: datetime | None = None
+    stripe_status: str | None = None
+    collection_method: str | None = None
+    paid_at: datetime | None = None
+    last_stripe_event_created_at: datetime | None = None
 
 
 class SubscriptionUpdateIn(BaseModel):
@@ -45,3 +49,7 @@ class SubscriptionUpdateIn(BaseModel):
     info: dict | None = None
     latest_checkout_session_id: str | None = None
     expiration: datetime | None = None
+    stripe_status: str | None = None
+    collection_method: str | None = None
+    paid_at: datetime | None = None
+    last_stripe_event_created_at: datetime | None = None

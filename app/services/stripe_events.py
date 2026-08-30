@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
 from typing import Optional
+from uuid import UUID
 
 import stripe
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from stripe import Customer as StripeCustomer
 from stripe import Price as StripePrice
@@ -18,6 +19,11 @@ from app.models import School, User
 from app.models.event import EventSlackChannel
 from app.models.product import Product
 from app.models.school import SchoolState
+from app.models.school_billing import (
+    SchoolBillingAttempt,
+    SchoolBillingAttemptStatus,
+    StripeEventReceipt,
+)
 from app.models.stripe_contribution import StripeContributionReceipt
 from app.models.subscription import Subscription, SubscriptionType
 from app.models.user import UserAccountType
@@ -31,10 +37,14 @@ from app.services.events import create_event
 from app.services.school_access import (
     COMP_GRANT_SOURCES,
     CONTRIBUTION_GRANT_SOURCE,
+    RETIREABLE_SOURCES,
     active_stripe_subscription_stmt,
+    deactivate_school_on_non_payment_sync,
     ensure_comp_product_sync,
+    invoice_pending_grant_id,
     lock_school_access_sync,
 )
+from app.services.school_billing_status import recompute_school_access_sync
 from app.services.school_emails import (
     render_contribution_thankyou_html,
     render_school_activated_html,
@@ -56,155 +66,588 @@ CONTRIBUTION_GRANT_PRODUCT_NAME = "School contribution (comped)"
 CONTRIBUTION_GRANT_SUBSCRIPTION_PREFIX = "comp_contribution_"
 
 
-def process_stripe_event(event_type: str, event_data):
-    """
-    Processes an event sent by Stripe webhook.
-
-    These webhook events are sent asynchronously, and order is not guaranteed -
-    i.e. when a new customer subscribes, a `customer.subscription.created` event
-    may be sent before a `customer.created` event.
-    See https://stripe.com/docs/webhooks/best-practices#event-ordering
-
-    Because of this, it may be wise to consider overarching transactions and use-cases,
-    fetching data from Stripe as needed, rather than blindly processing each event separately.
-    For example, when a new customer subscribes, we may want to establish a
-    user/subscription/product relationship in a single transaction, rather than piecemeal.
-
-    The main use-cases we want to handle at this stage are:
-    - A brand new customer subscribes, without an existing account
-    - An existing Free tier customer subscribes
-    - An existing customer modifies their subscription (e.g. upgrades, downgrades, or cancels)
-
-    We can still capture other events for logging purposes,
-    but we need not apply any business logic in them.
-
-    It's worth noting that it's only the events we receive that are asynchronous,
-    not the underlying processes and database transactions at Stripe's end.
-    So, for example, when a new customer successfully subscribes, and the following events are received
-    in the order listed (with the actual chronological order of the underlying process in parentheses):
-
-    (2) - `customer.subscription.created`
-            (contains the `customer` id, information about the subscription)
-    (3) - `checkout.session.completed`
-            (contains the `customer` id, the `subscription` id, and any included
-            `client_reference_id` sent by our frontend to identify the user)
-    (1) - `customer.created`
-            (contains the `customer` information, but no `subscription` information)
-
-    We -could- handle each of these events separately (with the incomplete pictures they each provide),
-    but will be able to handle them more efficiently if we target the event with the most significance and pointers/id's.
-
-    For this example, it's most convenient to do this by only heavily processing the `checkout.session.completed`
-    event, which includes id's for relevant instances of `customer` and `subscription` (and by extension `price`/`product`) in its payload.
-    As this is the chronologically final event in this use-case, we can then simply query the Stripe API for the
-    relevant instances of `customer` and `subscription`, knowing that Stripe has already processed these.
-    This effectively gives us the full picture in a single event, instead of waiting for and blindly processing the
-    `customer.created` and `customer.subscription.created` events.
-    """
-
-    object_type = event_data.get("object")
-
-    logger.info(
-        "Processing a stripe event", event_type=event_type, event_data=event_data
-    )
+def process_stripe_event(
+    event_type: str,
+    event_data: dict,
+    *,
+    event_id: str | None = None,
+    event_created: int | None = None,
+    api_version: str | None = None,
+) -> dict[str, str]:
+    """Claim and apply one Stripe event in a single database transaction."""
+    logger.info("Processing a stripe event", event_type=event_type, event_id=event_id)
     bind_contextvars(stripe_event_type=event_type)
-
+    event_created_at = (
+        datetime.utcfromtimestamp(event_created) if event_created is not None else None
+    )
     Session = get_session_maker()
-    with Session() as session:
-        # One-off "contribute a month" checkouts run in payment mode and may have
-        # no Stripe customer (guest checkout), so resolve the school directly and
-        # bypass the customer-centric extraction the subscription events rely on.
-        if event_type in (
+    with Session.begin() as session:
+        if event_id is not None:
+            claimed_event_id = session.execute(
+                pg_insert(StripeEventReceipt)
+                .values(
+                    event_id=event_id,
+                    event_type=event_type,
+                    event_created_at=event_created_at,
+                    api_version=api_version,
+                )
+                .on_conflict_do_nothing(index_elements=[StripeEventReceipt.event_id])
+                .returning(StripeEventReceipt.event_id)
+            ).scalar_one_or_none()
+            if claimed_event_id is None:
+                logger.info("Ignoring duplicate Stripe event", event_id=event_id)
+                return {"status": "duplicate"}
+        if not _handle_durable_school_billing_event(
+            session, event_type, event_data, event_created_at
+        ):
+            _dispatch_stripe_event(session, event_type, event_data)
+    return {"status": "processed"}
+
+
+def _dispatch_stripe_event(session, event_type: str, event_data: dict) -> None:
+    if event_type in (
+        "checkout.session.completed",
+        "checkout.session.async_payment_succeeded",
+    ) and _is_contribution_checkout(event_data):
+        contribution_school = _resolve_school_from_client_reference(session, event_data)
+        _handle_contribution_checkout_completed(
+            session, contribution_school, event_data
+        )
+        return
+
+    wriveted_user, school, _ = _extract_user_and_customer_from_stripe_object(
+        session, event_data, event_data.get("object")
+    )
+    match event_type:
+        case "invoice.paid":
+            _handle_invoice_paid(session, wriveted_user, school, event_data)
+        case "invoice.upcoming":
+            _handle_invoice_upcoming(session, event_data)
+        case "invoice.finalized":
+            _handle_invoice_finalized(session, school, event_data)
+        case "invoice.voided" | "invoice.marked_uncollectible":
+            _handle_invoice_not_collected(
+                session, wriveted_user, school, event_type, event_data
+            )
+        case "invoice.payment_failed":
+            _handle_invoice_payment_failed(session, wriveted_user, school, event_data)
+        case "checkout.session.completed" | "checkout.session.async_payment_succeeded":
+            _handle_checkout_session_completed(
+                session, wriveted_user, school, event_data
+            )
+        case "customer.subscription.updated":
+            _handle_subscription_updated(session, wriveted_user, school, event_data)
+        case "customer.subscription.deleted":
+            _handle_subscription_cancelled(session, wriveted_user, school, event_data)
+        case "customer.subscription.created":
+            _handle_subscription_created(session, wriveted_user, school, event_data)
+        case "customer.created" | "customer.updated" | "payment_intent.succeeded":
+            logger.info(
+                "Stripe event requires no local transition", event_type=event_type
+            )
+        case "payment_intent.payment_failed":
+            logger.warning("Payment failed")
+        case _:
+            logger.info("Unhandled Stripe event", event_type=event_type)
+
+
+def _handle_durable_school_billing_event(
+    session,
+    event_type: str,
+    event_data: dict,
+    event_created_at: datetime | None,
+) -> bool:
+    attempt = _billing_attempt_for_event(session, event_type, event_data)
+    authoritative_subscription = None
+    prefetched_local_subscription = None
+    if (
+        event_type
+        in {
             "checkout.session.completed",
             "checkout.session.async_payment_succeeded",
-        ) and _is_contribution_checkout(event_data):
-            contribution_school = _resolve_school_from_client_reference(
-                session, event_data
+        }
+        and attempt is not None
+        and not _is_contribution_checkout(event_data)
+    ):
+        subscription_id = _stripe_id(event_data.get("subscription"))
+        if subscription_id is not None:
+            authoritative_subscription = _retrieve_subscription(
+                subscription_id, event_data
             )
-            _handle_contribution_checkout_completed(
-                session, contribution_school, event_data
-            )
-            return
-
-        wriveted_user, school, stripe_customer = (
-            _extract_user_and_customer_from_stripe_object(
-                session, event_data, object_type
-            )
+    elif event_type == "invoice.paid":
+        subscription_id = _invoice_subscription_id(event_data)
+        prefetched_local_subscription = (
+            subscription_repository.get_by_id(session, subscription_id)
+            if subscription_id
+            else None
         )
-        # we now have a stripe customer and, if they exist, an equivalent wriveted user/school
+        if attempt is not None or (
+            prefetched_local_subscription is not None
+            and prefetched_local_subscription.school_id is not None
+        ):
+            authoritative_subscription = _retrieve_subscription(
+                subscription_id, event_data
+            )
+    elif event_type in {
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    }:
+        prefetched_local_subscription = subscription_repository.get_by_id(
+            session, event_data.get("id")
+        )
+        authoritative_subscription = _retrieve_subscription(
+            event_data.get("id"), event_data
+        )
 
-        match event_type:
-            # Actionable events
-            case "invoice.paid":
-                _handle_invoice_paid(session, wriveted_user, school, event_data)
-            case "invoice.upcoming":
-                # Fires ~ahead of a renewal charge; remind school admins.
-                _handle_invoice_upcoming(session, event_data)
-            case "invoice.finalized":
-                # Audit only: the invoice exists and is sent; no state change.
-                _handle_invoice_finalized(session, school, event_data)
-            case "invoice.voided" | "invoice.marked_uncollectible":
-                # Treated as non-payment. Access is not dropped here; that flows
-                # from the subscription being cancelled (Dashboard: cancel unpaid
-                # subscription N days overdue) → customer.subscription.deleted.
-                _handle_invoice_not_collected(
-                    session, wriveted_user, school, event_type, event_data
+    if (
+        authoritative_subscription is not None
+        and event_type != "customer.subscription.deleted"
+    ):
+        items = (authoritative_subscription.get("items") or {}).get("data") or []
+        price_id = (items[0].get("price") or {}).get("id") if items else None
+        if price_id is not None:
+            # Product synchronization can call Stripe. Complete it before any
+            # school/attempt row lock is acquired.
+            _sync_stripe_price_with_wriveted_product(session, price_id)
+
+    locked_school: School | None = None
+    if attempt is not None:
+        locked_school = lock_school_access_sync(session, attempt.school_id)
+        if locked_school is None:
+            return True
+        attempt = session.execute(
+            select(SchoolBillingAttempt)
+            .where(SchoolBillingAttempt.id == attempt.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one()
+
+    if event_type in {
+        "checkout.session.expired",
+        "checkout.session.async_payment_failed",
+    }:
+        if (
+            attempt is not None
+            and attempt.status != SchoolBillingAttemptStatus.PAID
+            and not _attempt_event_is_stale(attempt, event_created_at)
+        ):
+            attempt.status = (
+                SchoolBillingAttemptStatus.EXPIRED
+                if event_type == "checkout.session.expired"
+                else SchoolBillingAttemptStatus.FAILED
+            )
+            _advance_event_watermark(attempt, event_created_at)
+        return True
+
+    if event_type in {
+        "checkout.session.completed",
+        "checkout.session.async_payment_succeeded",
+    }:
+        if attempt is None or _is_contribution_checkout(event_data):
+            return False
+        if _attempt_event_is_stale(attempt, event_created_at):
+            return True
+        subscription_id = _stripe_id(event_data.get("subscription"))
+        if subscription_id is None:
+            return True
+        stripe_subscription = authoritative_subscription
+        if stripe_subscription is None:
+            return True
+        paid = event_data.get("payment_status") in {"paid", "no_payment_required"}
+        subscription = _upsert_school_subscription(
+            session,
+            attempt,
+            stripe_subscription,
+            event_created_at,
+            paid=paid,
+            checkout_session_id=event_data.get("id"),
+        )
+        attempt.stripe_subscription_id = subscription.id
+        _advance_event_watermark(attempt, event_created_at)
+        if paid:
+            attempt.status = SchoolBillingAttemptStatus.PAID
+            _retire_comp_grants(session, attempt.school_id)
+        school = locked_school
+        if school is None:
+            return True
+        recompute_school_access_sync(session, school)
+        _record_school_billing_event(session, school, event_type, event_data, attempt)
+        return True
+
+    if event_type == "invoice.paid":
+        subscription_id = _invoice_subscription_id(event_data)
+        local_subscription = prefetched_local_subscription
+        if attempt is None and (
+            local_subscription is None or local_subscription.school_id is None
+        ):
+            return False
+        if attempt is not None and _attempt_event_is_stale(attempt, event_created_at):
+            return True
+        stripe_subscription = authoritative_subscription
+        if stripe_subscription is None:
+            return False
+        school_id = (
+            attempt.school_id if attempt is not None else local_subscription.school_id
+        )
+        school = locked_school or lock_school_access_sync(session, school_id)
+        if school is None:
+            return True
+        if local_subscription is not None:
+            local_subscription = session.execute(
+                select(Subscription)
+                .where(Subscription.id == local_subscription.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).scalar_one()
+            if _subscription_event_is_stale(local_subscription, event_created_at):
+                return True
+        subscription = _upsert_school_subscription(
+            session,
+            attempt,
+            stripe_subscription,
+            event_created_at,
+            paid=True,
+            school=school,
+        )
+        if attempt is not None:
+            attempt.status = SchoolBillingAttemptStatus.PAID
+            attempt.stripe_invoice_id = event_data.get("id")
+            attempt.stripe_subscription_id = subscription.id
+            _advance_event_watermark(attempt, event_created_at)
+        _retire_comp_grants(session, school.wriveted_identifier)
+        recompute_school_access_sync(session, school)
+        _record_school_billing_event(session, school, event_type, event_data, attempt)
+        return True
+
+    if event_type == "invoice.finalization_failed":
+        if attempt is None:
+            return False
+        if attempt.status == SchoolBillingAttemptStatus.PAID:
+            return True
+        if _attempt_event_is_stale(attempt, event_created_at):
+            return True
+        finalization_error = event_data.get("last_finalization_error") or {}
+        attempt.failure_reason = (
+            finalization_error.get("message")
+            or finalization_error.get("code")
+            or "Stripe could not finalize the invoice"
+        )
+        _advance_event_watermark(attempt, event_created_at)
+        school = locked_school
+        if school is None:
+            return True
+        _record_school_billing_event(session, school, event_type, event_data, attempt)
+        return True
+
+    terminal_invoice_statuses = {
+        "invoice.voided": SchoolBillingAttemptStatus.VOIDED,
+        "invoice.marked_uncollectible": SchoolBillingAttemptStatus.UNCOLLECTIBLE,
+    }
+    if event_type in terminal_invoice_statuses:
+        if attempt is None:
+            return False
+        if attempt.status == SchoolBillingAttemptStatus.PAID:
+            return True
+        if _attempt_event_is_stale(attempt, event_created_at):
+            return True
+        attempt.status = terminal_invoice_statuses[event_type]
+        attempt.stripe_invoice_id = event_data.get("id")
+        _advance_event_watermark(attempt, event_created_at)
+        if attempt.stripe_subscription_id:
+            subscription = subscription_repository.get_by_id(
+                session, attempt.stripe_subscription_id
+            )
+            if subscription is not None and subscription.paid_at is None:
+                subscription.is_active = False
+                subscription.stripe_status = "unpaid"
+                _advance_event_watermark(subscription, event_created_at)
+        pending_grant = session.get(
+            Subscription, invoice_pending_grant_id(attempt.school_id)
+        )
+        if pending_grant is not None and str(
+            (pending_grant.info or {}).get("billing_attempt_id")
+        ) == str(attempt.id):
+            pending_grant.is_active = False
+        school = locked_school
+        if school is None:
+            return True
+        recompute_school_access_sync(session, school)
+        _record_school_billing_event(session, school, event_type, event_data, attempt)
+        return True
+
+    if event_type in {
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    }:
+        subscription_id = event_data.get("id")
+        local_subscription = prefetched_local_subscription
+        if attempt is None and (
+            local_subscription is None or local_subscription.school_id is None
+        ):
+            return False
+        school_id = (
+            attempt.school_id if attempt is not None else local_subscription.school_id
+        )
+        school = locked_school or lock_school_access_sync(session, school_id)
+        if school is None:
+            return True
+        if local_subscription is not None:
+            local_subscription = session.execute(
+                select(Subscription)
+                .where(Subscription.id == local_subscription.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).scalar_one()
+            if _subscription_event_is_stale(local_subscription, event_created_at):
+                return True
+        if event_type == "customer.subscription.deleted":
+            if local_subscription is not None:
+                local_subscription.is_active = False
+                local_subscription.stripe_status = (
+                    event_data.get("status") or "canceled"
                 )
-            case "invoice.payment_failed":
-                # Stripe runs its own dunning retries; final give-up arrives as
-                # customer.subscription.deleted, which deactivates the school.
-                _handle_invoice_payment_failed(
-                    session, wriveted_user, school, event_data
-                )
-            case (
-                "checkout.session.completed"
-                | "checkout.session.async_payment_succeeded"
+                _advance_event_watermark(local_subscription, event_created_at)
+                ended_at = event_data.get("ended_at")
+                if ended_at is not None:
+                    local_subscription.expiration = datetime.utcfromtimestamp(ended_at)
+            if (
+                attempt is not None
+                and attempt.status != SchoolBillingAttemptStatus.PAID
             ):
-                _handle_checkout_session_completed(
-                    session, wriveted_user, school, event_data
-                )
+                attempt.status = SchoolBillingAttemptStatus.CANCELLED
+                _advance_event_watermark(attempt, event_created_at)
+        else:
+            stripe_subscription = authoritative_subscription
+            if stripe_subscription is None:
+                return True
+            _upsert_school_subscription(
+                session,
+                attempt,
+                stripe_subscription,
+                event_created_at,
+                paid=False,
+                school=school,
+            )
+        recompute_school_access_sync(session, school)
+        _record_school_billing_event(session, school, event_type, event_data, attempt)
+        return True
 
-            case "customer.subscription.updated":
-                # Sent when the subscription is successfully started, after the payment is confirmed.
-                # Also sent whenever a subscription is changed. For example applying a discount,
-                # adding an invoice item, and changing plans all trigger this event.
-                # https://stripe.com/docs/api/subscriptions/object
-                logger.info(
-                    "Subscription updated. Updating underlying product or plan if necessary"
-                )
-                _handle_subscription_updated(session, wriveted_user, school, event_data)
+    if event_type == "invoice.finalized" and attempt is not None:
+        attempt.stripe_invoice_id = event_data.get("id")
+        attempt.hosted_invoice_url = event_data.get("hosted_invoice_url")
+        attempt.failure_reason = None
+        _advance_event_watermark(attempt, event_created_at)
+        return True
+    return False
 
-            case "customer.subscription.deleted":
-                # Sent when a customer’s subscription ends
-                # https://stripe.com/docs/api/subscriptions/object
-                logger.info("Subscription deleted")
-                _handle_subscription_cancelled(
-                    session, wriveted_user, school, event_data
-                )
 
-            # Log-and-move-on events
-            case "customer.created":
-                logger.info("Stripe customer created")
+def _billing_attempt_for_event(
+    session, event_type: str, event_data: dict
+) -> SchoolBillingAttempt | None:
+    metadata = event_data.get("metadata") or {}
+    parent = event_data.get("parent") or {}
+    subscription_details = parent.get("subscription_details") or {}
+    metadata = {**(subscription_details.get("metadata") or {}), **metadata}
+    attempt_id = metadata.get("school_billing_attempt_id")
+    if attempt_id:
+        try:
+            attempt = session.get(SchoolBillingAttempt, UUID(str(attempt_id)))
+        except ValueError:
+            attempt = None
+        if attempt is not None:
+            return attempt
 
-            case "customer.updated":
-                logger.info("Stripe customer updated. Not taking any action")
+    object_id = event_data.get("id")
+    subscription_id = (
+        event_data.get("subscription")
+        if event_type.startswith("checkout.session")
+        else _invoice_subscription_id(event_data)
+        if event_type.startswith("invoice.")
+        else object_id
+        if event_type.startswith("customer.subscription")
+        else None
+    )
+    conditions = []
+    if event_type.startswith("checkout.session") and object_id:
+        conditions.append(SchoolBillingAttempt.stripe_checkout_session_id == object_id)
+    if event_type.startswith("invoice.") and object_id:
+        conditions.append(SchoolBillingAttempt.stripe_invoice_id == object_id)
+    if subscription_id:
+        subscription_condition = (
+            SchoolBillingAttempt.stripe_subscription_id == _stripe_id(subscription_id)
+        )
+        if event_type.startswith("invoice."):
+            subscription_condition = subscription_condition & (
+                SchoolBillingAttempt.stripe_invoice_id.is_(None)
+            )
+        conditions.append(subscription_condition)
+    if not conditions:
+        return None
+    return (
+        session.execute(
+            select(SchoolBillingAttempt)
+            .where(or_(*conditions))
+            .order_by(SchoolBillingAttempt.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
-            case "customer.subscription.created":
-                logger.info(
-                    "Stripe subscription created",
-                    stripe_subscription_id=event_data.get("subscription"),
-                )
-                _handle_subscription_created(session, wriveted_user, school, event_data)
 
-            case "payment_intent.succeeded":
-                logger.info("Payment succeeded")
+def _retrieve_subscription(subscription_id: str | None, fallback: dict):
+    if subscription_id is None:
+        return fallback
+    try:
+        return StripeSubscription.retrieve(subscription_id)
+    except Exception as error:
+        logger.warning(
+            "Could not retrieve authoritative Stripe subscription",
+            subscription_id=subscription_id,
+            error=str(error),
+        )
+        if fallback.get("object") == "subscription":
+            return fallback
+        raise
 
-            case "payment_intent.payment_failed":
-                logger.warning("Payment failed")
 
-            case _:
-                logger.info("Unhandled Stripe event")
-                logger.debug("Stripe event data", stripe_event_data=event_data)
+def _upsert_school_subscription(
+    session,
+    attempt: SchoolBillingAttempt | None,
+    stripe_subscription,
+    event_created_at: datetime | None,
+    *,
+    paid: bool,
+    checkout_session_id: str | None = None,
+    school: School | None = None,
+) -> Subscription:
+    subscription_id = _stripe_id(stripe_subscription.get("id")) or (
+        attempt.stripe_subscription_id if attempt is not None else None
+    )
+    if subscription_id is None:
+        raise ValueError("Stripe subscription id is required")
+    if school is None and attempt is not None:
+        school = session.execute(
+            select(School).where(School.wriveted_identifier == attempt.school_id)
+        ).scalar_one()
+    if school is None:
+        raise ValueError("School is required for a school subscription")
+
+    items = (stripe_subscription.get("items") or {}).get("data") or []
+    price_id = ((items[0].get("price") or {}).get("id") if items else None) or (
+        attempt.configured_price_id if attempt is not None else None
+    )
+    if price_id is None:
+        raise ValueError("Stripe price id is required")
+    _sync_stripe_price_with_wriveted_product(session, price_id)
+    period_end = stripe_subscription.get("current_period_end")
+    if period_end is None and items:
+        period_end = items[0].get("current_period_end")
+    stripe_period_end = (
+        datetime.utcfromtimestamp(period_end)
+        if isinstance(period_end, (int, float))
+        else period_end
+        if isinstance(period_end, datetime)
+        else datetime.utcnow()
+    )
+    existing = subscription_repository.get_by_id(session, subscription_id)
+    if paid:
+        paid_at = event_created_at or datetime.utcnow()
+    elif existing is not None:
+        paid_at = existing.paid_at
+    else:
+        paid_at = None
+    # A subscription update can move current_period_end before a renewal invoice
+    # is paid. Preserve the locally paid-through boundary until invoice.paid.
+    expiration = (
+        stripe_period_end
+        if paid or existing is None or existing.paid_at is None
+        else existing.expiration
+    )
+    status = stripe_subscription.get("status")
+    return subscription_repository.upsert(
+        session,
+        SubscriptionCreateIn(
+            id=subscription_id,
+            type=SubscriptionType.SCHOOL,
+            product_id=price_id,
+            stripe_customer_id=str(
+                _stripe_id(stripe_subscription.get("customer"))
+                or (attempt.stripe_customer_id if attempt is not None else "")
+            ),
+            school_id=str(school.wriveted_identifier),
+            is_active=(
+                paid_at is not None and status in {"active", "past_due", "trialing"}
+            ),
+            expiration=expiration,
+            latest_checkout_session_id=checkout_session_id,
+            stripe_status=status,
+            collection_method=stripe_subscription.get("collection_method"),
+            paid_at=paid_at,
+            last_stripe_event_created_at=(
+                event_created_at
+                or (existing.last_stripe_event_created_at if existing else None)
+            ),
+        ),
+        commit=False,
+    )
+
+
+def _record_school_billing_event(
+    session,
+    school: School,
+    event_type: str,
+    event_data: dict,
+    attempt: SchoolBillingAttempt | None,
+) -> None:
+    create_event(
+        session=session,
+        title="School billing transition",
+        description=event_type,
+        info={
+            "stripe_event_type": event_type,
+            "stripe_object_id": event_data.get("id"),
+            "school_billing_attempt_id": str(attempt.id) if attempt else None,
+        },
+        school=school,
+        commit=False,
+        enable_processing=False,
+        external_notifications=False,
+    )
+
+
+def _attempt_event_is_stale(
+    attempt: SchoolBillingAttempt, event_created_at: datetime | None
+) -> bool:
+    return (
+        event_created_at is not None
+        and attempt.last_stripe_event_created_at is not None
+        and event_created_at < attempt.last_stripe_event_created_at
+    )
+
+
+def _subscription_event_is_stale(
+    subscription: Subscription, event_created_at: datetime | None
+) -> bool:
+    return (
+        event_created_at is not None
+        and subscription.last_stripe_event_created_at is not None
+        and event_created_at < subscription.last_stripe_event_created_at
+    )
+
+
+def _advance_event_watermark(target, event_created_at: datetime | None) -> None:
+    if event_created_at is not None and (
+        target.last_stripe_event_created_at is None
+        or event_created_at > target.last_stripe_event_created_at
+    ):
+        target.last_stripe_event_created_at = event_created_at
+
+
+def _stripe_id(value) -> str | None:
+    if isinstance(value, dict):
+        return value.get("id")
+    return str(value) if value else None
 
 
 def _extract_user_and_customer_from_stripe_object(
@@ -419,6 +862,8 @@ def _handle_invoice_paid(
 
     is_active = stripe_subscription.status in {"active", "past_due"}
     expiration = datetime.utcfromtimestamp(stripe_subscription.current_period_end)
+    paid_at = datetime.utcnow()
+    collection_method = stripe_subscription.get("collection_method")
 
     subscription = subscription_repository.get_by_id(
         session, subscription_id=stripe_subscription_id
@@ -439,11 +884,18 @@ def _handle_invoice_paid(
                 school_id=str(school.wriveted_identifier) if school else None,
                 is_active=is_active,
                 expiration=expiration,
+                stripe_status=stripe_subscription.status,
+                collection_method=collection_method,
+                paid_at=paid_at,
             ),
+            commit=False,
         )
     else:
         subscription.expiration = expiration
         subscription.is_active = is_active
+        subscription.stripe_status = stripe_subscription.status
+        subscription.collection_method = collection_method
+        subscription.paid_at = paid_at
         if school is not None and subscription.school_id is None:
             subscription.school_id = school.wriveted_identifier
 
@@ -459,6 +911,7 @@ def _handle_invoice_paid(
     if school is not None and is_active:
         _activate_school_after_payment(session, school, None)
         _retire_comp_grants(session, school.wriveted_identifier)
+        recompute_school_access_sync(session, school)
 
     # Use unified event workflow instead of direct crud.event.create
     create_event(
@@ -474,6 +927,7 @@ def _handle_invoice_paid(
         },
         school=school,
         account=wriveted_user,
+        commit=False,
         enable_processing=False,  # No processing needed for payment received
         external_notifications=False,  # Internal accounting event
     )
@@ -498,6 +952,7 @@ def _handle_invoice_finalized(session, school: School | None, event_data: dict) 
             "collection_method": event_data.get("collection_method"),
         },
         school=school,
+        commit=False,
         enable_processing=False,
         external_notifications=False,
     )
@@ -510,11 +965,15 @@ def _handle_invoice_not_collected(
     event_type: str,
     event_data: dict,
 ) -> None:
-    """Handle a voided / uncollectible invoice as non-payment.
+    """Handle a voided / uncollectible invoice as terminal non-payment.
 
-    Access is intentionally not dropped here: the school's lifecycle is driven by
-    the subscription being cancelled (customer.subscription.deleted). This records
-    the fact and alerts staff.
+    Belt-and-suspenders so never-paid access does not hinge on Stripe's
+    "cancel the subscription when an invoice is N days overdue" setting being
+    configured: for a school whose access rests on an unpaid invoice (i.e. no
+    real *paid* Stripe subscription), retire the ``invoice_pending`` grant and
+    drop the school to INACTIVE now. A voided renewal invoice on a school that
+    IS paying (a live Stripe sub exists) is audit-only — its lifecycle stays with
+    the subscription (``customer.subscription.deleted``).
     """
     create_event(
         session=session,
@@ -529,9 +988,14 @@ def _handle_invoice_not_collected(
         school=school,
         account=wriveted_user,
         slack_channel=EventSlackChannel.MEMBERSHIPS,
+        commit=False,
         enable_processing=False,
         external_notifications=True,
     )
+
+    # Access lifecycle lives in the school_access service, not this webhook adapter.
+    if school is not None:
+        deactivate_school_on_non_payment_sync(session, school)
 
 
 def _handle_invoice_payment_failed(
@@ -560,6 +1024,7 @@ def _handle_invoice_payment_failed(
         school=school,
         account=wriveted_user,
         slack_channel=EventSlackChannel.MEMBERSHIPS,
+        commit=False,
         enable_processing=False,
         external_notifications=True,
     )
@@ -631,6 +1096,14 @@ def _handle_checkout_session_completed(
         if wriveted_user and wriveted_user.type == UserAccountType.PARENT
         else None
     )
+    payment_status = event_data.get("payment_status")
+    paid = payment_status in ("paid", "no_payment_required")
+    stripe_status = getattr(stripe_subscription, "status", None)
+    if not isinstance(stripe_status, str):
+        stripe_status = None
+    collection_method = stripe_subscription.get("collection_method")
+    if not isinstance(collection_method, str):
+        collection_method = None
 
     base_subscription_data = SubscriptionCreateIn(
         id=stripe_subscription_id,
@@ -639,13 +1112,18 @@ def _handle_checkout_session_completed(
         parent_id=wriveted_parent_id,
         school_id=str(school.wriveted_identifier) if school else None,
         expiration=stripe_subscription.current_period_end,
+        stripe_status=stripe_status,
+        collection_method=collection_method,
+        paid_at=(datetime.utcnow() if paid else None),
     )
     logger.info(
         "Upserting subscription in our database",
         base_subscription_data=base_subscription_data,
         checkout_session_id=checkout_session_id,
     )
-    subscription = subscription_repository.upsert(session, base_subscription_data)
+    subscription = subscription_repository.upsert(
+        session, base_subscription_data, commit=False
+    )
     logger.debug("Upserted subscription in our database", subscription=subscription)
 
     # Only a cleared payment marks the subscription active. "paid" = charged;
@@ -653,8 +1131,6 @@ def _handle_checkout_session_completed(
     # access). "unpaid" (async payment not yet cleared) leaves it inactive until
     # checkout.session.async_payment_succeeded arrives. Gating this (not just the
     # school state) keeps has_active_subscription / supporter flags honest.
-    payment_status = event_data.get("payment_status")
-    paid = payment_status in ("paid", "no_payment_required")
     subscription.is_active = paid
     subscription.latest_checkout_session_id = checkout_session_id
 
@@ -701,6 +1177,7 @@ def _handle_checkout_session_completed(
             # "subscription_link": f"https://dashboard.stripe.com/subscriptions/{stripe_subscription_id}",
             # "product_link": f"https://dashboard.stripe.com/products/{stripe_price_id}",
         },
+        commit=False,
         enable_processing=True,  # This will automatically handle background processing via EventOutbox
         external_notifications=True,  # This will ensure Slack alerts are sent
     )
@@ -730,10 +1207,6 @@ def _handle_checkout_session_completed(
             email_type=EmailType.TRANSACTIONAL,
             user_id=str(wriveted_user.id) if wriveted_user else None,
         )
-        # create_event above already committed the subscription; this queues the
-        # welcome email as a separate outbox row that publish_event_sync does not
-        # commit, so persist it before the session closes.
-        session.commit()
     elif wriveted_parent_id is not None and not stripe_customer_email:
         logger.warning(
             "Skipping subscription welcome email - no customer email address available"
@@ -852,12 +1325,13 @@ def _get_active_comp_grant(session, school_id) -> Optional[Subscription]:
 
 
 def _retire_comp_grants(session, school_id) -> None:
-    """Deactivate a school's comped grants (contribution or invite).
+    """Deactivate a school's comped grants and any in-flight checkout reservation.
 
     Called when a school gains/uses a real auto-renewing Stripe subscription, so
-    any superseded comp grant does not leave a second active ``subscriptions``
-    row — which would make ``School.subscription`` (uselist=False) non-deterministic
-    and the "supporter"/"paying" flags unreliable.
+    any superseded comp grant or checkout_pending reservation does not leave a
+    second active ``subscriptions`` row — which would make ``School.subscription``
+    (uselist=False) non-deterministic and the "supporter"/"paying" flags
+    unreliable, and would keep the billing slot wrongly reserved.
     """
     if lock_school_access_sync(session, school_id) is None:
         return
@@ -866,7 +1340,7 @@ def _retire_comp_grants(session, school_id) -> None:
             select(Subscription).where(
                 Subscription.school_id == school_id,
                 Subscription.is_active.is_(True),
-                Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
+                Subscription.info["source"].astext.in_(RETIREABLE_SOURCES),
             )
         )
         .scalars()
@@ -1045,6 +1519,7 @@ def _handle_contribution_checkout_completed(
             None if "test" in checkout_session_id else EventSlackChannel.MEMBERSHIPS
         ),
         slack_extra={"school_name": school.name, "amount": amount_str or ""},
+        commit=False,
         enable_processing=True,
         external_notifications=True,
     )
@@ -1279,7 +1754,6 @@ def _handle_invoice_upcoming(session, event_data):
         },
         email_type=EmailType.TRANSACTIONAL,
     )
-    session.commit()
     logger.info("Sent school renewal reminder", school=school.name)
 
 
@@ -1346,10 +1820,17 @@ def _handle_subscription_created(
         if wriveted_user and wriveted_user.type == UserAccountType.PARENT
         else None
     )
+    is_school_subscription = school is not None
     subscription_data = SubscriptionCreateIn(
         id=stripe_subscription_id,
         type=SubscriptionType.FAMILY if wriveted_parent_id else SubscriptionType.SCHOOL,
-        is_active=stripe_subscription_status in {"active", "past_due"},
+        # A school subscription is not an entitlement until Checkout or
+        # invoice.paid supplies payment evidence. Family subscriptions retain
+        # their legacy status-driven behavior.
+        is_active=(
+            not is_school_subscription
+            and stripe_subscription_status in {"active", "past_due"}
+        ),
         product_id=stripe_price_id,
         stripe_customer_id=str(event_data.get("customer"))
         if event_data.get("customer")
@@ -1357,28 +1838,18 @@ def _handle_subscription_created(
         parent_id=wriveted_parent_id,
         school_id=str(school.wriveted_identifier) if school else None,
         expiration=stripe_subscription_expiry,
+        stripe_status=stripe_subscription_status,
+        collection_method=event_data.get("collection_method"),
     )
 
     logger.debug(
         "Creating subscription in our database", subscription_data=subscription_data
     )
     subscription, created = subscription_repository.get_or_create(
-        session, subscription_data
+        session, subscription_data, commit=False
     )
     if created:
         logger.info("Created a new subscription", subscription=subscription)
-
-    # A real, active Stripe subscription for a school supersedes any comped
-    # contribution grant; retire it so there is a single active subscription row.
-    if (
-        school is not None
-        and subscription.is_active
-        and subscription.stripe_customer_id
-        and not _is_unpaid_invoice_subscription(event_data)
-    ):
-        school = lock_school_access_sync(session, school.wriveted_identifier)
-        if school is not None:
-            _retire_comp_grants(session, school.wriveted_identifier)
 
 
 def _handle_subscription_updated(
@@ -1419,10 +1890,15 @@ def _handle_subscription_updated(
 
     # populate the subscription in our database with the latest information
     subscription.product_id = stripe_price_id
-    subscription.is_active = stripe_subscription_status in {"active", "past_due"}
-    subscription.expiration = datetime.utcfromtimestamp(
-        event_data["current_period_end"]
+    subscription.is_active = stripe_subscription_status in {"active", "past_due"} and (
+        subscription.type != SubscriptionType.SCHOOL or subscription.paid_at is not None
     )
+    subscription.stripe_status = stripe_subscription_status
+    subscription.collection_method = event_data.get("collection_method")
+    if subscription.type != SubscriptionType.SCHOOL or subscription.paid_at is None:
+        subscription.expiration = datetime.utcfromtimestamp(
+            event_data["current_period_end"]
+        )
 
     if (
         wriveted_user
@@ -1466,6 +1942,7 @@ def _handle_subscription_updated(
         },
         school=school,
         account=wriveted_user,
+        commit=False,
         enable_processing=False,  # No processing needed for updates
         external_notifications=False,  # Internal accounting event
     )
@@ -1485,6 +1962,7 @@ def _handle_subscription_cancelled(
         logger.info("Marking subscription as inactive", subscription=subscription)
         product = subscription.product
         subscription.is_active = False
+        subscription.stripe_status = event_data.get("status") or "canceled"
         if "ended_at" in event_data and event_data["ended_at"] is not None:
             subscription.expiration = datetime.utcfromtimestamp(event_data["ended_at"])
 
@@ -1497,23 +1975,8 @@ def _handle_subscription_cancelled(
             )
         if school is not None:
             school = lock_school_access_sync(session, school.wriveted_identifier)
-        if school is not None and school.state == SchoolState.ACTIVE:
-            # Don't deactivate a school that still has paid access via an
-            # unexpired comped contribution grant (the lapse sweep will retire it
-            # when it expires).
-            live_grant = _get_active_comp_grant(session, school.wriveted_identifier)
-            if live_grant is not None:
-                logger.info(
-                    "School retains access via active contribution grant; "
-                    "not deactivating after Stripe subscription ended",
-                    school=school.name,
-                )
-            else:
-                school.state = SchoolState.INACTIVE
-                session.add(school)
-                logger.info(
-                    "Deactivated school after subscription ended", school=school.name
-                )
+        if school is not None:
+            recompute_school_access_sync(session, school)
 
         # Use unified event workflow instead of direct crud.event.create
         create_event(
@@ -1529,6 +1992,7 @@ def _handle_subscription_cancelled(
             school=school,
             account=wriveted_user,
             slack_channel=EventSlackChannel.MEMBERSHIPS,  # Important business event - notify team
+            commit=False,
             enable_processing=False,  # No processing needed for cancellations
             external_notifications=True,  # Team should be notified of cancellations
         )
@@ -1553,7 +2017,9 @@ def _sync_stripe_price_with_wriveted_product(
         stripe_product = StripeProduct.retrieve(stripe_price.product)
 
         product_repository.upsert(
-            session, ProductCreateIn(id=stripe_price_id, name=stripe_product.name)
+            session,
+            ProductCreateIn(id=stripe_price_id, name=stripe_product.name),
+            commit=False,
         )
         wriveted_product = product_repository.get_by_id(
             session, product_id=stripe_price_id

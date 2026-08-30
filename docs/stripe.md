@@ -1,5 +1,13 @@
 # Stripe Integration
 
+School subscription billing, complimentary-access precedence, retry semantics,
+and the required event matrix are defined in
+[`school-billing.md`](school-billing.md). This document covers the remaining
+shared and family/contribution integration details.
+
+Any older school-subscription examples below are historical context; the
+aggregate contract and event matrix in `school-billing.md` take precedence.
+
 Wriveted integrate with Stripe via webhooks.
 
 ## Stripe Webhooks
@@ -114,4 +122,3 @@ above.
 
 Full design + the account-cutover checklist:
 [school-self-serve-signup.md](./school-self-serve-signup.md).
-

@@ -21,6 +21,24 @@ steps:
       - push
       - "$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:latest"
     id: PushLatestTag
+  - name: "gcr.io/cloud-builders/docker"
+    id: RunDevelopmentMigration
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker run -i \
+        --network=cloudbuild \
+        -e CLOUD_SQL_INSTANCE=wriveted-api:australia-southeast1:wriveted-development \
+        -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
+        -e SENDGRID_API_KEY=foo \
+        -e SHOPIFY_HMAC_SECRET=foo \
+        -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
+        --entrypoint bash \
+        --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
+        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
+        -c '/scripts/database_migrate.sh'
+    secretEnv: ["POSTGRESQL_PASSWORD"]
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
     args:
       - run
@@ -36,7 +54,7 @@ steps:
       - "--max-instances=3"
       - "--quiet"
       - >-
-        --set-env-vars=
+        --update-env-vars=
         POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
         POSTGRESQL_USER=cloudrun,
         GCP_CLOUD_SQL_INSTANCE_ID=wriveted-development,
@@ -50,6 +68,8 @@ steps:
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1U7swsJn6IrlrOboE65oFHjq"},
+        STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY={"IND":8000},
         STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api
@@ -87,7 +107,7 @@ steps:
       - "--quiet"
       - "--args=app.internal_api:internal_app"
       - >-
-        --set-env-vars=
+        --update-env-vars=
         POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
         POSTGRESQL_USER=cloudrun,
         GCP_CLOUD_SQL_INSTANCE_ID=wriveted-development,
@@ -101,6 +121,8 @@ steps:
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1U7swsJn6IrlrOboE65oFHjq"},
+        STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY={"IND":8000},
         STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api-internal
@@ -121,6 +143,41 @@ steps:
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
     id: Deploy-Non-Prod-internal-api
     entrypoint: gcloud
+  - name: "gcr.io/cloud-builders/docker"
+    id: RunMigration
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker run -i \
+        --network=cloudbuild \
+        -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
+        -e SENDGRID_API_KEY=foo \
+        -e SHOPIFY_HMAC_SECRET=foo \
+        -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
+        --entrypoint bash \
+        --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
+        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
+        -c '/scripts/database_migrate.sh'
+    secretEnv: ["POSTGRESQL_PASSWORD"]
+  - name: "gcr.io/cloud-builders/docker"
+    id: ReconcileSchoolBilling
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker run -i \
+        --network=cloudbuild \
+        -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
+        -e STRIPE_SECRET_KEY=$$STRIPE_SECRET_KEY \
+        -e SENDGRID_API_KEY=foo \
+        -e SHOPIFY_HMAC_SECRET=foo \
+        -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
+        --entrypoint bash \
+        --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
+        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
+        -c '/scripts/reconcile_school_billing.sh'
+    secretEnv: ["POSTGRESQL_PASSWORD", "STRIPE_SECRET_KEY"]
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
     args:
       - run
@@ -138,7 +195,7 @@ steps:
       - "--cpu-boost"
       - "--quiet"
       - >-
-        --set-env-vars=
+        --update-env-vars=
         POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
         POSTGRESQL_USER=cloudrun,
         LOG_AS_JSON=True,
@@ -152,6 +209,8 @@ steps:
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1U7swsJn6IrlrOboE65oFHjq"},
+        STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY={"IND":8000},
         STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         HUEY_BOOKS_APP_URL=https://hueybooks.com,
@@ -190,7 +249,7 @@ steps:
       - "--quiet"
       - "--args=app.internal_api:internal_app"
       - >-
-        --set-env-vars=
+        --update-env-vars=
         POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
         POSTGRESQL_USER=cloudrun,
         LOG_AS_JSON=True,
@@ -204,6 +263,8 @@ steps:
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
+        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1U7swsJn6IrlrOboE65oFHjq"},
+        STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY={"IND":8000},
         STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=wriveted-api-internal
@@ -225,23 +286,6 @@ steps:
     id: Deploy-Prod-internal-api
     entrypoint: gcloud
   - name: "gcr.io/cloud-builders/docker"
-    id: RunMigration
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        docker run -i \
-        --network=cloudbuild \
-        -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
-        -e SENDGRID_API_KEY=foo \
-        -e SHOPIFY_HMAC_SECRET=foo \
-        -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
-        --entrypoint bash \
-        --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
-        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
-        -c '/scripts/database_migrate.sh'
-    secretEnv: ["POSTGRESQL_PASSWORD"]
-  - name: "gcr.io/cloud-builders/docker"
     id: PgrolesCheck
     entrypoint: bash
     args:
@@ -261,6 +305,8 @@ availableSecrets:
   secretManager:
     - versionName: projects/wriveted-api/secrets/wriveted-api-cloud-sql-root-password/versions/latest
       env: "POSTGRESQL_PASSWORD"
+    - versionName: projects/wriveted-api/secrets/stripe-live-secret-key/versions/latest
+      env: "STRIPE_SECRET_KEY"
 images:
   - "$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
 options:

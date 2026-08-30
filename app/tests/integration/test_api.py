@@ -138,7 +138,7 @@ def test_update_school_name(
     assert get_school_details_response.json()["name"] == "cool school"
 
 
-def test_update_school_state(
+def test_school_admin_cannot_update_cached_school_state(
     client,
     test_school,
     admin_of_test_school_headers,
@@ -157,8 +157,7 @@ def test_update_school_state(
         headers=admin_of_test_school_headers,
         json={"status": "pending"},
     )
-    update_response.raise_for_status()
-    assert update_response.json()["state"] == "pending"
+    assert update_response.status_code == 409
 
 
 def test_update_school_terms_acceptance_merges_info_and_logs_event(
@@ -207,17 +206,12 @@ def test_update_school_terms_acceptance_merges_info_and_logs_event(
     )
     school_updated_response.raise_for_status()
     assert len(school_updated_response.json()["data"]) == 0
-    client.patch(
-        f"/v1/school/{school_id}",
-        headers=admin_of_test_school_headers,
-        json={"status": "active"},
-    )
     get_school_details_response = client.get(
         f"/v1/school/{school_id}",
         headers=admin_of_test_school_headers,
     )
     get_school_details_response.raise_for_status()
-    assert get_school_details_response.json()["state"] == "active"
+    assert get_school_details_response.json()["state"] == test_school.state.value
 
 
 def test_allowed_update_to_school(

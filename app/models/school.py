@@ -196,10 +196,4 @@ class School(Base):
             (Allow, f"school:{self.id}", "read"),
             (Allow, f"school:{self.id}", "read-collection"),
             (Allow, f"school:{self.id}", "update"),
-            # Billing is restricted to this school's admins and superusers
-            # (role:admin has All above). Deliberately NOT granted to the global
-            # unscoped role:lms, which would otherwise reach any school's billing
-            # PII (invoice downloads) and subscription controls.
-            (Allow, f"schooladmin:{self.id}", "billing"),
-            (Allow, f"school:{self.id}", "billing"),
         ]

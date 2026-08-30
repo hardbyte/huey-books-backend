@@ -40,7 +40,7 @@ def _grant_id(school) -> str:
 
 
 def _email_count(session) -> int:
-    session.rollback()
+    session.flush()
     return session.execute(
         text("SELECT COUNT(*) FROM event_outbox WHERE event_type='email_notification'")
     ).scalar()
@@ -84,6 +84,7 @@ def _give_active_stripe_subscription(session, test_school):
             type=SubscriptionType.SCHOOL,
             is_active=True,
             expiration=datetime(2099, 1, 1),
+            paid_at=datetime.utcnow(),
         )
     )
     session.commit()
@@ -134,7 +135,7 @@ def test_contribution_without_subscription_creates_proportional_grant(
     )
 
     mock_cust.create_balance_transaction.assert_not_called()
-    session.rollback()
+    session.commit()
     session.refresh(test_school)
     assert test_school.state == SchoolState.ACTIVE
 
@@ -158,7 +159,7 @@ def test_larger_contribution_grants_more_days(mock_cust, session, test_school):
         _fresh_school(session, test_school),
         _contribution_event(test_school, "cs_big", amount_total=15000),
     )
-    session.rollback()
+    session.commit()
     grant = subscription_repository.get_by_id(session, _grant_id(test_school))
     granted_days = (grant.expiration - before).days
     assert 179 <= granted_days <= 181
@@ -175,7 +176,7 @@ def test_repeat_contribution_extends_by_proportional_days(
         _fresh_school(session, test_school),
         _contribution_event(test_school, "cs_g1", amount_total=5000),
     )
-    session.rollback()
+    session.commit()
     first_expiry = subscription_repository.get_by_id(
         session, _grant_id(test_school)
     ).expiration
@@ -186,7 +187,7 @@ def test_repeat_contribution_extends_by_proportional_days(
         _fresh_school(session, test_school),
         _contribution_event(test_school, "cs_g2", amount_total=5000),
     )
-    session.rollback()
+    session.commit()
     second_expiry = subscription_repository.get_by_id(
         session, _grant_id(test_school)
     ).expiration
@@ -216,7 +217,7 @@ def test_contribution_with_active_stripe_subscription_credits_balance(
     assert kwargs["currency"] == "aud"
     assert kwargs["idempotency_key"] == "contribution-cs_credit"
 
-    session.rollback()
+    session.commit()
     session.refresh(test_school)
     assert test_school.state == SchoolState.ACTIVE  # unchanged
     receipt = session.get(StripeContributionReceipt, "cs_credit")
@@ -236,7 +237,7 @@ def test_contribution_currency_mismatch_soft_fails(mock_cust, session, test_scho
     )
 
     mock_cust.create_balance_transaction.assert_not_called()
-    session.rollback()
+    session.commit()
     receipt = session.get(StripeContributionReceipt, "cs_mismatch")
     assert receipt.crediting == "credit_failed"
 
@@ -258,7 +259,7 @@ def test_contribution_permanent_stripe_error_soft_fails(
         session, school, _contribution_event(test_school, "cs_perm")
     )
 
-    session.rollback()
+    session.commit()
     receipt = session.get(StripeContributionReceipt, "cs_perm")
     assert receipt.crediting == "credit_failed"
 
@@ -296,6 +297,7 @@ def test_duplicate_contribution_event_is_noop(mock_cust, session, test_school):
         _fresh_school(session, test_school),
         _contribution_event(test_school, "cs_dup"),
     )
+    session.commit()
     emails_after_first = _email_count(session)
     first_expiry = subscription_repository.get_by_id(
         session, _grant_id(test_school)
@@ -307,6 +309,7 @@ def test_duplicate_contribution_event_is_noop(mock_cust, session, test_school):
         _fresh_school(session, test_school),
         _contribution_event(test_school, "cs_dup"),
     )
+    session.commit()
     assert _email_count(session) == emails_after_first
     # Not double-extended.
     assert (
@@ -352,7 +355,7 @@ def test_grant_to_stripe_subscription_conversion_retires_grant(
         _fresh_school(session, test_school),
         _contribution_event(test_school, "cs_pre", amount_total=5000),
     )
-    session.rollback()
+    session.commit()
     assert subscription_repository.get_by_id(session, _grant_id(test_school)).is_active
 
     # 2. The school then converts to a paying Stripe subscription.
@@ -369,7 +372,7 @@ def test_grant_to_stripe_subscription_conversion_retires_grant(
             "payment_status": "paid",
         },
     )
-    session.rollback()
+    session.commit()
     session.expire_all()
 
     # The grant row survives (not orphan-deleted) but is retired.
@@ -445,7 +448,7 @@ def test_subscription_cancelled_keeps_school_active_with_live_grant(
         {"id": "sub_cancel_grant", "object": "subscription", "ended_at": 1893456000},
     )
 
-    session.rollback()
+    session.commit()
     session.refresh(test_school)
     # An unexpired comp grant keeps the school active despite the Stripe sub ending.
     assert test_school.state == SchoolState.ACTIVE
@@ -562,6 +565,7 @@ async def test_lapse_deactivates_expired_grant_not_stripe_schools(async_session)
                 stripe_customer_id="cus_real",
                 is_active=True,
                 expiration=now + timedelta(days=30),
+                paid_at=now,
                 product_id=real_price_id,
             ),
         ]

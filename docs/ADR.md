@@ -166,3 +166,8 @@
 - **Cons**: Access is only as correct as our webhook handling; activation/deactivation is idempotent-on-retry rather than single-transaction (accepted — see doc).
 
 **Rationale**: A Stripe-hosted Checkout Session keyed to the school is the closest fit to the existing integration and the simplest correct way to gate access on real payment. Renewal reminders ride `invoice.upcoming`. See `docs/school-self-serve-signup.md`.
+
+**Superseded (2026-08-31)**: Payment and complimentary access are now resolved
+by the durable aggregate in [`school-billing.md`](school-billing.md). In
+particular, an active Stripe subscription is not treated as paid until payment
+evidence is received, and all school access sources are recomputed together.

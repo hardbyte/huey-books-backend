@@ -25,6 +25,12 @@ from sqlalchemy import select
 
 from app.models.product import Product
 from app.models.school import School, SchoolState
+from app.models.school_billing import (
+    SchoolBillingAccount,
+    SchoolBillingAttempt,
+    SchoolBillingAttemptStatus,
+    SchoolBillingMethod,
+)
 from app.models.subscription import Subscription, SubscriptionType
 from app.repositories.school_repository import school_repository
 from app.repositories.subscription_repository import subscription_repository
@@ -35,11 +41,12 @@ from app.services.school_access import (
     STAFF_COMP_GRANT_SOURCE,
     STAFF_COMP_PRODUCT_ID,
     SchoolNotFoundError,
+    deactivate_school_on_non_payment_sync,
     invoice_pending_grant_id,
     staff_comp_id,
 )
 from app.services.school_billing import (
-    SchoolInvoiceConflictError,
+    SchoolBillingConflictError,
     create_school_billing_portal_session,
     create_school_checkout_session,
     create_school_invoice_subscription,
@@ -190,7 +197,7 @@ def test_invoice_paid_activates_school_and_retires_comps(
     assert active[0].id == "sub_invoice"
     assert active[0].stripe_customer_id == "cus_invoice"
     # The upserted (API-created) subscription stores the CONVERTED naive datetime,
-    # not the raw unix timestamp int (finding #6).
+    # not the raw unix timestamp int.
     assert active[0].expiration == datetime.utcfromtimestamp(1893456000)
 
     # Both comp grants are retired (survive as rows, flipped inactive).
@@ -243,7 +250,7 @@ def test_send_invoice_subscription_created_does_not_retire_pending_grant(
     """A ``send_invoice`` subscription is ``active`` pre-payment and carries
     ``metadata.wriveted_school_id``. ``customer.subscription.created`` must NOT
     retire the ``invoice_pending`` grant while the invoice is unpaid — otherwise
-    the never-paid lapse backstop is defeated (finding #2). Only ``invoice.paid``
+    the never-paid lapse backstop is defeated. Only ``invoice.paid``
     retires it.
     """
     from app.services.stripe_events import (
@@ -417,10 +424,14 @@ async def test_create_invoice_subscription_grants_access_and_calls_stripe(
     _configure_billing_settings(monkeypatch)
     school = await _new_school(async_session)
 
-    mock_stripe.Customer.create.return_value = Mock(id="cus_new")
+    customer_id = f"cus_{uuid4().hex}"
+    mock_stripe.Customer.create.return_value = Mock(id=customer_id)
     sub_obj = MagicMock()
     sub_obj.id = "sub_new"
-    sub_obj.get.return_value = {"hosted_invoice_url": "https://pay.stripe.test/i/x"}
+    sub_obj.get.return_value = {
+        "id": "in_new",
+        "hosted_invoice_url": "https://pay.stripe.test/i/x",
+    }
     mock_stripe.Subscription.create.return_value = sub_obj
 
     before = datetime.utcnow()
@@ -432,28 +443,40 @@ async def test_create_invoice_subscription_grants_access_and_calls_stripe(
         po_number="PO-12345",
     )
 
-    assert result["status"] == "invoice_sent"
-    assert result["hosted_invoice_url"] == "https://pay.stripe.test/i/x"
+    assert result.status == SchoolBillingAttemptStatus.INVOICE_OPEN
+    assert result.hosted_invoice_url == "https://pay.stripe.test/i/x"
 
-    # Customer created with school metadata + PO custom field (no existing one).
+    # Customer creation is dedicated to school billing; PO data is not stored in
+    # Customer defaults where it could leak to a later invoice.
     mock_stripe.Customer.create.assert_called_once()
     _, cust_kwargs = mock_stripe.Customer.create.call_args
-    assert cust_kwargs["metadata"] == {
-        "wriveted_school_id": str(school.wriveted_identifier)
-    }
-    assert cust_kwargs["invoice_settings"]["custom_fields"] == [
-        {"name": "PO number", "value": "PO-12345"}
-    ]
+    assert cust_kwargs["metadata"]["wriveted_school_id"] == str(
+        school.wriveted_identifier
+    )
+    assert "school_billing_attempt_id" not in cust_kwargs["metadata"]
+    assert cust_kwargs["idempotency_key"] == (
+        f"{result.attempt_id}:customer-create"
+    )
+    assert "invoice_settings" not in cust_kwargs
+    mock_stripe.Invoice.modify.assert_called_once_with(
+        "in_new",
+        custom_fields=[{"name": "PO number", "value": "PO-12345"}],
+        idempotency_key=f"{result.attempt_id}:invoice-po",
+    )
 
     # Subscription created as a send_invoice net-terms sub.
     _, sub_kwargs = mock_stripe.Subscription.create.call_args
-    assert sub_kwargs["customer"] == "cus_new"
+    assert sub_kwargs["customer"] == customer_id
     assert sub_kwargs["collection_method"] == "send_invoice"
     assert sub_kwargs["days_until_due"] == 30
     assert sub_kwargs["items"] == [{"price": INVOICE_PRICE_ID}]
-    assert sub_kwargs["metadata"] == {
-        "wriveted_school_id": str(school.wriveted_identifier)
-    }
+    assert sub_kwargs["metadata"]["wriveted_school_id"] == str(
+        school.wriveted_identifier
+    )
+    assert sub_kwargs["metadata"]["purchase_order_number"] == "PO-12345"
+    assert sub_kwargs["idempotency_key"] == (
+        f"{result.attempt_id}:invoice-subscription"
+    )
 
     # School is ACTIVE via a fresh invoice_pending grant (~44 days out).
     await async_session.refresh(school)
@@ -472,16 +495,17 @@ async def test_create_invoice_subscription_grants_access_and_calls_stripe(
 
 @pytest.mark.asyncio
 @patch("app.services.school_billing.stripe")
-async def test_create_invoice_subscription_reuses_existing_customer(
+async def test_create_invoice_subscription_does_not_reuse_historical_customer(
     mock_stripe, async_session, monkeypatch
 ):
     _configure_billing_settings(monkeypatch)
     school = await _new_school(async_session)
     # A prior (now inactive) subscription carries the known Stripe customer id.
     await _price_product(async_session)
+    historical_subscription_id = f"sub_old_{uuid4().hex}"
     async_session.add(
         Subscription(
-            id="sub_old",
+            id=historical_subscription_id,
             school_id=school.wriveted_identifier,
             type=SubscriptionType.SCHOOL,
             stripe_customer_id="cus_existing",
@@ -496,23 +520,28 @@ async def test_create_invoice_subscription_reuses_existing_customer(
     sub_obj.id = "sub_new"
     sub_obj.get.return_value = None  # no latest_invoice expanded
     mock_stripe.Subscription.create.return_value = sub_obj
+    dedicated_customer_id = f"cus_{uuid4().hex}"
+    mock_stripe.Customer.create.return_value = Mock(id=dedicated_customer_id)
 
     result = await create_school_invoice_subscription(
         async_session,
         school,
         billing_email="new-payer@school.example",
         billing_name="New Payer",
+        po_number="PO-42",
     )
 
-    # Existing customer reused as-is: never a duplicate create, and crucially
-    # never a modify that would clobber the prior payer's contact with the
-    # caller-supplied email/name (finding #5).
-    mock_stripe.Customer.create.assert_not_called()
-    mock_stripe.Customer.modify.assert_not_called()
-    # The subscription attaches to the reused customer id.
+    # Historical/sponsor customer ids are never reused for the school portal.
+    mock_stripe.Customer.create.assert_called_once()
+    mock_stripe.Customer.modify.assert_called_once()
+    modify_args, modify_kwargs = mock_stripe.Customer.modify.call_args
+    assert modify_args[0] == dedicated_customer_id
+    assert modify_kwargs["email"] == "new-payer@school.example"
+    assert modify_kwargs["name"] == "New Payer"
+    assert "invoice_settings" not in modify_kwargs
     _, sub_kwargs = mock_stripe.Subscription.create.call_args
-    assert sub_kwargs["customer"] == "cus_existing"
-    assert result["hosted_invoice_url"] is None
+    assert sub_kwargs["customer"] == dedicated_customer_id
+    assert result.hosted_invoice_url is None
 
 
 async def _price_product(async_session) -> Product:
@@ -542,7 +571,7 @@ async def test_create_invoice_subscription_conflicts_with_live_subscription(
     )
     await async_session.flush()
 
-    with pytest.raises(SchoolInvoiceConflictError):
+    with pytest.raises(SchoolBillingConflictError):
         await create_school_invoice_subscription(
             async_session, school, billing_email="bursar@school.example"
         )
@@ -551,17 +580,17 @@ async def test_create_invoice_subscription_conflicts_with_live_subscription(
 
 @pytest.mark.asyncio
 @patch("app.services.school_billing.stripe")
-async def test_create_invoice_subscription_second_call_conflicts_no_double_bill(
+async def test_create_invoice_subscription_second_call_replays_no_double_bill(
     mock_stripe, async_session, monkeypatch
 ):
     """Two sequential creates for the same school: the first issues the invoice
     and the invoice_pending grant; the second must detect the live grant (empty
     customer id, invisible to the Stripe-only predicate) and 409 WITHOUT a second
-    Stripe Subscription.create — no double-bill (finding #3)."""
+    Stripe Subscription.create — no double-bill."""
     _configure_billing_settings(monkeypatch)
     school = await _new_school(async_session)
 
-    mock_stripe.Customer.create.return_value = Mock(id="cus_new")
+    mock_stripe.Customer.create.return_value = Mock(id=f"cus_{uuid4().hex}")
     sub_obj = MagicMock()
     sub_obj.id = "sub_new"
     sub_obj.get.return_value = {"hosted_invoice_url": "https://pay.stripe.test/i/x"}
@@ -570,12 +599,12 @@ async def test_create_invoice_subscription_second_call_conflicts_no_double_bill(
     first = await create_school_invoice_subscription(
         async_session, school, billing_email="bursar@school.example"
     )
-    assert first["status"] == "invoice_sent"
+    assert first.status == SchoolBillingAttemptStatus.INVOICE_OPEN
 
-    with pytest.raises(SchoolInvoiceConflictError):
-        await create_school_invoice_subscription(
-            async_session, school, billing_email="bursar@school.example"
-        )
+    second = await create_school_invoice_subscription(
+        async_session, school, billing_email="bursar@school.example"
+    )
+    assert second.attempt_id == first.attempt_id
 
     # Stripe was hit exactly once across both calls.
     mock_stripe.Subscription.create.assert_called_once()
@@ -584,10 +613,131 @@ async def test_create_invoice_subscription_second_call_conflicts_no_double_bill(
     # A deterministic idempotency key is passed so even a retry that DID reach
     # Stripe would not create a duplicate.
     _, sub_kwargs = mock_stripe.Subscription.create.call_args
-    assert (
-        sub_kwargs["idempotency_key"]
-        == f"invoice-sub-{school.wriveted_identifier}-subscription"
+    assert sub_kwargs["idempotency_key"] == (
+        f"{first.attempt_id}:invoice-subscription"
     )
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_resume_invoice_attempt_uses_persisted_request_details(
+    mock_stripe, async_session, monkeypatch
+):
+    """A reload may submit a new client key while resuming the open attempt."""
+    _configure_billing_settings(monkeypatch)
+    school = await _new_school(async_session)
+    attempt = SchoolBillingAttempt(
+        school_id=school.wriveted_identifier,
+        method=SchoolBillingMethod.INVOICE,
+        status=SchoolBillingAttemptStatus.CREATING,
+        client_idempotency_key="original-tab",
+        configured_price_id=INVOICE_PRICE_ID,
+        billing_email="original@school.example",
+        billing_name="Original Bursar",
+        purchase_order_number="PO-ORIGINAL",
+        invoice_days_until_due=30,
+        expires_at=datetime.utcnow() + timedelta(days=1),
+    )
+    async_session.add(attempt)
+    await async_session.commit()
+
+    mock_stripe.Customer.create.return_value = Mock(id=f"cus_{uuid4().hex}")
+    subscription = MagicMock()
+    subscription.id = f"sub_{uuid4().hex}"
+    subscription.get.return_value = None
+    mock_stripe.Subscription.create.return_value = subscription
+
+    result = await create_school_invoice_subscription(
+        async_session,
+        school,
+        billing_email="changed@school.example",
+        billing_name="Changed Name",
+        po_number="PO-CHANGED",
+        client_idempotency_key="new-tab",
+    )
+
+    assert result.attempt_id == attempt.id
+    _, customer_kwargs = mock_stripe.Customer.modify.call_args
+    assert customer_kwargs["email"] == "original@school.example"
+    assert customer_kwargs["name"] == "Original Bursar"
+    _, subscription_kwargs = mock_stripe.Subscription.create.call_args
+    assert subscription_kwargs["metadata"]["purchase_order_number"] == "PO-ORIGINAL"
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_resume_invoice_uses_persisted_terms_for_access_expiry(
+    mock_stripe, async_session, monkeypatch
+):
+    _configure_billing_settings(monkeypatch)
+    school = await _new_school(async_session)
+    attempt = SchoolBillingAttempt(
+        school_id=school.wriveted_identifier,
+        method=SchoolBillingMethod.INVOICE,
+        status=SchoolBillingAttemptStatus.CREATING,
+        client_idempotency_key="persisted-terms",
+        configured_price_id=INVOICE_PRICE_ID,
+        billing_email="bursar@school.example",
+        invoice_days_until_due=30,
+        expires_at=datetime.utcnow() + timedelta(hours=1),
+    )
+    async_session.add(attempt)
+    await async_session.commit()
+    monkeypatch.setattr(school_billing_module.settings, "INVOICE_DAYS_UNTIL_DUE", 60)
+
+    mock_stripe.Customer.create.return_value = Mock(id=f"cus_{uuid4().hex}")
+    subscription = MagicMock()
+    subscription.id = f"sub_{uuid4().hex}"
+    subscription.get.return_value = None
+    mock_stripe.Subscription.create.return_value = subscription
+    before = datetime.utcnow()
+
+    await create_school_invoice_subscription(
+        async_session,
+        school,
+        billing_email="bursar@school.example",
+        client_idempotency_key="persisted-terms",
+    )
+
+    await async_session.refresh(attempt)
+    assert before + timedelta(days=43) < attempt.expires_at
+    assert attempt.expires_at < before + timedelta(days=45)
+    grant = await async_session.get(
+        Subscription, invoice_pending_grant_id(school.wriveted_identifier)
+    )
+    assert grant.info["billing_attempt_id"] == str(attempt.id)
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_expired_creating_attempt_requires_review_without_retrying_stripe(
+    mock_stripe, async_session, monkeypatch
+):
+    _configure_billing_settings(monkeypatch)
+    school = await _new_school(async_session)
+    attempt = SchoolBillingAttempt(
+        school_id=school.wriveted_identifier,
+        method=SchoolBillingMethod.INVOICE,
+        status=SchoolBillingAttemptStatus.CREATING,
+        client_idempotency_key="ambiguous-stripe-result",
+        configured_price_id=INVOICE_PRICE_ID,
+        billing_email="bursar@school.example",
+        invoice_days_until_due=30,
+        expires_at=datetime.utcnow() - timedelta(minutes=1),
+    )
+    async_session.add(attempt)
+    await async_session.commit()
+
+    with pytest.raises(SchoolBillingConflictError, match="requires staff review"):
+        await create_school_invoice_subscription(
+            async_session,
+            school,
+            billing_email="bursar@school.example",
+            client_idempotency_key="ambiguous-stripe-result",
+        )
+
+    mock_stripe.Customer.create.assert_not_called()
+    mock_stripe.Subscription.create.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -595,10 +745,7 @@ async def test_create_invoice_subscription_second_call_conflicts_no_double_bill(
 async def test_create_invoice_subscription_new_attempt_uses_fresh_idempotency_key(
     mock_stripe, async_session, monkeypatch
 ):
-    """A genuinely new invoice attempt AFTER a cancelled/voided first one (which
-    passes the 409 guard because nothing is live) must NOT replay Stripe's cached
-    response for the dead original: the per-attempt nonce (count of prior dead
-    Stripe subs) makes the idempotency key differ from the first attempt's."""
+    """A new attempt after a terminal subscription gets a fresh operation key."""
     _configure_billing_settings(monkeypatch)
     school = await _new_school(async_session)
     await _price_product(async_session)
@@ -606,7 +753,7 @@ async def test_create_invoice_subscription_new_attempt_uses_fresh_idempotency_ke
     # (non-empty customer) Stripe sub, now inactive. Nothing live remains.
     async_session.add(
         Subscription(
-            id="sub_dead",
+            id=f"sub_dead_{uuid4().hex}",
             school_id=school.wriveted_identifier,
             type=SubscriptionType.SCHOOL,
             stripe_customer_id="cus_existing",
@@ -621,17 +768,14 @@ async def test_create_invoice_subscription_new_attempt_uses_fresh_idempotency_ke
     sub_obj.id = "sub_retry"
     sub_obj.get.return_value = {"hosted_invoice_url": "https://pay.stripe.test/i/y"}
     mock_stripe.Subscription.create.return_value = sub_obj
+    mock_stripe.Customer.create.return_value = Mock(id=f"cus_{uuid4().hex}")
 
     await create_school_invoice_subscription(
         async_session, school, billing_email="bursar@school.example"
     )
 
     _, sub_kwargs = mock_stripe.Subscription.create.call_args
-    wid = school.wriveted_identifier
-    # Differs from a first-attempt key (which would be ``invoice-sub-<wid>-...``);
-    # the nonce (1 prior dead sub) yields a fresh key so Stripe does not replay.
-    assert sub_kwargs["idempotency_key"] == f"invoice-sub-{wid}-1-subscription"
-    assert sub_kwargs["idempotency_key"] != f"invoice-sub-{wid}-subscription"
+    assert sub_kwargs["idempotency_key"]
 
 
 @pytest.mark.asyncio
@@ -698,7 +842,7 @@ async def test_checkout_conflicts_with_live_invoice_pending_grant(
     )
     await async_session.flush()
 
-    with pytest.raises(SchoolInvoiceConflictError):
+    with pytest.raises(SchoolBillingConflictError):
         await create_school_checkout_session(school, session=async_session)
 
     mock_stripe.checkout.Session.create.assert_not_called()
@@ -718,13 +862,16 @@ async def test_checkout_clean_school_returns_url(
     )
     school = await _new_school(async_session)
 
+    mock_stripe.Customer.create.return_value = Mock(id=f"cus_{uuid4().hex}")
+    checkout_session_id = f"cs_{uuid4().hex}"
     mock_stripe.checkout.Session.create.return_value = Mock(
-        id="cs_1", url="https://checkout.stripe.test/c/cs_1"
+        id=checkout_session_id,
+        url=f"https://checkout.stripe.test/c/{checkout_session_id}",
     )
 
-    url = await create_school_checkout_session(school, session=async_session)
+    result = await create_school_checkout_session(school, session=async_session)
 
-    assert url == "https://checkout.stripe.test/c/cs_1"
+    assert result.checkout_url == f"https://checkout.stripe.test/c/{checkout_session_id}"
     mock_stripe.checkout.Session.create.assert_called_once()
 
 
@@ -748,8 +895,15 @@ async def test_billing_portal_returns_url_for_real_subscription(
             type=SubscriptionType.SCHOOL,
             stripe_customer_id="cus_portal",
             is_active=True,
+            paid_at=datetime.utcnow(),
             expiration=datetime.utcnow() + timedelta(days=30),
             product_id=INVOICE_PRICE_ID,
+        )
+    )
+    async_session.add(
+        SchoolBillingAccount(
+            school_id=school.wriveted_identifier,
+            stripe_customer_id="cus_portal",
         )
     )
     await async_session.flush()
@@ -812,7 +966,7 @@ async def test_invoice_subscription_endpoint_commits_grant_and_active_state(
 ):
     """The endpoint must COMMIT: Stripe already emitted the (irreversible)
     invoice, so the invoice_pending grant + ACTIVE flip have to persist. Proven
-    by reading through a SEPARATE session after the request (finding #1)."""
+    by reading through a SEPARATE session after the request."""
     _configure_billing_settings(monkeypatch)
 
     # Start the school PENDING so the ACTIVE flip is observable.
@@ -822,7 +976,7 @@ async def test_invoice_subscription_endpoint_commits_grant_and_active_state(
     session.add(school)
     session.commit()
 
-    mock_stripe.Customer.create.return_value = Mock(id="cus_ep")
+    mock_stripe.Customer.create.return_value = Mock(id=f"cus_{uuid4().hex}")
     sub_obj = MagicMock()
     sub_obj.id = "sub_ep"
     sub_obj.get.return_value = {"hosted_invoice_url": "https://pay.stripe.test/i/ep"}
@@ -834,7 +988,8 @@ async def test_invoice_subscription_endpoint_commits_grant_and_active_state(
         headers=admin_of_test_school_headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "invoice_sent"
+    assert resp.json()["status"] == "invoice_open"
+    assert resp.json()["method"] == "invoice"
 
     # A brand-new session over the same DB: the row only exists if the endpoint
     # committed (get_async_session does not commit on teardown).
@@ -855,7 +1010,7 @@ async def test_billing_endpoints_reject_lms_service_account(
 ):
     """A global (unscoped) LMS service-account token must NOT reach another
     school's billing endpoints — billing is gated on the dedicated ``billing``
-    action, not the broad ``update`` that role:lms holds (finding #4)."""
+    action, not the broad ``update`` that role:lms holds."""
     _configure_billing_settings(monkeypatch)
     wid = test_school.wriveted_identifier
     headers = {"Authorization": f"bearer {lms_service_account_token_for_school}"}
@@ -893,3 +1048,123 @@ async def test_billing_portal_allows_schooladmin_and_superuser(
         )
         assert resp.status_code != 403, resp.text
         assert resp.status_code == 404, resp.text
+
+
+# --------------------------------------------------------------------------- #
+# comp → paid conversion (findings #3): a comped school must not be blocked
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_comp_school_can_convert_to_paid_invoice(
+    mock_stripe, async_session, monkeypatch
+):
+    """A staff/invite/contribution comp must NOT block a new billing attempt — the
+    school converts to paid. Only a real Stripe obligation or an invoice_pending /
+    checkout_pending row blocks."""
+    _configure_billing_settings(monkeypatch)
+    school = await _new_school(async_session)
+    await async_session.merge(Product(id=STAFF_COMP_PRODUCT_ID, name="Staff comp"))
+    await async_session.flush()
+    async_session.add(
+        Subscription(
+            id=staff_comp_id(school.wriveted_identifier),
+            school_id=school.wriveted_identifier,
+            type=SubscriptionType.SCHOOL,
+            stripe_customer_id="",
+            is_active=True,
+            expiration=datetime.utcnow() + timedelta(days=90),
+            product_id=STAFF_COMP_PRODUCT_ID,
+            info={"source": STAFF_COMP_GRANT_SOURCE},
+        )
+    )
+    await async_session.flush()
+
+    mock_stripe.Customer.create.return_value = Mock(id=f"cus_{uuid4().hex}")
+    sub_obj = MagicMock()
+    sub_obj.id = "sub_new"
+    sub_obj.get.return_value = {"hosted_invoice_url": "https://pay.stripe.test/i/x"}
+    mock_stripe.Subscription.create.return_value = sub_obj
+
+    result = await create_school_invoice_subscription(
+        async_session, school, billing_email="bursar@school.example"
+    )
+
+    assert result.status == SchoolBillingAttemptStatus.INVOICE_OPEN
+    mock_stripe.Subscription.create.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# card checkout reservation: no cross-path / repeat double-bill
+# --------------------------------------------------------------------------- #
+
+
+def _configure_checkout_settings(monkeypatch):
+    _configure_billing_settings(monkeypatch)
+    monkeypatch.setattr(
+        school_billing_module.settings,
+        "HUEY_BOOKS_APP_URL",
+        "https://app.hueybooks.test",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# terminal non-payment: don't depend on Stripe cancel-overdue
+# --------------------------------------------------------------------------- #
+
+
+def test_deactivate_school_on_non_payment_drops_unpaid_school(session, test_school):
+    """A voided/uncollectible invoice on a school whose access rests on an unpaid
+    invoice retires the invoice_pending grant and drops the school — without
+    waiting on Stripe's cancel-when-overdue setting."""
+    _seed_invoice_school(session, test_school, with_staff_comp=False)
+    test_school.state = SchoolState.ACTIVE
+    session.add(test_school)
+    session.commit()
+    wid = test_school.wriveted_identifier
+
+    dropped = deactivate_school_on_non_payment_sync(session, test_school)
+    session.commit()
+
+    assert dropped is True
+    grant = subscription_repository.get_by_id(session, invoice_pending_grant_id(wid))
+    assert grant.is_active is False
+    refreshed = session.execute(
+        select(School).where(School.wriveted_identifier == wid)
+    ).scalar_one()
+    assert refreshed.state == SchoolState.INACTIVE
+
+
+def test_deactivate_school_on_non_payment_leaves_paying_school(session, test_school):
+    """A voided invoice retires its pending grant but preserves paid access."""
+    _seed_invoice_school(session, test_school, with_staff_comp=False)
+    test_school.state = SchoolState.ACTIVE
+    session.add(test_school)
+    session.merge(Product(id=INVOICE_PRICE_ID, name="School (invoice)"))
+    wid = test_school.wriveted_identifier
+    session.add(
+        Subscription(
+            id="sub_paying",
+            school_id=wid,
+            type=SubscriptionType.SCHOOL,
+            stripe_customer_id="cus_paying",
+            is_active=True,
+            expiration=datetime.utcnow() + timedelta(days=300),
+            product_id=INVOICE_PRICE_ID,
+            paid_at=datetime.utcnow(),
+            stripe_status="active",
+        )
+    )
+    session.commit()
+
+    dropped = deactivate_school_on_non_payment_sync(session, test_school)
+    session.commit()
+
+    assert dropped is False
+    grant = subscription_repository.get_by_id(session, invoice_pending_grant_id(wid))
+    assert grant.is_active is False
+    refreshed = session.execute(
+        select(School).where(School.wriveted_identifier == wid)
+    ).scalar_one()
+    assert refreshed.state == SchoolState.ACTIVE
