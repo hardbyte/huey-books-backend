@@ -54,9 +54,7 @@ async def upsert_contact(
     """
     Upserts a SendGrid contact with provided data
     """
-    logger.info(
-        "SendGrid contact upsert endpoint called", parameters=data, account=account
-    )
+    logger.info("SendGrid contact upsert endpoint called", account_id=str(account.id))
 
     if custom_fields:
         try:
@@ -87,19 +85,25 @@ async def upsert_contact(
 @router.post("/sendgrid/email")
 async def send_email(
     data: SendGridEmailData,
-    background_tasks: BackgroundTasks,
     account=Depends(get_current_active_superuser_or_backend_service_account),
     session: Session = Depends(get_session),
-    sg: SendGridAPIClient = Depends(get_sendgrid_api),
 ):
     """
     Populate and send a dynamic SendGrid email.
     Can dynamically fill a specified template with provided data.
     """
-    logger.info("Public email endpoint called", parameters=data, account=account)
+    logger.info(
+        "Email endpoint called",
+        account_id=str(account.id),
+        recipient_count=len(data.to_emails),
+    )
 
     # Local import to avoid circular dependency
-    from app.services.email_notification import EmailType, send_email_reliable_sync
+    from app.services.email_notification import (
+        EmailType,
+        send_email_reliable_sync,
+        trigger_email_delivery_async,
+    )
 
     send_email_reliable_sync(
         db=session,
@@ -110,6 +114,7 @@ async def send_email(
     # publish_event_sync only adds the outbox row; the request session is never
     # committed on teardown, so commit here or the queued email is discarded.
     session.commit()
+    await trigger_email_delivery_async()
 
     return Response(status_code=202, content="Email queued for reliable delivery.")
 

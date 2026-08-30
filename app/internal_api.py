@@ -20,8 +20,8 @@ Use this API to process long running tasks and react to non-time critical events
 
 ## 🔐 Authentication
 
-Currently PUBLIC. Will be only available on 
-our private GCP network.
+Protected by Cloud Run IAM. Callers must have `run.routes.invoke` and present
+an identity token for this service.
 
 ## ⏰ Task Queue
 

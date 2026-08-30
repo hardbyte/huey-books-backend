@@ -7,6 +7,7 @@ round-trips and flips the opt-out flag.
 
 import uuid
 
+import pytest
 from sqlalchemy import select
 
 from app.models.educator import Educator
@@ -86,6 +87,20 @@ def test_school_scope_filters(session, test_school):
     assert keep.id not in other_school
 
 
+def test_count_and_sample_recipients_use_the_same_audience(session, test_school):
+    educator = _make_educator(session, test_school.id)
+    audience = BroadcastAudience(
+        user_types=[UserAccountType.EDUCATOR],
+        school_id=test_school.wriveted_identifier,
+    )
+
+    recipients = bc.resolve_recipients(session, audience)
+
+    assert bc.count_recipients(session, audience) == len(recipients)
+    assert educator.name in bc.sample_recipient_names(session, audience)
+    assert bc.get_audience_school_name(session, audience) == test_school.name
+
+
 def test_country_scope_filters(session, test_school):
     keep = _make_educator(session, test_school.id)
 
@@ -163,6 +178,21 @@ def test_send_requires_admin(client):
     assert resp.status_code in (401, 403)
 
 
+def test_send_rejects_whitespace_only_message(
+    client, test_wrivetedadmin_account_headers
+):
+    resp = client.post(
+        "/v1/broadcast",
+        headers=test_wrivetedadmin_account_headers,
+        json={
+            "subject": "  ",
+            "body": "\n\n",
+            "audience": {"user_types": ["educator"]},
+        },
+    )
+    assert resp.status_code == 422
+
+
 def test_preview_rejects_empty_user_types(client, test_wrivetedadmin_account_headers):
     resp = client.post(
         "/v1/broadcast/preview",
@@ -186,6 +216,21 @@ def test_preview_counts_recipients(
     )
     assert resp.status_code == 200
     assert resp.json()["recipient_count"] >= 1
+    assert resp.json()["school_name"] == test_school.name
+
+
+def test_preview_of_unknown_school_has_no_recipients_or_display_name(
+    client, test_wrivetedadmin_account_headers
+):
+    resp = client.post(
+        "/v1/broadcast/preview",
+        headers=test_wrivetedadmin_account_headers,
+        json={"user_types": ["school_admin"], "school_id": str(uuid.uuid4())},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["recipient_count"] == 0
+    assert resp.json()["school_name"] is None
 
 
 def _committed_email_events(session, subject: str) -> list[EventOutbox]:
@@ -198,7 +243,13 @@ def _committed_email_events(session, subject: str) -> list[EventOutbox]:
     rows = session.scalars(
         select(EventOutbox).where(EventOutbox.event_type == "email_notification")
     ).all()
-    return [r for r in rows if r.payload["email_data"]["subject"] == subject]
+    return [
+        row
+        for row in rows
+        if isinstance(row.payload, dict)
+        and isinstance(row.payload.get("email_data"), dict)
+        and row.payload["email_data"].get("subject") == subject
+    ]
 
 
 def test_test_send_goes_to_self_only(
@@ -207,8 +258,8 @@ def test_test_send_goes_to_self_only(
     triggered = []
     monkeypatch.setattr(
         bc,
-        "queue_background_task",
-        lambda endpoint, payload=None: triggered.append(endpoint),
+        "trigger_email_delivery",
+        lambda: triggered.append("process-outbox-events"),
     )
     subject = f"Test send {uuid.uuid4().hex[:8]}"
     resp = client.post(
@@ -226,9 +277,7 @@ def test_test_send_goes_to_self_only(
 
 def test_send_broadcast_commits_outbox_rows(session, test_school, monkeypatch):
     educator = _make_educator(session, test_school.id)
-    monkeypatch.setattr(
-        bc, "queue_background_task", lambda endpoint, payload=None: None
-    )
+    monkeypatch.setattr(bc, "trigger_email_delivery", lambda: None)
 
     subject = f"Broadcast {uuid.uuid4().hex[:8]}"
     queued = bc.send_broadcast(
@@ -245,6 +294,24 @@ def test_send_broadcast_commits_outbox_rows(session, test_school, monkeypatch):
     events = _committed_email_events(session, subject)
     assert len(events) == queued
     assert any(e.payload["email_data"]["to_emails"] == [educator.email] for e in events)
+
+
+def test_send_broadcast_rejects_audience_over_safety_limit(
+    session, test_school, monkeypatch
+):
+    _make_educator(session, test_school.id)
+    monkeypatch.setattr(bc.settings, "BROADCAST_MAX_RECIPIENTS", 0)
+
+    with pytest.raises(bc.BroadcastAudienceTooLarge):
+        bc.send_broadcast(
+            session,
+            subject="Too broad",
+            body="Hello",
+            audience=BroadcastAudience(
+                user_types=[UserAccountType.EDUCATOR],
+                school_id=test_school.wriveted_identifier,
+            ),
+        )
 
 
 def test_unsubscribe_get_does_not_mutate(client, session, test_school):

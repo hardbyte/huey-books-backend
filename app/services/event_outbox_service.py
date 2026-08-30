@@ -9,6 +9,7 @@ This service implements the Event Outbox Pattern with dual strategy:
 
 import hashlib
 import hmac
+import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -317,6 +318,7 @@ class EventOutboxService:
                 EventOutbox.priority.desc(),  # High priority first
                 EventOutbox.created_at.asc(),  # Older events first
             )
+            .with_for_update(skip_locked=True)
             .limit(self.batch_size)
         )
 
@@ -693,6 +695,17 @@ class EventOutboxService:
         event.status = EventStatus.PUBLISHED
         event.processed_at = datetime.utcnow()
         event.updated_at = datetime.utcnow()
+        if event.event_type == "email_notification":
+            payload = event.payload
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except (TypeError, ValueError):
+                    payload = {}
+            email_type = (
+                payload.get("email_type") if isinstance(payload, dict) else None
+            )
+            event.payload = {"email_type": email_type, "redacted": True}
         await db.flush()
 
     async def _handle_delivery_failure(

@@ -41,7 +41,11 @@ from app.schemas.school import (
     SchoolPatchOptions,
     SchoolSelectorOption,
 )
-from app.services.email_notification import EmailType, send_email_reliable_sync
+from app.services.email_notification import (
+    EmailType,
+    send_email_reliable_sync,
+    trigger_email_delivery,
+)
 from app.services.experiments import get_experiments
 from app.services.school_access import grant_staff_comp
 from app.services.school_billing import (
@@ -445,6 +449,7 @@ def add_school_staff(
             email_type=EmailType.ONBOARDING,
         )
         session.commit()
+        trigger_email_delivery()
     except Exception as e:
         logger.warning("Failed to queue staff invite email", error=str(e))
 

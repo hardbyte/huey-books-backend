@@ -5,6 +5,7 @@ These tests verify the Event Outbox Pattern implementation for reliable event de
 """
 
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -100,6 +101,30 @@ class TestEventOutboxService:
         await async_session.refresh(event)
         assert event.status == EventStatus.PUBLISHED
         assert event.processed_at is not None
+
+    async def test_published_email_payload_is_redacted(self, async_session):
+        service = EventOutboxService()
+        service._deliver_event = AsyncMock(return_value=True)
+        event = await service.publish_event(
+            async_session,
+            event_type="email_notification",
+            destination="email:marketing",
+            payload={
+                "email_type": "marketing",
+                "email_data": {
+                    "to_emails": ["recipient@example.com"],
+                    "subject": "Sensitive subject",
+                    "html_content": "<p>Sensitive body</p>",
+                },
+            },
+        )
+        await async_session.commit()
+
+        await service.process_pending_events(async_session)
+
+        await async_session.refresh(event)
+        assert event.status == EventStatus.PUBLISHED
+        assert event.payload == {"email_type": "marketing", "redacted": True}
 
     async def test_process_pending_events_failure_with_retry(self, async_session):
         """Test processing events that fail and get retried."""

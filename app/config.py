@@ -1,7 +1,7 @@
 import enum
 import json
 from functools import lru_cache
-from typing import Annotated, List, Optional, Union
+from typing import Annotated, List, Literal, Optional, Union
 
 from pydantic import AnyHttpUrl, DirectoryPath, HttpUrl, field_validator
 from pydantic_core.core_schema import FieldValidationInfo
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
 
     # Email delivery. EMAIL_PROVIDER selects the backend ("resend" or
     # "sendgrid"); keys are optional so the app boots without the unused one.
-    EMAIL_PROVIDER: str = "sendgrid"
+    EMAIL_PROVIDER: Literal["sendgrid", "resend"] = "sendgrid"
     SENDGRID_API_KEY: str = ""
     RESEND_API_KEY: str = ""
 
@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     # (point it at a monitored inbox).
     BROADCAST_FROM_EMAIL: str = "hello@hueybooks.com"
     BROADCAST_REPLY_TO: str = "hello@hueybooks.com"
+    BROADCAST_MAX_RECIPIENTS: int = 10_000
 
     NIELSEN_API_URL: str = (
         "https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest"

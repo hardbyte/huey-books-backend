@@ -31,7 +31,11 @@ from app.schemas.school_invitation import (
     SchoolInvitationPreview,
 )
 from app.services import school_invitations as invites
-from app.services.email_notification import EmailType, send_email_reliable
+from app.services.email_notification import (
+    EmailType,
+    send_email_reliable,
+    trigger_email_delivery_async,
+)
 from app.services.school_emails import (
     render_school_activated_html,
     render_school_invite_html,
@@ -77,6 +81,7 @@ async def _queue_invite_email(
             email_type=EmailType.ONBOARDING,
         )
         await db.commit()
+        await trigger_email_delivery_async()
     except Exception as e:
         logger.warning("Failed to queue invitation email", error=str(e))
 
@@ -276,6 +281,7 @@ async def accept_invitation(
             email_type=EmailType.ONBOARDING,
         )
         await db.commit()
+        await trigger_email_delivery_async()
     except Exception as e:
         logger.warning("Failed to queue invite activation email", error=str(e))
 
