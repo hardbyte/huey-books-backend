@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi_permissions import Allow, Authenticated, Deny, has_permission
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette import status
@@ -19,17 +20,21 @@ from app.api.dependencies.school import (
 )
 from app.api.dependencies.security import (
     get_active_principals,
+    get_current_active_superuser,
     get_current_active_user_or_service_account,
     get_current_user,
 )
 from app.config import get_settings
 from app.db.session import get_session
 from app.models import Educator, School, SchoolAdmin, ServiceAccount
+from app.models.subscription import Subscription
 from app.models.user import User
 from app.permissions import Permission
 from app.repositories.event_repository import event_repository
 from app.repositories.school_repository import school_repository
 from app.schemas.school import (
+    CompGrantRequest,
+    CompGrantResponse,
     SchoolBookbotInfo,
     SchoolCreateIn,
     SchoolDetail,
@@ -38,6 +43,7 @@ from app.schemas.school import (
 )
 from app.services.email_notification import EmailType, send_email_reliable_sync
 from app.services.experiments import get_experiments
+from app.services.school_access import grant_staff_comp
 from app.services.school_billing import (
     SchoolBillingError,
     create_school_checkout_session,
@@ -575,6 +581,71 @@ async def bulk_add_schools(
     except IntegrityError:
         logger.warning("there was an issue importing bulk school data")
         raise HTTPException(500, "Error bulk importing schools")
+
+
+@router.post(
+    "/admin/schools/{wriveted_identifier}/comp",
+    response_model=CompGrantResponse,
+)
+async def grant_school_comp(
+    wriveted_identifier: UUID,
+    payload: CompGrantRequest,
+    session: DBSessionDep,
+    account=Depends(get_current_active_superuser),
+):
+    """Staff action: grant a school complimentary access for ``payload.days``,
+    activating it. Re-running renews the comp for a fresh window."""
+    school = (
+        await session.execute(
+            select(School).where(School.wriveted_identifier == wriveted_identifier)
+        )
+    ).scalar_one_or_none()
+    if school is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found.")
+
+    # Don't stack a comp on top of a real paying subscription — that produces two
+    # active subscription rows and breaks School.subscription (uselist=False).
+    has_paying_sub = (
+        await session.execute(
+            select(Subscription.id)
+            .where(
+                Subscription.school_id == wriveted_identifier,
+                Subscription.is_active.is_(True),
+                Subscription.stripe_customer_id != "",
+            )
+            .limit(1)
+        )
+    ).first()
+    if has_paying_sub is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This school already has an active paid subscription.",
+        )
+
+    outcome, expiration = await grant_staff_comp(session, school, payload.days)
+    school_name = school.name
+    await event_repository.acreate(
+        session=session,
+        title="School complimentary access granted",
+        description=(
+            f"{school_name} granted {payload.days} days complimentary access "
+            f"({outcome}) until {expiration:%Y-%m-%d}."
+        ),
+        school=school,
+        account=account,
+        commit=False,
+    )
+    await session.commit()
+    logger.info(
+        "Staff comp granted",
+        school=school_name,
+        days=payload.days,
+        outcome=outcome,
+        access_until=str(expiration),
+    )
+    return CompGrantResponse(
+        outcome=outcome, state=school.state.value, access_until=expiration
+    )
 
 
 @router.post(
