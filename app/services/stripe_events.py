@@ -31,6 +31,7 @@ from app.services.events import create_event
 from app.services.school_access import (
     COMP_GRANT_SOURCES,
     CONTRIBUTION_GRANT_SOURCE,
+    active_stripe_subscription_stmt,
     ensure_comp_product_sync,
     lock_school_access_sync,
 )
@@ -139,12 +140,21 @@ def process_stripe_event(event_type: str, event_data):
             case "invoice.upcoming":
                 # Fires ~ahead of a renewal charge; remind school admins.
                 _handle_invoice_upcoming(session, event_data)
+            case "invoice.finalized":
+                # Audit only: the invoice exists and is sent; no state change.
+                _handle_invoice_finalized(session, school, event_data)
+            case "invoice.voided" | "invoice.marked_uncollectible":
+                # Treated as non-payment. Access is not dropped here; that flows
+                # from the subscription being cancelled (Dashboard: cancel unpaid
+                # subscription N days overdue) → customer.subscription.deleted.
+                _handle_invoice_not_collected(
+                    session, wriveted_user, school, event_type, event_data
+                )
             case "invoice.payment_failed":
                 # Stripe runs its own dunning retries; final give-up arrives as
                 # customer.subscription.deleted, which deactivates the school.
-                logger.warning(
-                    "Invoice payment failed",
-                    stripe_subscription=event_data.get("subscription"),
+                _handle_invoice_payment_failed(
+                    session, wriveted_user, school, event_data
                 )
             case (
                 "checkout.session.completed"
@@ -259,10 +269,108 @@ def _extract_user_and_customer_from_stripe_object(
                 client_reference_id=client_reference_id,
             )
 
+    # Fall back to metadata.wriveted_school_id (stamped on Customer and on
+    # API-created — invoice — subscriptions), so schools resolve even when there
+    # is no client_reference_id (invoice.* and customer.subscription.* events).
+    if school is None:
+        school = _resolve_school_from_metadata(
+            session, stripe_object, stripe_object_type, stripe_customer
+        )
+        if school is not None:
+            bind_contextvars(
+                school_id=school.wriveted_identifier, school_name=school.name
+            )
+
     if wriveted_user:
         bind_contextvars(wriveted_user_id=str(wriveted_user.id))
 
     return wriveted_user, school, stripe_customer
+
+
+def _invoice_subscription_id(invoice: dict) -> Optional[str]:
+    """Subscription id an invoice belongs to, across Stripe API versions.
+
+    Pre-2025 API versions expose ``invoice.subscription``; 2025+ moved it to
+    ``invoice.parent.subscription_details.subscription``. Read both so behaviour
+    does not silently change on an API-version bump. The account/webhook API
+    version should nonetheless be pinned.
+    """
+
+    def _id(value):
+        if isinstance(value, dict):
+            return value.get("id")
+        return value or None
+
+    direct = _id(invoice.get("subscription"))
+    if direct:
+        return direct
+    parent = invoice.get("parent") or {}
+    details = parent.get("subscription_details") or {}
+    return _id(details.get("subscription"))
+
+
+def _resolve_school_from_metadata(
+    session, stripe_object, object_type, stripe_customer
+) -> Optional[School]:
+    """Resolve a school from ``metadata.wriveted_school_id`` on the customer, the
+    subscription, or (for invoices) the invoice's subscription."""
+    candidate_ids: list = []
+
+    if stripe_customer is not None:
+        cust_meta = stripe_customer.get("metadata") or {}
+        candidate_ids.append(cust_meta.get("wriveted_school_id"))
+
+    if object_type == "subscription":
+        candidate_ids.append(
+            (stripe_object.get("metadata") or {}).get("wriveted_school_id")
+        )
+    elif object_type == "invoice":
+        subscription_id = _invoice_subscription_id(stripe_object)
+        if subscription_id:
+            try:
+                stripe_subscription = StripeSubscription.retrieve(subscription_id)
+                candidate_ids.append(
+                    (stripe_subscription.get("metadata") or {}).get(
+                        "wriveted_school_id"
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not retrieve invoice's subscription for metadata resolution",
+                    subscription_id=subscription_id,
+                    error=str(e),
+                )
+
+    for school_id in candidate_ids:
+        if not school_id or school_id in ("undefined", "null"):
+            continue
+        school = school_repository.get_by_wriveted_id(session, wriveted_id=school_id)
+        if school is not None:
+            logger.info(
+                "Resolved school from Stripe metadata",
+                school_id=school.wriveted_identifier,
+                school_name=school.name,
+            )
+            return school
+    return None
+
+
+def _stamp_customer_school_metadata(stripe_customer, school: School) -> None:
+    """Best-effort stamp of ``metadata.wriveted_school_id`` on the Stripe Customer
+    so later customer/subscription/invoice events resolve the school directly."""
+    if stripe_customer is None or school is None:
+        return
+    metadata = stripe_customer.metadata or {}
+    if metadata.get("wriveted_school_id") == str(school.wriveted_identifier):
+        return
+    try:
+        stripe_customer.metadata["wriveted_school_id"] = str(school.wriveted_identifier)
+        stripe_customer.save()
+    except Exception as e:
+        logger.warning(
+            "Failed to stamp wriveted_school_id on Stripe customer",
+            error=str(e),
+        )
 
 
 def _get_stripe_customer_from_stripe_object(stripe_object, stripe_object_type):
@@ -281,9 +389,10 @@ def _get_stripe_customer_from_stripe_object(stripe_object, stripe_object_type):
 def _handle_invoice_paid(
     session, wriveted_user: User | None, school: School | None, event_data: dict
 ):
-    logger.info("Invoice paid. Updating subscription")
-    # Get the subscription id from the invoice paid event
-    stripe_subscription_id = event_data.get("subscription")
+    logger.info("Invoice paid. Upserting subscription and activating school")
+    # Read the subscription id across API-version shapes (a bare invoice with no
+    # subscription — e.g. a one-off — has nothing to do here).
+    stripe_subscription_id = _invoice_subscription_id(event_data)
     stripe_customer_id = event_data.get("customer")
 
     if stripe_subscription_id is None:
@@ -292,21 +401,64 @@ def _handle_invoice_paid(
         )
         return
 
-    # Get the subscription from Stripe and fetch the current expiration date
     stripe_subscription = StripeSubscription.retrieve(stripe_subscription_id)
+
+    # Resolve the school from the subscription's own metadata when the event did
+    # not carry it (invoice events have no client_reference_id).
+    if school is None:
+        metadata_school_id = (stripe_subscription.get("metadata") or {}).get(
+            "wriveted_school_id"
+        )
+        if metadata_school_id:
+            school = school_repository.get_by_wriveted_id(
+                session, wriveted_id=metadata_school_id
+            )
+
+    stripe_price_id = stripe_subscription["items"]["data"][0]["price"]["id"]
+    _sync_stripe_price_with_wriveted_product(session, stripe_price_id)
+
+    is_active = stripe_subscription.status in {"active", "past_due"}
+    expiration = datetime.utcfromtimestamp(stripe_subscription.current_period_end)
+
     subscription = subscription_repository.get_by_id(
         session, subscription_id=stripe_subscription_id
     )
     if subscription is None:
-        logger.warning(
-            "Invoice paid event references a subscription that is not in the database"
+        # An API-created (invoice) subscription reaches invoice.paid without a
+        # prior checkout.session.completed, so upsert it here rather than warning
+        # and dropping the activation.
+        subscription = subscription_repository.upsert(
+            session,
+            SubscriptionCreateIn(
+                id=stripe_subscription_id,
+                type=(SubscriptionType.SCHOOL if school else SubscriptionType.FAMILY),
+                product_id=stripe_price_id,
+                stripe_customer_id=(
+                    str(stripe_customer_id) if stripe_customer_id else ""
+                ),
+                school_id=str(school.wriveted_identifier) if school else None,
+                is_active=is_active,
+                expiration=stripe_subscription.current_period_end,
+            ),
         )
-        return
+    else:
+        subscription.expiration = expiration
+        subscription.is_active = is_active
+        if school is not None and subscription.school_id is None:
+            subscription.school_id = school.wriveted_identifier
 
-    subscription.expiration = datetime.utcfromtimestamp(
-        stripe_subscription.current_period_end
-    )
-    subscription.is_active = stripe_subscription.status in {"active", "past_due"}
+    # If still unknown, recover the school from the (now-present) subscription row.
+    if school is None and subscription.school_id:
+        school = school_repository.get_by_wriveted_id(
+            session, str(subscription.school_id)
+        )
+
+    # Activate the (invoice- or card-)paying school and retire any comp grant it
+    # was riding on — including the invoice_pending net-terms grant. Both are
+    # idempotent, so a redelivered invoice.paid is a safe no-op.
+    if school is not None and is_active:
+        _activate_school_after_payment(session, school, None)
+        _retire_comp_grants(session, school.wriveted_identifier)
 
     # Use unified event workflow instead of direct crud.event.create
     create_event(
@@ -317,12 +469,99 @@ def _handle_invoice_paid(
             "stripe_invoice_id": event_data.get("id"),
             "stripe_customer_id": stripe_customer_id,
             "stripe_subscription_id": stripe_subscription_id,
+            "collection_method": stripe_subscription.get("collection_method"),
             "expiration": str(subscription.expiration),
         },
         school=school,
         account=wriveted_user,
         enable_processing=False,  # No processing needed for payment received
         external_notifications=False,  # Internal accounting event
+    )
+
+
+def _handle_invoice_finalized(session, school: School | None, event_data: dict) -> None:
+    """Record that an invoice was finalised and sent (audit only, no state change).
+
+    Captures the hosted invoice URL so staff can find/forward it (useful for the
+    net-terms invoice flow).
+    """
+    create_event(
+        session=session,
+        title="Invoice finalized",
+        description="Stripe finalized and issued an invoice",
+        info={
+            "stripe_invoice_id": event_data.get("id"),
+            "stripe_customer_id": event_data.get("customer"),
+            "stripe_subscription_id": _invoice_subscription_id(event_data),
+            "hosted_invoice_url": event_data.get("hosted_invoice_url"),
+            "amount_due": event_data.get("amount_due"),
+            "collection_method": event_data.get("collection_method"),
+        },
+        school=school,
+        enable_processing=False,
+        external_notifications=False,
+    )
+
+
+def _handle_invoice_not_collected(
+    session,
+    wriveted_user: Optional[User],
+    school: School | None,
+    event_type: str,
+    event_data: dict,
+) -> None:
+    """Handle a voided / uncollectible invoice as non-payment.
+
+    Access is intentionally not dropped here: the school's lifecycle is driven by
+    the subscription being cancelled (customer.subscription.deleted). This records
+    the fact and alerts staff.
+    """
+    create_event(
+        session=session,
+        title="Invoice not collected",
+        description=f"Invoice {event_type.split('.')[-1]} (treated as non-payment)",
+        info={
+            "event_type": event_type,
+            "stripe_invoice_id": event_data.get("id"),
+            "stripe_customer_id": event_data.get("customer"),
+            "stripe_subscription_id": _invoice_subscription_id(event_data),
+        },
+        school=school,
+        account=wriveted_user,
+        slack_channel=EventSlackChannel.MEMBERSHIPS,
+        enable_processing=False,
+        external_notifications=True,
+    )
+
+
+def _handle_invoice_payment_failed(
+    session, wriveted_user: Optional[User], school: School | None, event_data: dict
+) -> None:
+    """Log a failed invoice payment and alert staff; no state change.
+
+    Stripe runs its own dunning retries; a final give-up arrives as
+    customer.subscription.deleted, which deactivates the school.
+    """
+    logger.warning(
+        "Invoice payment failed",
+        stripe_subscription=_invoice_subscription_id(event_data),
+    )
+    create_event(
+        session=session,
+        title="Invoice payment failed",
+        description="A subscription invoice payment attempt failed",
+        info={
+            "stripe_invoice_id": event_data.get("id"),
+            "stripe_customer_id": event_data.get("customer"),
+            "stripe_subscription_id": _invoice_subscription_id(event_data),
+            "attempt_count": event_data.get("attempt_count"),
+            "next_payment_attempt": event_data.get("next_payment_attempt"),
+        },
+        school=school,
+        account=wriveted_user,
+        slack_channel=EventSlackChannel.MEMBERSHIPS,
+        enable_processing=False,
+        external_notifications=True,
     )
 
 
@@ -378,6 +617,9 @@ def _handle_checkout_session_completed(
                 stripe_customer_id=stripe_customer_id,
                 error=str(e),
             )
+
+    if school is not None:
+        _stamp_customer_school_metadata(stripe_customer, school)
 
     # ensure our db knows about the specified product
     stripe_price_id = stripe_subscription["items"]["data"][0]["price"]["id"]
@@ -580,15 +822,7 @@ def _get_active_stripe_subscription(session, school: School) -> Optional[Subscri
     ``stripe_customer_id``, so the ``!= ""`` filter excludes them.
     """
     return (
-        session.execute(
-            select(Subscription)
-            .where(
-                Subscription.school_id == school.wriveted_identifier,
-                Subscription.is_active.is_(True),
-                Subscription.stripe_customer_id != "",
-            )
-            .limit(1)
-        )
+        session.execute(active_stripe_subscription_stmt(school.wriveted_identifier))
         .scalars()
         .first()
     )

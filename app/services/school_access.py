@@ -35,10 +35,19 @@ from app.repositories.event_repository import event_repository
 CONTRIBUTION_GRANT_SOURCE = "contribution_grant"
 INVITE_GRANT_SOURCE = "invite_grant"
 STAFF_COMP_GRANT_SOURCE = "staff_comp"
+# Access held during net-terms while an invoice is unpaid. Paying the invoice
+# retires it (via _retire_comp_grants); an invoice that is never paid lapses it
+# via the lapse sweep, dropping the school to INACTIVE.
+INVOICE_PENDING_GRANT_SOURCE = "invoice_pending"
 # Every comped (non-paying) grant source. The lapse sweep and Stripe-conversion
 # retirement operate over this whole set, not just contributions.
 COMP_GRANT_SOURCES = frozenset(
-    {CONTRIBUTION_GRANT_SOURCE, INVITE_GRANT_SOURCE, STAFF_COMP_GRANT_SOURCE}
+    {
+        CONTRIBUTION_GRANT_SOURCE,
+        INVITE_GRANT_SOURCE,
+        STAFF_COMP_GRANT_SOURCE,
+        INVOICE_PENDING_GRANT_SOURCE,
+    }
 )
 
 INVITE_GRANT_PRODUCT_ID = "comp_school_invite"
@@ -49,6 +58,66 @@ STAFF_COMP_PRODUCT_ID = "comp_staff_grant"
 STAFF_COMP_PRODUCT_NAME = "Staff complimentary grant"
 STAFF_COMP_SUBSCRIPTION_PREFIX = "comp_staff_"
 SCHOOL_COMP_GRANTED_EVENT_TITLE = "School complimentary access granted"
+
+INVOICE_PENDING_PRODUCT_ID = "comp_invoice_pending"
+INVOICE_PENDING_PRODUCT_NAME = "Invoice pending (net terms)"
+INVOICE_PENDING_SUBSCRIPTION_PREFIX = "comp_invoice_pending_"
+
+
+def active_stripe_subscription_stmt(school_id):
+    """SELECT for a school's active, real (paying) Stripe subscription.
+
+    The shared predicate for "the school has a real Stripe subscription":
+    ``is_active`` and a non-empty ``stripe_customer_id`` (comped grants carry an
+    empty customer id, so ``!= ""`` excludes them). Hoisted here so the webhook
+    handlers, the billing-portal endpoint and the invoice-subscription guard all
+    apply one definition.
+    """
+    return (
+        select(Subscription)
+        .where(
+            Subscription.school_id == school_id,
+            Subscription.is_active.is_(True),
+            Subscription.stripe_customer_id != "",
+        )
+        .limit(1)
+    )
+
+
+async def get_active_stripe_subscription_async(
+    session: AsyncSession, school_id
+) -> Subscription | None:
+    return (
+        await session.execute(active_stripe_subscription_stmt(school_id))
+    ).scalar_one_or_none()
+
+
+async def known_stripe_customer_id_async(
+    session: AsyncSession, school_id
+) -> str | None:
+    """The Stripe customer id previously associated with this school, if any.
+
+    Reused so a second checkout / invoice attaches to the same Stripe Customer
+    rather than creating a duplicate. Prefers a live subscription's customer but
+    falls back to any non-empty one on record.
+    """
+    row = (
+        await session.execute(
+            select(Subscription.stripe_customer_id)
+            .where(
+                Subscription.school_id == school_id,
+                Subscription.stripe_customer_id != "",
+            )
+            .order_by(Subscription.is_active.desc(), Subscription.updated_at.desc())
+            .limit(1)
+        )
+    ).first()
+    return row[0] if row else None
+
+
+def invoice_pending_grant_id(school_wriveted_id) -> str:
+    return f"{INVOICE_PENDING_SUBSCRIPTION_PREFIX}{school_wriveted_id}"
+
 
 StaffCompOutcome = Literal["granted", "extended", "unchanged"]
 
@@ -313,3 +382,56 @@ async def grant_invite_access(
 
     await session.flush()
     return "activated", expiration
+
+
+async def grant_invoice_pending_access(
+    session: AsyncSession, school: School, expiration: datetime
+) -> datetime:
+    """Give a school net-terms access while its invoice is unpaid.
+
+    Creates (or refreshes) the deterministic ``comp_invoice_pending_<school_id>``
+    grant and flips the school ACTIVE, in the caller's transaction. The grant
+    joins ``COMP_GRANT_SOURCES``, so paying the invoice retires it and an unpaid
+    invoice lapses it via the sweep. Idempotent on the deterministic id; never
+    shortens an existing expiry.
+    """
+    grant_id = invoice_pending_grant_id(school.wriveted_identifier)
+
+    school = await lock_school_access_async(session, school.wriveted_identifier)
+    if school is None:
+        raise SchoolNotFoundError
+
+    await ensure_comp_product_async(
+        session, INVOICE_PENDING_PRODUCT_ID, INVOICE_PENDING_PRODUCT_NAME
+    )
+
+    existing = (
+        await session.execute(
+            select(Subscription).where(Subscription.id == grant_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        session.add(
+            Subscription(
+                id=grant_id,
+                school_id=school.wriveted_identifier,
+                type=SubscriptionType.SCHOOL,
+                stripe_customer_id="",
+                is_active=True,
+                expiration=expiration,
+                product_id=INVOICE_PENDING_PRODUCT_ID,
+                info={"source": INVOICE_PENDING_GRANT_SOURCE},
+            )
+        )
+    else:
+        expiration = max(existing.expiration or expiration, expiration)
+        existing.is_active = True
+        existing.expiration = expiration
+        existing.info = {"source": INVOICE_PENDING_GRANT_SOURCE}
+
+    if school.state != SchoolState.ACTIVE:
+        school.state = SchoolState.ACTIVE
+        session.add(school)
+
+    await session.flush()
+    return expiration
