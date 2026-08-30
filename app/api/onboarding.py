@@ -5,8 +5,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field, StringConstraints, model_validator
-from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
 from starlette import status
 from structlog import get_logger
 from typing_extensions import Annotated
@@ -14,22 +12,27 @@ from typing_extensions import Annotated
 from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.security import get_current_active_user
 from app.config import get_settings
-from app.models import School, SchoolAdmin, SchoolState
-from app.models.school import SchoolBookbotType
-from app.models.user import User, UserAccountType
+from app.models import SchoolState
+from app.models.user import User
 from app.repositories.event_repository import event_repository
 from app.schemas.school import normalize_school_info
+from app.services.background_tasks import queue_background_task
 from app.services.email_notification import (
     EmailType,
     send_email_reliable,
     trigger_email_delivery_async,
 )
 from app.services.experiments import get_experiments
+from app.services.onboarding_service import (
+    OnboardingSchoolAmbiguous,
+    OnboardingSchoolNotClaimable,
+    OnboardingSchoolNotFound,
+    resolve_and_claim_onboarding_school,
+)
 from app.services.school_emails import (
     render_school_registered_html,
     render_staff_new_school_alert_html,
 )
-from app.services.school_membership import promote_to_school_admin
 
 logger = get_logger()
 
@@ -52,7 +55,12 @@ class SchoolOnboardingRequest(BaseModel):
     country_code: Optional[
         Annotated[str, StringConstraints(min_length=3, max_length=3)]
     ] = None
+    # Authoritative school identifier (e.g. government/UDISE id) when known.
+    official_identifier: Optional[str] = Field(None, max_length=512)
     location: Optional[SchoolLocationInput] = None
+    # Set true to deliberately create a distinct new school when an ambiguous
+    # same-name/country match exists.
+    create_new_school: bool = False
 
     contact_name: str = Field(max_length=200)
     contact_email: EmailStr
@@ -89,66 +97,10 @@ async def onboard_school(
 ):
     """Self-service school onboarding.
 
-    Creates or selects a school, promotes the user to SchoolAdmin,
-    binds them as the school's administrator, and sets the school
-    to PENDING for admin review.
+    Resolves (or creates) the school, binds the user as its administrator, and
+    leaves it PENDING for admin review. School resolution/claiming lives in the
+    service layer; this route only translates domain outcomes to HTTP.
     """
-    # Resolve or create the school
-    if request.school_wriveted_id:
-        result = await db.execute(
-            select(School).where(
-                School.wriveted_identifier == request.school_wriveted_id
-            )
-        )
-        school = result.scalars().first()
-        if school is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="School not found",
-            )
-        if school.state == SchoolState.ACTIVE:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="This school is already active. Contact us if you need access.",
-            )
-        # Prevent hijacking a school that already has an admin
-        admin_result = await db.execute(
-            select(SchoolAdmin).where(SchoolAdmin.school_id == school.id)
-        )
-        if admin_result.scalars().first() is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="This school already has an administrator. Contact us for access.",
-            )
-    else:
-        if not request.school_name or not request.country_code:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="school_name and country_code are required when creating a new school",
-            )
-        try:
-            school = School(
-                name=request.school_name,
-                country_code=request.country_code,
-                state=SchoolState.PENDING,
-                bookbot_type=SchoolBookbotType.HUEY_BOOKS,
-                info={
-                    "location": request.location.model_dump()
-                    if request.location
-                    else {},
-                    "experiments": get_experiments({}),
-                },
-            )
-            db.add(school)
-            await db.flush()
-        except IntegrityError:
-            await db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A school with this name already exists in this country",
-            )
-
-    # Store onboarding contact info
     onboarding_info = {
         "onboarding": {
             "contact_name": request.contact_name,
@@ -159,26 +111,41 @@ async def onboard_school(
             "message": request.message,
         }
     }
-    if school.info is None:
-        school.info = normalize_school_info(onboarding_info)
-    else:
-        school.info = normalize_school_info({**school.info, **onboarding_info})
-
-    school.state = SchoolState.PENDING
-
-    # Promote user to SchoolAdmin if needed
-    if current_user.type != UserAccountType.SCHOOL_ADMIN:
-        await promote_to_school_admin(db, current_user, school)
-
-    # Bind user to school via educators table
-    await db.execute(
-        text(
-            "INSERT INTO educators (id, school_id) VALUES (:uid, :school_id) "
-            "ON CONFLICT (id) DO UPDATE SET school_id = :school_id"
-        ),
-        {"uid": current_user.id, "school_id": school.id},
-    )
-    await db.flush()
+    try:
+        school = await resolve_and_claim_onboarding_school(
+            db,
+            user=current_user,
+            school_wriveted_id=request.school_wriveted_id,
+            school_name=request.school_name,
+            country_code=request.country_code,
+            official_identifier=request.official_identifier,
+            location=request.location.model_dump() if request.location else None,
+            create_new_school=request.create_new_school,
+            onboarding_info=onboarding_info,
+        )
+    except OnboardingSchoolNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="School not found"
+        )
+    except OnboardingSchoolNotClaimable as e:
+        detail = (
+            "This school is already active. Contact us if you need access."
+            if e.reason == "active"
+            else "This school already has an administrator. Contact us for access."
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+    except OnboardingSchoolAmbiguous as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "More than one school matches this name and country. Select an "
+                    "existing school (school_wriveted_id) or set create_new_school "
+                    "to register a distinct new one."
+                ),
+                "candidates": e.candidates,
+            },
+        )
 
     # Create an event for admin visibility
     await event_repository.acreate(

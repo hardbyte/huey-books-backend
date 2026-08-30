@@ -254,3 +254,267 @@ def test_onboard_promotes_user_to_school_admin(
         user = fresh_session.get(User, user_id)
         assert user is not None
         assert user.type == UserAccountType.SCHOOL_ADMIN
+
+
+# ── School onboarding deduplication ────────────────────────────────────
+
+
+def _second_user_and_token(session):
+    """Create an additional public user account and return (user, token)."""
+    from datetime import timedelta
+
+    from app import crud
+    from app.schemas.users.user_create import UserCreateIn
+    from app.services.security import create_access_token
+    from app.tests.util.random_strings import random_lower_string
+
+    user = crud.user.create(
+        db=session,
+        obj_in=UserCreateIn(
+            name="integration test account (second public)",
+            email=f"{random_lower_string(6)}@test.com",
+            first_name="Second",
+            last_name_initial="U",
+        ),
+    )
+    token = create_access_token(
+        subject=f"wriveted:user-account:{user.id}",
+        expires_delta=timedelta(minutes=5),
+    )
+    return user, token
+
+
+def _count_schools(session, name, country_code):
+    from sqlalchemy import func
+
+    from app.models import School
+
+    return (
+        session.query(School)
+        .filter(
+            func.lower(func.btrim(School.name)) == name.strip().lower(),
+            School.country_code == country_code,
+        )
+        .count()
+    )
+
+
+def _make_school(
+    session, *, name, country_code, state, location=None, official_identifier=None
+):
+    """Create a school row directly (for dedup fixtures)."""
+    from app.models import School
+    from app.services.experiments import get_experiments
+
+    school = School(
+        name=name,
+        country_code=country_code,
+        state=state,
+        official_identifier=official_identifier,
+        info={"location": location or {}, "experiments": get_experiments({})},
+    )
+    session.add(school)
+    session.commit()
+    session.refresh(school)
+    return school
+
+
+def _onboard_payload(name, country_code="ATA", **extra):
+    payload = {
+        "school_name": name,
+        "country_code": country_code,
+        "contact_name": "Teacher",
+        "contact_email": "teacher@test.com",
+        "contact_role": "teacher",
+    }
+    payload.update(extra)
+    return payload
+
+
+def test_onboard_new_school_creates_single_record(
+    client, session, test_user_account, test_user_account_token
+):
+    """A brand-new name+country creates exactly one school."""
+    name = f"Dedup New School {secrets.token_hex(4)}"
+    resp = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json=_onboard_payload(name),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _count_schools(session, name, "ATA") == 1
+
+
+def test_onboard_second_registration_without_location_is_ambiguous(
+    client, session, test_user_account, test_user_account_token
+):
+    """A colleague re-registering the same name+country without a confirming
+    signal is ambiguous — 409, and no duplicate row is created."""
+    name = f"Dedup Colleague School {secrets.token_hex(4)}"
+    first = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json=_onboard_payload(name, contact_email="first@test.com"),
+    )
+    assert first.status_code == 200, first.text
+    assert _count_schools(session, name, "ATA") == 1
+
+    _second, second_token = _second_user_and_token(session)
+    second = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {second_token}"},
+        json=_onboard_payload(name, contact_email="second@test.com"),
+    )
+    assert second.status_code == 409, second.text
+    assert _count_schools(session, name, "ATA") == 1
+
+
+def test_onboard_attaches_to_inactive_when_location_matches(
+    client, session, test_user_account, test_user_account_token
+):
+    """An inactive, admin-less school is reused when the location confirms it's
+    the same one (case-insensitive name), rather than duplicated."""
+    name = f"Inactive Dedup School {secrets.token_hex(4)}"
+    school = _make_school(
+        session,
+        name=name,
+        country_code="ATA",
+        state=SchoolState.INACTIVE,
+        location={"postcode": "7000"},
+    )
+    resp = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json=_onboard_payload(name.upper(), location={"postcode": "7000"}),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["school_wriveted_id"] == str(school.wriveted_identifier)
+    assert _count_schools(session, name, "ATA") == 1
+
+
+def test_onboard_matching_active_school_rejected(
+    client, session, test_user_account, test_user_account_token
+):
+    """A confirmed match against an ACTIVE school is rejected (not claimable)."""
+    name = f"Active Dedup School {secrets.token_hex(4)}"
+    _make_school(
+        session,
+        name=name,
+        country_code="ATA",
+        state=SchoolState.ACTIVE,
+        location={"postcode": "7000"},
+    )
+    resp = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json=_onboard_payload(name, location={"postcode": "7000"}),
+    )
+    assert resp.status_code == 409, resp.text
+    assert _count_schools(session, name, "ATA") == 1
+
+
+def test_onboard_ambiguous_different_location_then_create_new(
+    client, session, test_user_account, test_user_account_token
+):
+    """Same name, DIFFERENT location is ambiguous (409); create_new_school makes
+    a genuinely distinct second record."""
+    name = f"SameName Diff Location {secrets.token_hex(4)}"
+    _make_school(
+        session,
+        name=name,
+        country_code="ATA",
+        state=SchoolState.INACTIVE,
+        location={"postcode": "1000"},
+    )
+    ambiguous = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json=_onboard_payload(name, location={"postcode": "2000"}),
+    )
+    assert ambiguous.status_code == 409, ambiguous.text
+    body = ambiguous.json()["detail"]
+    assert "candidates" in body and len(body["candidates"]) >= 1
+    assert _count_schools(session, name, "ATA") == 1
+
+    created = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json=_onboard_payload(
+            name, location={"postcode": "2000"}, create_new_school=True
+        ),
+    )
+    assert created.status_code == 200, created.text
+    assert _count_schools(session, name, "ATA") == 2
+
+
+def test_onboard_same_name_different_country_are_separate(
+    client, session, test_user_account, test_user_account_token
+):
+    """Exact-country isolation: the same name in another country is a different
+    school and is created independently."""
+    name = f"Cross Country School {secrets.token_hex(4)}"
+    _make_school(
+        session,
+        name=name,
+        country_code="ATA",
+        state=SchoolState.INACTIVE,
+        location={"postcode": "1000"},
+    )
+    resp = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json=_onboard_payload(name, country_code="NZL"),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _count_schools(session, name, "ATA") == 1
+    assert _count_schools(session, name, "NZL") == 1
+
+
+def test_onboard_whitespace_does_not_duplicate(
+    client, session, test_user_account, test_user_account_token
+):
+    """A trailing-whitespace resubmit matches the trimmed stored name — it does
+    not create a second record."""
+    base = f"Whitespace School {secrets.token_hex(4)}"
+    first = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json=_onboard_payload(base + "   "),
+    )
+    assert first.status_code == 200, first.text
+    assert _count_schools(session, base, "ATA") == 1
+
+    _second, second_token = _second_user_and_token(session)
+    second = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {second_token}"},
+        json=_onboard_payload(base + " "),
+    )
+    # Matches the existing (trimmed) record → not a new row.
+    assert second.status_code == 409, second.text
+    assert _count_schools(session, base, "ATA") == 1
+
+
+def test_onboard_official_identifier_matches_authoritatively(
+    client, session, test_user_account, test_user_account_token
+):
+    """An official identifier is an authoritative match even if the submitted
+    name differs — it attaches to the existing school rather than duplicating."""
+    official = f"OFF-{secrets.token_hex(4)}"
+    school = _make_school(
+        session,
+        name=f"Official Registered Name {secrets.token_hex(4)}",
+        country_code="ATA",
+        state=SchoolState.INACTIVE,
+        official_identifier=official,
+    )
+    resp = client.post(
+        "/v1/onboarding/school",
+        headers={"Authorization": f"Bearer {test_user_account_token}"},
+        json=_onboard_payload(
+            f"A Differently Typed Name {secrets.token_hex(4)}",
+            official_identifier=official,
+        ),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["school_wriveted_id"] == str(school.wriveted_identifier)

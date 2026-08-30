@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Sequence
 
 from fastapi import HTTPException
-from sqlalchemy import delete, exists, select, text, update
+from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, selectinload
@@ -17,6 +17,7 @@ from structlog import get_logger
 from app.models import ClassGroup, Event, School, Student, Subscription
 from app.models.collection import Collection
 from app.models.educator import Educator
+from app.models.school import SchoolBookbotType, SchoolState
 from app.models.school_admin import SchoolAdmin
 from app.models.user import User, UserAccountType
 from app.schemas.school import SchoolCreateIn, SchoolPatchOptions, normalize_school_info
@@ -206,6 +207,85 @@ class SchoolRepositoryImpl(SchoolRepository):
                 status_code=404,
                 detail=f"School with wriveted_id {wriveted_id} not found.",
             )
+
+    async def alock_school_identity_key(
+        self, db: AsyncSession, name: str, country_code: str
+    ) -> None:
+        """Serialise find-or-create for a school identity within the transaction.
+
+        A previously-unseen (name, country) has no row to lock and no unique
+        constraint, so two concurrent first-registrations could both insert.
+        A transaction-scoped advisory lock on a hash of the normalised key makes
+        the resolve-then-insert atomic across requests; it releases on commit.
+        """
+        key = f"{name.strip().lower()}|{country_code.upper()}"
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": key}
+        )
+
+    async def afind_by_official_identifier(
+        self, db: AsyncSession, country_code: str, official_identifier: str
+    ) -> Optional[School]:
+        """Authoritative match on (country, official_identifier)."""
+        result = await db.execute(
+            select(School).where(
+                School.country_code == country_code.upper(),
+                School.official_identifier == official_identifier,
+            )
+        )
+        return result.scalars().first()
+
+    async def afind_name_country_matches(
+        self, db: AsyncSession, name: str, country_code: str
+    ) -> Sequence[School]:
+        """All schools matching a case-insensitive, whitespace-trimmed name and
+        exact country. Ordered ACTIVE-first, then most-recently-created."""
+        result = await db.execute(
+            select(School)
+            .where(
+                func.lower(func.btrim(School.name)) == name.strip().lower(),
+                School.country_code == country_code.upper(),
+            )
+            .order_by(
+                (School.state == SchoolState.ACTIVE).desc(),
+                School.created_at.desc(),
+                School.id.desc(),
+            )
+        )
+        return result.scalars().all()
+
+    async def alock_school_for_update(
+        self, db: AsyncSession, school_id: int
+    ) -> Optional[School]:
+        """Row-lock a school so an availability check + claim is serialised."""
+        result = await db.execute(
+            select(School).where(School.id == school_id).with_for_update()
+        )
+        return result.scalars().first()
+
+    async def ahas_admin(self, db: AsyncSession, school_id: int) -> bool:
+        return bool(
+            (
+                await db.execute(
+                    select(exists().where(SchoolAdmin.school_id == school_id))
+                )
+            ).scalar()
+        )
+
+    async def acreate_onboarding_school(
+        self, db: AsyncSession, *, name: str, country_code: str, info: dict
+    ) -> School:
+        """Create a new PENDING self-serve school (name stored trimmed)."""
+        school = School(
+            name=name.strip(),
+            country_code=country_code.upper(),
+            state=SchoolState.PENDING,
+            bookbot_type=SchoolBookbotType.HUEY_BOOKS,
+            info=normalize_school_info(info),
+        )
+        db.add(school)
+        await db.flush()
+        return school
 
     def get_by_official_id_or_404(
         self, db: Session, country_code: str, official_id: str
