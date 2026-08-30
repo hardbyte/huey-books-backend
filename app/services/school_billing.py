@@ -11,15 +11,18 @@ import asyncio
 from datetime import datetime, timedelta
 
 import stripe
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from app.config import get_settings
 from app.models.school import School
+from app.models.subscription import Subscription
 from app.services.school_access import (
     get_active_stripe_subscription_async,
     grant_invoice_pending_access,
     known_stripe_customer_id_async,
+    lock_school_access_async,
 )
 
 logger = get_logger()
@@ -262,14 +265,30 @@ async def create_school_invoice_subscription(
 
     resolved_price_id = _select_school_price_id(school, price_id)
 
-    # One open invoice-sub per school: refuse if a live Stripe subscription
-    # (card or a prior invoice) already controls access.
-    existing = await get_active_stripe_subscription_async(
-        session, school.wriveted_identifier
-    )
-    if existing is not None:
+    # Lock the school row BEFORE the existence check and the Stripe calls so two
+    # concurrent POSTs cannot both pass the guard and double-bill. The lock is
+    # released when the caller commits/rolls back the request transaction.
+    locked_school = await lock_school_access_async(session, school.wriveted_identifier)
+    if locked_school is not None:
+        school = locked_school
+
+    # One open subscription per school: refuse if ANY live subscription already
+    # controls access — a card/invoice Stripe sub OR a comp grant (including the
+    # empty-customer invoice_pending grant, which the Stripe-only predicate can't
+    # see) — so a repeat POST does not issue a second invoice.
+    existing_live = (
+        await session.execute(
+            select(Subscription.id)
+            .where(
+                Subscription.school_id == school.wriveted_identifier,
+                Subscription.is_active.is_(True),
+            )
+            .limit(1)
+        )
+    ).first()
+    if existing_live is not None:
         raise SchoolInvoiceConflictError(
-            "School already has an active Stripe subscription"
+            "School already has an active subscription or pending invoice grant"
         )
 
     stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -277,6 +296,11 @@ async def create_school_invoice_subscription(
     known_customer_id = await known_stripe_customer_id_async(
         session, school.wriveted_identifier
     )
+
+    # Deterministic idempotency keys keyed on the school so a retried/duplicated
+    # request reuses the same Stripe Customer + Subscription instead of creating
+    # duplicates (and double-emitting invoices).
+    idempotency_key = f"invoice-sub-{wriveted_id}"
 
     customer_params: dict = {
         "email": billing_email,
@@ -290,21 +314,29 @@ async def create_school_invoice_subscription(
 
     def _create_on_stripe():
         if known_customer_id:
-            customer = stripe.Customer.modify(known_customer_id, **customer_params)
+            # Reuse the existing Customer as-is; do NOT overwrite its contact
+            # (email/name) — it may belong to a prior payer (contribution/lapsed
+            # sub) and clobbering it would misdirect their invoices/receipts.
+            customer_id = known_customer_id
         else:
-            customer = stripe.Customer.create(**customer_params)
+            customer = stripe.Customer.create(
+                idempotency_key=f"{idempotency_key}-customer",
+                **customer_params,
+            )
+            customer_id = customer.id
         subscription = stripe.Subscription.create(
-            customer=customer.id,
+            customer=customer_id,
             items=[{"price": resolved_price_id}],
             collection_method="send_invoice",
             days_until_due=settings.INVOICE_DAYS_UNTIL_DUE,
             metadata={"wriveted_school_id": wriveted_id},
             expand=["latest_invoice"],
+            idempotency_key=f"{idempotency_key}-subscription",
         )
-        return customer, subscription
+        return customer_id, subscription
 
     try:
-        customer, subscription = await asyncio.to_thread(_create_on_stripe)
+        customer_id, subscription = await asyncio.to_thread(_create_on_stripe)
     except Exception as e:
         logger.error(
             "Failed to create school invoice subscription",
@@ -328,7 +360,7 @@ async def create_school_invoice_subscription(
         "Created school invoice subscription",
         wriveted_school_id=wriveted_id,
         stripe_subscription_id=subscription.id,
-        stripe_customer_id=customer.id,
+        stripe_customer_id=customer_id,
         po_number=po_number,
     )
     return {"status": "invoice_sent", "hosted_invoice_url": hosted_invoice_url}

@@ -438,7 +438,7 @@ def _handle_invoice_paid(
                 ),
                 school_id=str(school.wriveted_identifier) if school else None,
                 is_active=is_active,
-                expiration=stripe_subscription.current_period_end,
+                expiration=expiration,
             ),
         )
     else:
@@ -1283,6 +1283,36 @@ def _handle_invoice_upcoming(session, event_data):
     logger.info("Sent school renewal reminder", school=school.name)
 
 
+def _is_unpaid_invoice_subscription(event_data: dict) -> bool:
+    """True for a ``send_invoice`` subscription whose latest invoice is not paid.
+
+    A net-terms (``collection_method='send_invoice'``) subscription is reported
+    ``active`` by Stripe the moment it is created — before the invoice is paid.
+    Retiring the ``invoice_pending`` comp grant on that pre-payment event would
+    defeat the never-paid lapse backstop, so callers skip the retire for these:
+    only ``invoice.paid`` should retire the grant. Unknown/unretrievable invoice
+    status is treated as unpaid (conservative — do not retire early).
+    """
+    if event_data.get("collection_method") != "send_invoice":
+        return False
+
+    latest_invoice = event_data.get("latest_invoice")
+    status = None
+    if isinstance(latest_invoice, dict):
+        status = latest_invoice.get("status")
+    elif isinstance(latest_invoice, str) and latest_invoice:
+        try:
+            status = stripe.Invoice.retrieve(latest_invoice).get("status")
+        except Exception as e:
+            logger.warning(
+                "Could not retrieve latest invoice to check paid status",
+                latest_invoice=latest_invoice,
+                error=str(e),
+            )
+            status = None
+    return status != "paid"
+
+
 def _handle_subscription_created(
     session, wriveted_user: Optional[User], school: School | None, event_data: dict
 ):
@@ -1344,6 +1374,7 @@ def _handle_subscription_created(
         school is not None
         and subscription.is_active
         and subscription.stripe_customer_id
+        and not _is_unpaid_invoice_subscription(event_data)
     ):
         school = lock_school_access_sync(session, school.wriveted_identifier)
         if school is not None:
@@ -1416,6 +1447,7 @@ def _handle_subscription_updated(
         and subscription.type == SubscriptionType.SCHOOL
         and subscription.is_active
         and subscription.stripe_customer_id
+        and not _is_unpaid_invoice_subscription(event_data)
     ):
         school = lock_school_access_sync(session, school.wriveted_identifier)
         if school is not None:

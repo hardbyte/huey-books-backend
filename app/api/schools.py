@@ -362,7 +362,7 @@ class SchoolBillingPortalResponse(BaseModel):
 )
 async def create_school_billing_portal(
     session: DBSessionDep,
-    school: School = Permission("update", aget_school_from_wriveted_id),
+    school: School = Permission("billing", aget_school_from_wriveted_id),
     account: Union[User, ServiceAccount] = Depends(
         get_current_active_user_or_service_account
     ),
@@ -402,7 +402,7 @@ class SchoolInvoiceSubscriptionResponse(BaseModel):
 async def create_school_invoice_subscription_endpoint(
     body: SchoolInvoiceSubscriptionIn,
     session: DBSessionDep,
-    school: School = Permission("update", aget_school_from_wriveted_id),
+    school: School = Permission("billing", aget_school_from_wriveted_id),
     account: Union[User, ServiceAccount] = Depends(
         get_current_active_user_or_service_account
     ),
@@ -429,6 +429,9 @@ async def create_school_invoice_subscription_endpoint(
         ) from None
     except SchoolBillingError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
+    # get_async_session does not commit on teardown; persist the invoice_pending
+    # grant and ACTIVE flip (Stripe already emitted the irreversible invoice).
+    await session.commit()
     return SchoolInvoiceSubscriptionResponse(**result)
 
 
