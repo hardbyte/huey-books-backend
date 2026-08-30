@@ -1,9 +1,32 @@
+import os
+import subprocess
+import sys
 from unittest.mock import Mock, patch
 
 from app.api.internal import handle_send_email
 from app.schemas.feedback import SendEmailPayload
 from app.schemas.sendgrid import SendGridEmailData
 from app.services.email_notification import EmailType, trigger_email_delivery
+
+
+def test_internal_api_imports_in_a_fresh_process():
+    environment = {
+        **os.environ,
+        "POSTGRESQL_PASSWORD": "test",
+        "SECRET_KEY": "test",
+        "SHOPIFY_HMAC_SECRET": "test",
+        "STRIPE_SECRET_KEY": "test",
+    }
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.internal_api"],
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_internal_email_is_committed_and_delivery_is_nudged():

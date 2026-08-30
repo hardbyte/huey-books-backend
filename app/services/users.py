@@ -12,7 +12,6 @@ from app.models.parent import Parent
 from app.models.user import User, UserAccountType
 from app.schemas.users.huey_attributes import HueyAttributes
 from app.schemas.users.user_create import UserCreateIn
-from app.services.booklists import generate_reading_pathway_lists_sync
 
 # Local import to avoid circular dependency
 # from app.services.events import create_event
@@ -41,6 +40,10 @@ def handle_user_creation(
                 child_data.parent_id = new_user.id
                 child = crud.user.create(db=session, obj_in=child_data, commit=True)
                 if generate_pathway_lists:
+                    from app.services.booklists import (
+                        generate_reading_pathway_lists_sync,
+                    )
+
                     # Queue booklist generation as a background task
                     generate_reading_pathway_lists_sync(
                         child.id,
