@@ -285,24 +285,66 @@ class TestEventOutboxService:
 
         session_factory = get_async_session_maker()
         service = EventOutboxService()
-        async with session_factory() as processing_session:
-            result = await processing_session.execute(
-                select(EventOutbox).where(EventOutbox.id == event.id).with_for_update()
+        async with session_factory() as retry_session:
+            retry_backend_pid = await retry_session.scalar(
+                text("SELECT pg_backend_pid()")
             )
-            processing_event = result.scalar_one()
-            processing_event.status = EventStatus.PUBLISHED
-            processing_event.payload = {"email_type": "notification", "redacted": True}
-            await processing_session.flush()
+            result = await retry_session.execute(
+                select(EventOutbox).where(EventOutbox.id == event.id)
+            )
+            stale_retry_event = result.scalar_one()
+            assert stale_retry_event.status == EventStatus.FAILED
 
-            async with session_factory() as retry_session:
+            async with session_factory() as processing_session:
+                result = await processing_session.execute(
+                    select(EventOutbox)
+                    .where(EventOutbox.id == event.id)
+                    .with_for_update()
+                )
+                processing_event = result.scalar_one()
+                processing_event.status = EventStatus.PUBLISHED
+                processing_event.payload = {
+                    "email_type": "notification",
+                    "redacted": True,
+                }
+                await processing_session.flush()
+
                 retry_task = asyncio.create_task(
                     service.retry_event(retry_session, event.id)
                 )
-                await asyncio.sleep(0.05)
+
+                for _ in range(100):
+                    retry_is_waiting = await processing_session.scalar(
+                        text(
+                            "SELECT wait_event_type = 'Lock' "
+                            "FROM pg_stat_activity WHERE pid = :pid"
+                        ),
+                        {"pid": retry_backend_pid},
+                    )
+                    if retry_is_waiting:
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    pytest.fail("retry query did not wait for the processing lock")
+
                 assert not retry_task.done()
 
                 await processing_session.commit()
                 assert await asyncio.wait_for(retry_task, timeout=1) is False
+
+            async with session_factory() as verification_session:
+                result = await verification_session.execute(
+                    select(EventOutbox)
+                    .where(EventOutbox.id == event.id)
+                    .with_for_update(nowait=True)
+                )
+                verified_event = result.scalar_one()
+                assert verified_event.status == EventStatus.PUBLISHED
+                assert verified_event.payload == {
+                    "email_type": "notification",
+                    "redacted": True,
+                }
+                await verification_session.rollback()
 
         await async_session.refresh(event)
         assert event.status == EventStatus.PUBLISHED

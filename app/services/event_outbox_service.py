@@ -285,15 +285,18 @@ class EventOutboxService:
         event = result.scalar_one_or_none()
 
         if not event:
+            await db.rollback()
             return False
 
         if event.status not in (EventStatus.FAILED, EventStatus.DEAD_LETTER):
+            await db.rollback()
             return False
         if (
             event.event_type == "email_notification"
             and isinstance(event.payload, dict)
             and event.payload.get("redacted") is True
         ):
+            await db.rollback()
             return False
 
         # Reset for retry
