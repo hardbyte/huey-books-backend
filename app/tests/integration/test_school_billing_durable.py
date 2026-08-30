@@ -35,7 +35,8 @@ from app.services.stripe_events import process_stripe_event
 
 
 @pytest.mark.asyncio
-async def test_send_invoice_active_but_unpaid_is_not_paid(async_session):
+async def test_send_invoice_active_but_unpaid_is_not_paid(async_session, monkeypatch):
+    _configure_stripe(monkeypatch)
     school = await _create_school(async_session)
     async_session.add(Product(id="price_invoice", name="School invoice"))
     await async_session.flush()
@@ -66,8 +67,9 @@ async def test_send_invoice_active_but_unpaid_is_not_paid(async_session):
 
 @pytest.mark.asyncio
 async def test_historical_checkout_preserves_access_without_claiming_payment(
-    async_session,
+    async_session, monkeypatch
 ):
+    _configure_stripe(monkeypatch)
     school = await _create_school(async_session)
     async_session.add(Product(id="price_legacy", name="Legacy school plan"))
     await async_session.flush()
@@ -383,11 +385,14 @@ def test_duplicate_event_id_is_applied_once(session, test_school):
 
     assert first == {"status": "processed"}
     assert second == {"status": "duplicate"}
-    assert session.scalar(
-        select(func.count()).select_from(StripeEventReceipt).where(
-            StripeEventReceipt.event_id == event_id
+    assert (
+        session.scalar(
+            select(func.count())
+            .select_from(StripeEventReceipt)
+            .where(StripeEventReceipt.event_id == event_id)
         )
-    ) == 1
+        == 1
+    )
 
 
 def test_stale_subscription_deletion_does_not_deactivate_replacement(
@@ -656,7 +661,8 @@ def test_delayed_checkout_a_expiry_cannot_release_checkout_b(session, test_schoo
 
 
 @pytest.mark.asyncio
-async def test_status_aggregate_precedence(async_session):
+async def test_status_aggregate_precedence(async_session, monkeypatch):
+    _configure_stripe(monkeypatch)
     school = await _create_school(async_session)
     now = datetime.utcnow()
     for product_id in ("price_paid", INVOICE_PENDING_PRODUCT_ID, STAFF_COMP_PRODUCT_ID):
@@ -786,9 +792,9 @@ async def test_checkout_crash_retry_replays_same_stripe_object(
     assert idempotency_keys == {f"{replay.attempt_id}:checkout-session"}
     assert (
         await async_session.scalar(
-            select(func.count()).select_from(SchoolBillingAttempt).where(
-                SchoolBillingAttempt.school_id == school.wriveted_identifier
-            )
+            select(func.count())
+            .select_from(SchoolBillingAttempt)
+            .where(SchoolBillingAttempt.school_id == school.wriveted_identifier)
         )
         == 1
     )
@@ -833,7 +839,9 @@ async def test_concurrent_start_has_one_open_attempt(
         async with session_factory() as verification_session:
             assert (
                 await verification_session.scalar(
-                    select(func.count()).select_from(SchoolBillingAttempt).where(
+                    select(func.count())
+                    .select_from(SchoolBillingAttempt)
+                    .where(
                         SchoolBillingAttempt.school_id == school.wriveted_identifier,
                         SchoolBillingAttempt.status.in_(
                             {
