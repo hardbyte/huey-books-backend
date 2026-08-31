@@ -153,6 +153,12 @@ async def handle_stripe_webhook(event: stripe.Event = Depends(get_stripe_event))
     if "customer" in event_data:
         bind_contextvars(stripe_customer_id=event_data["customer"])
     logger.info("Stripe event scheduled for internal processing")
+    # Stripe resource objects (e.g. a Price on price.* events) are not directly
+    # JSON-serializable, and the Cloud Tasks payload is json.dumps'd — so hand off
+    # a plain nested dict. to_dict() is recursive on stripe-python v15+.
+    serializable_event_data = (
+        event_data.to_dict() if hasattr(event_data, "to_dict") else event_data
+    )
     background_task_response = queue_background_task(
         "process-stripe-event",
         {
@@ -160,7 +166,7 @@ async def handle_stripe_webhook(event: stripe.Event = Depends(get_stripe_event))
             "created": event.created,
             "api_version": event.api_version,
             "stripe_event_type": event.type,
-            "stripe_event_data": event_data,
+            "stripe_event_data": serializable_event_data,
         },
     )
 
