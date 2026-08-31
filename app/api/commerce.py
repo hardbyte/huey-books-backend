@@ -156,6 +156,9 @@ async def handle_stripe_webhook(event: stripe.Event = Depends(get_stripe_event))
     background_task_response = queue_background_task(
         "process-stripe-event",
         {
+            "event_id": event.id,
+            "created": event.created,
+            "api_version": event.api_version,
             "stripe_event_type": event.type,
             "stripe_event_data": event_data,
         },

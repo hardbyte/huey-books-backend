@@ -2,7 +2,7 @@ import copy
 from typing import Any, List, Optional, Union
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Security
 from fastapi_permissions import Allow, Authenticated, Deny, has_permission
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.exc import IntegrityError
@@ -39,6 +39,7 @@ from app.schemas.school import (
     SchoolPatchOptions,
     SchoolSelectorOption,
 )
+from app.schemas.school_billing import SchoolBillingStartResult, SchoolBillingStatus
 from app.services.email_notification import (
     EmailType,
     send_email_reliable_sync,
@@ -51,9 +52,16 @@ from app.services.school_access import (
     grant_staff_comp,
 )
 from app.services.school_billing import (
+    SchoolBillingConflictError,
     SchoolBillingError,
+    create_school_billing_portal_session,
     create_school_checkout_session,
     create_school_contribution_checkout_session,
+    create_school_invoice_subscription,
+)
+from app.services.school_billing_status import (
+    resolve_school_billing_status,
+    select_school_price_id,
 )
 from app.services.school_emails import render_school_staff_invite_html
 from app.utils.dict_utils import deep_merge_dicts
@@ -226,6 +234,20 @@ async def get_school(
     return school
 
 
+@public_router.get("/schools/billing-config")
+def get_school_billing_config():
+    """Public billing configuration for the frontend.
+
+    ``invoice_first_country_codes`` are the ISO-3 country codes where an
+    automated net-terms invoice is the preferred payment path (e.g. India), so
+    the frontend can order the pay-by-card vs pay-by-invoice buttons.
+    """
+    settings = get_settings()
+    return {
+        "invoice_first_country_codes": sorted(settings.INVOICE_FIRST_COUNTRY_CODES),
+    }
+
+
 @public_router.get(
     "/school/{wriveted_identifier}/exists",
     dependencies=[Depends(get_school_from_wriveted_id)],
@@ -286,7 +308,7 @@ async def bind_school(
     """
     if not isinstance(user, SchoolAdmin):
         raise HTTPException(
-            status.HTTP_401_UNATHORIZED, "User not a school administrator."
+            status.HTTP_401_UNAUTHORIZED, "User not a school administrator."
         )
 
     if school.admin is not None:
@@ -301,19 +323,21 @@ async def bind_school(
     return school.admin_id
 
 
-class SchoolCheckoutResponse(BaseModel):
+class SchoolContributionCheckoutResponse(BaseModel):
     checkout_url: str
 
 
 @router.post(
-    "/school/{wriveted_identifier}/checkout", response_model=SchoolCheckoutResponse
+    "/school/{wriveted_identifier}/checkout", response_model=SchoolBillingStartResult
 )
 async def create_school_checkout(
-    price_id: Optional[str] = Query(
-        None,
-        description="One of the configured school price ids; defaults to the first.",
+    session: DBSessionDep,
+    price_id: str | None = Query(
+        default=None,
+        description="Deprecated; the school's configured country offer is used.",
     ),
-    school: School = Permission("update", aget_school_from_wriveted_id),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    school: School = Permission("billing", aget_school_from_wriveted_id),
     account: Union[User, ServiceAccount] = Depends(
         get_current_active_user_or_service_account
     ),
@@ -326,14 +350,123 @@ async def create_school_checkout(
     the Stripe webhook.
     """
     try:
-        checkout_url = await create_school_checkout_session(school, price_id=price_id)
+        configured_price_id = select_school_price_id(school)
+    except ValueError as error:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(error)) from error
+    if price_id is not None and price_id != configured_price_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The requested price is no longer available for this school. Refresh billing status and try again.",
+        )
+    try:
+        result = await create_school_checkout_session(
+            school,
+            session=session,
+            client_idempotency_key=idempotency_key,
+        )
+    except SchoolBillingConflictError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This school already has a paid or in-progress billing obligation.",
+        ) from None
     except SchoolBillingError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
-    return SchoolCheckoutResponse(checkout_url=checkout_url)
+    return result
+
+
+@router.get(
+    "/school/{wriveted_identifier}/billing-status",
+    response_model=SchoolBillingStatus,
+)
+async def get_school_billing_status(
+    session: DBSessionDep,
+    school: School = Permission("billing", aget_school_from_wriveted_id),
+):
+    return await resolve_school_billing_status(session, school)
+
+
+class SchoolBillingPortalResponse(BaseModel):
+    portal_url: str
 
 
 @router.post(
-    "/school/{wriveted_identifier}/contribute", response_model=SchoolCheckoutResponse
+    "/school/{wriveted_identifier}/billing-portal",
+    response_model=SchoolBillingPortalResponse,
+)
+async def create_school_billing_portal(
+    session: DBSessionDep,
+    school: School = Permission("billing", aget_school_from_wriveted_id),
+    account: Union[User, ServiceAccount] = Depends(
+        get_current_active_user_or_service_account
+    ),
+):
+    """Return a Stripe Billing Portal URL for the school's real subscription.
+
+    Lets an admin update the card, download invoices, or cancel. 404 if the
+    school has no active Stripe subscription (a comped/invite grant is not one).
+    """
+    try:
+        portal_url = await create_school_billing_portal_session(session, school)
+    except SchoolBillingError as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
+    if portal_url is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "No active Stripe subscription for this school.",
+        )
+    return SchoolBillingPortalResponse(portal_url=portal_url)
+
+
+class SchoolInvoiceSubscriptionIn(BaseModel):
+    billing_email: EmailStr
+    billing_name: Optional[str] = Field(default=None, max_length=200)
+    po_number: Optional[str] = Field(default=None, max_length=100)
+
+
+@router.post(
+    "/school/{wriveted_identifier}/invoice-subscription",
+    response_model=SchoolBillingStartResult,
+)
+async def create_school_invoice_subscription_endpoint(
+    body: SchoolInvoiceSubscriptionIn,
+    session: DBSessionDep,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    school: School = Permission("billing", aget_school_from_wriveted_id),
+    account: Union[User, ServiceAccount] = Depends(
+        get_current_active_user_or_service_account
+    ),
+):
+    """Create a fully-automated net-terms invoice subscription for the school.
+
+    Stripe finalises, emails, reminds, collects, and renews the invoice with no
+    manual staff steps. The school gets immediate net-terms access; paying the
+    invoice makes the Stripe subscription its access source, and a never-paid
+    invoice lapses the school when the grant expires.
+    """
+    try:
+        result = await create_school_invoice_subscription(
+            session,
+            school,
+            billing_email=body.billing_email,
+            billing_name=body.billing_name,
+            po_number=body.po_number,
+            client_idempotency_key=idempotency_key,
+        )
+    except SchoolBillingConflictError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This school already has a paid or in-progress billing obligation.",
+        ) from None
+    except SchoolNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found.") from None
+    except SchoolBillingError as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
+    return result
+
+
+@router.post(
+    "/school/{wriveted_identifier}/contribute",
+    response_model=SchoolContributionCheckoutResponse,
 )
 async def create_school_contribution(
     price_id: Optional[str] = Query(
@@ -360,7 +493,7 @@ async def create_school_contribution(
         )
     except SchoolBillingError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
-    return SchoolCheckoutResponse(checkout_url=checkout_url)
+    return SchoolContributionCheckoutResponse(checkout_url=checkout_url)
 
 
 class SchoolStaffAddIn(BaseModel):
@@ -480,6 +613,11 @@ async def update_school(
     selected school; i.e. superusers, and school administrators.
     """
     patch_info = patch.info
+    if patch.status is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "School status is managed by billing and complimentary access. Use the staff comp action to grant access.",
+        )
     original_info = copy.deepcopy(school.info or {})
     merged_info = None
     patch_data = patch.model_copy(deep=True)

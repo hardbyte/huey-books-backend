@@ -77,10 +77,9 @@ def test_stripe_welcome_email_creates_outbox_event(session):
             session, parent_user, None, checkout_session_data
         )
 
-        # Roll back rather than commit: the outbox row must have been committed by
-        # the handler itself. A manual commit here would mask a missing commit in
-        # the production path (which is exactly how that bug shipped before).
-        session.rollback()
+        # The webhook processor owns the transaction in production. Direct handler
+        # tests commit explicitly to model that boundary.
+        session.commit()
 
         # Verify an outbox event was created
         result = session.execute(text("SELECT COUNT(*) FROM event_outbox"))

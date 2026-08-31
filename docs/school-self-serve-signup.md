@@ -1,5 +1,13 @@
 # Self-Serve Paid School Signup
 
+The durable billing state machine and current endpoint contracts are defined in
+[`school-billing.md`](school-billing.md). This document describes the wider
+registration, contribution, and communication flows.
+
+The older checkout walkthrough below is retained as flow context. Where it
+describes billing response shapes or entitlement rules, `school-billing.md` is
+authoritative.
+
 How a school signs itself up, pays, and gets activated end to end, self-serve.
 Payment gates activation. See ADR-008 for the decision rationale and ADR-007 for
 the email backend.
@@ -202,9 +210,14 @@ paid. Bulk multi-school sponsorship in one transaction is future work.
 ## Config
 
 - `EMAIL_PROVIDER` — `resend` (prod) or `sendgrid` (fallback).
-- `STRIPE_SCHOOL_PRICE_IDS` — offerable school price ids (comma-separated or
-  JSON); the first is the default. Checkout accepts an optional `price_id` that
-  must be one of these.
+- `STRIPE_SCHOOL_PRICE_IDS` — the default offerable school price. Country
+  overrides are selected server-side through
+  `STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY`; a deprecated matching `price_id` query
+  is tolerated, but clients cannot choose a different offer.
+- `STRIPE_SCHOOL_DEFAULT_UNIT_AMOUNT`,
+  `STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY`, `STRIPE_SCHOOL_CURRENCY`, and the
+  billing interval settings — structured display metadata validated against
+  the live Stripe Prices before rollout.
 - `STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS` — one-off "contribute a month" price
   ids (comma-separated or JSON); the first is the default. `/contribute` accepts
   an optional `price_id` that must be one of these. These must be **one-time**
@@ -224,9 +237,9 @@ paid. Bulk multi-school sponsorship in one transaction is future work.
 - **No immediate dunning deactivation.** A failed renewal keeps the school
   active until Stripe cancels the subscription; then it deactivates. Tune the
   Stripe dunning policy if a harder cutoff is wanted.
-- **Dead ACL rule**: `School` grants `(Allow, "school:{id}", "update")` but no
-  principal is ever `school:{id}`; checkout is effectively admin/superuser only.
-  Harmless but misleading — remove or correct when touching `app/models/school.py`.
+- `School.state` is a cached access projection. Direct status changes through
+  the general school PATCH endpoint are rejected, including for staff; use a
+  paid transition or the audited staff-comp action instead.
 
 ## Testing
 
@@ -253,15 +266,14 @@ paid. Bulk multi-school sponsorship in one transaction is future work.
 The school flow is parameterized by config, so going live is a
 setup + secret/price change, not code:
 
-1. In Stripe, create the school product/price(s) and a webhook endpoint at the
-   internal API `/v1/stripe/webhook` with events: `checkout.session.completed`,
-   `checkout.session.async_payment_succeeded`, `customer.subscription.deleted`,
-   `invoice.upcoming`, `invoice.payment_failed`, plus the existing subscription
-   events.
-   The `checkout.session.completed` event already covers contributions (same
-   event; distinguished by the `metadata.kind` marker); no extra webhook event is
-   needed. For contributions paid via bank transfer/other delayed methods also
-   enable `checkout.session.async_payment_succeeded`.
+1. In Stripe, create the school product/price(s) and configure the production
+   webhook exactly as described in [School billing and access](school-billing.md#operations-and-rollout).
+   That document is the canonical event and API-version contract; validate the
+   live endpoint with `scripts.check_stripe_school_billing` before rollout. The
+   `checkout.session.completed` event also covers contributions (distinguished
+   by the `metadata.kind` marker), while delayed payment methods additionally
+   rely on `checkout.session.async_payment_succeeded` and
+   `checkout.session.async_payment_failed`.
 2. Set the secrets/config: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
    `STRIPE_SCHOOL_PRICE_IDS`, `STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS`,
    `SCHOOL_CONTRIBUTION_MONTHLY_CENTS` (optional, default 2500),

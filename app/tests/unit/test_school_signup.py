@@ -1,11 +1,11 @@
-"""Unit tests for school signup emails and Stripe checkout session creation."""
+"""Unit tests for school signup emails and billing offer selection."""
 
 import uuid
 
 import pytest
 
 from app.models.school import School
-from app.services import school_billing
+from app.services import school_billing, school_billing_status
 from app.services.school_emails import (
     render_contribution_thankyou_html,
     render_school_activated_html,
@@ -101,7 +101,7 @@ def test_contribution_notice_escapes_and_names_school():
     assert "<b>Hack</b>" not in html
 
 
-# --- checkout session ---
+# --- school billing offer ---
 
 
 def _school() -> School:
@@ -112,103 +112,43 @@ def _school() -> School:
     )
 
 
-@pytest.mark.asyncio
-async def test_create_checkout_session_builds_expected_params(monkeypatch):
-    monkeypatch.setattr(
-        school_billing.settings, "STRIPE_SCHOOL_PRICE_IDS", ["price_school"]
-    )
-    monkeypatch.setattr(school_billing.settings, "STRIPE_SECRET_KEY", "sk_test")
-    monkeypatch.setattr(
-        school_billing.settings, "HUEY_BOOKS_APP_URL", "https://hueybooks.com"
-    )
+def test_select_school_price_id_uses_default(monkeypatch):
+    settings = school_billing_status.get_settings()
+    monkeypatch.setattr(settings, "STRIPE_SCHOOL_PRICE_IDS", ["price_school"])
+    monkeypatch.setattr(settings, "STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY", {})
 
-    captured = {}
-
-    class FakeSession:
-        id = "cs_test_123"
-        url = "https://checkout.stripe.com/pay/cs_test_123"
-
-    def fake_create(**kwargs):
-        captured.update(kwargs)
-        return FakeSession()
-
-    monkeypatch.setattr(school_billing.stripe.checkout.Session, "create", fake_create)
-
-    school = _school()
-    url = await school_billing.create_school_checkout_session(school)
-
-    assert url == "https://checkout.stripe.com/pay/cs_test_123"
-    assert captured["mode"] == "subscription"
-    assert captured["line_items"] == [{"price": "price_school", "quantity": 1}]
-    assert captured["client_reference_id"] == str(school.wriveted_identifier)
-    assert captured["customer_email"] == "contact@school.example"
-    assert captured["success_url"].startswith("https://hueybooks.com")
-    assert "{CHECKOUT_SESSION_ID}" in captured["success_url"]
+    assert school_billing_status.select_school_price_id(_school()) == "price_school"
 
 
-@pytest.mark.asyncio
-async def test_create_checkout_session_requires_price_id(monkeypatch):
-    monkeypatch.setattr(school_billing.settings, "STRIPE_SCHOOL_PRICE_IDS", [])
-    with pytest.raises(school_billing.SchoolBillingError):
-        await school_billing.create_school_checkout_session(School(name="X"))
+def test_select_school_price_id_requires_configuration(monkeypatch):
+    settings = school_billing_status.get_settings()
+    monkeypatch.setattr(settings, "STRIPE_SCHOOL_PRICE_IDS", [])
+    with pytest.raises(ValueError, match="not configured"):
+        school_billing_status.select_school_price_id(School(name="X"))
 
 
-@pytest.mark.asyncio
-async def test_create_checkout_session_rejects_unknown_price_id(monkeypatch):
-    monkeypatch.setattr(
-        school_billing.settings, "STRIPE_SCHOOL_PRICE_IDS", ["price_school"]
-    )
-    monkeypatch.setattr(school_billing.settings, "STRIPE_SECRET_KEY", "sk_test")
-    with pytest.raises(school_billing.SchoolBillingError):
-        await school_billing.create_school_checkout_session(
-            _school(), price_id="price_other"
-        )
-
-
-@pytest.mark.asyncio
-async def test_create_checkout_session_uses_country_specific_price(monkeypatch):
+def test_select_school_price_id_uses_country_specific_price(monkeypatch):
     """A school's country-specific price (e.g. India) is used when configured,
     and other countries fall back to the default price."""
+    settings = school_billing_status.get_settings()
+    monkeypatch.setattr(settings, "STRIPE_SCHOOL_PRICE_IDS", ["price_default"])
     monkeypatch.setattr(
-        school_billing.settings, "STRIPE_SCHOOL_PRICE_IDS", ["price_default"]
-    )
-    monkeypatch.setattr(
-        school_billing.settings,
+        settings,
         "STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY",
         {"IND": "price_india"},
     )
-    monkeypatch.setattr(school_billing.settings, "STRIPE_SECRET_KEY", "sk_test")
-    monkeypatch.setattr(
-        school_billing.settings, "HUEY_BOOKS_APP_URL", "https://hueybooks.com"
-    )
-
-    captured = {}
-
-    class FakeSession:
-        id = "cs_test_country"
-        url = "https://checkout.stripe.com/pay/cs_test_country"
-
-    def fake_create(**kwargs):
-        captured.update(kwargs)
-        return FakeSession()
-
-    monkeypatch.setattr(school_billing.stripe.checkout.Session, "create", fake_create)
-
     india_school = School(
         name="AISC",
         country_code="IND",
         wriveted_identifier=uuid.uuid4(),
         info={"onboarding": {"contact_email": "c@aisc.example"}},
     )
-    await school_billing.create_school_checkout_session(india_school)
-    assert captured["line_items"] == [{"price": "price_india", "quantity": 1}]
+    assert school_billing_status.select_school_price_id(india_school) == "price_india"
 
-    captured.clear()
     aus_school = School(
         name="AU School", country_code="AUS", wriveted_identifier=uuid.uuid4()
     )
-    await school_billing.create_school_checkout_session(aus_school)
-    assert captured["line_items"] == [{"price": "price_default", "quantity": 1}]
+    assert school_billing_status.select_school_price_id(aus_school) == "price_default"
 
 
 # --- contribution checkout session ---

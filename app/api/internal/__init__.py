@@ -16,7 +16,12 @@ from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.internal.tasks import router as tasks_router
 from app.db.session import get_session
 from app.models.event import EventSlackChannel
-from app.models.school import School, SchoolState
+from app.models.school import School
+from app.models.school_billing import (
+    OPEN_COLLECTIBLE_ATTEMPT_STATUSES,
+    SchoolBillingAttempt,
+    SchoolBillingAttemptStatus,
+)
 from app.models.subscription import Subscription
 from app.repositories.chat_repository import chat_repo
 from app.repositories.work_repository import work_repository
@@ -33,7 +38,8 @@ from app.services.email_notification import (
 from app.services.events import handle_event_to_slack_alert, process_events
 from app.services.hydration import hydrate_bulk
 from app.services.labelling import label_and_update_work
-from app.services.school_access import COMP_GRANT_SOURCES, lock_school_access_async
+from app.services.school_access import RETIREABLE_SOURCES, lock_school_access_async
+from app.services.school_billing_status import recompute_school_access
 from app.services.stripe_events import process_stripe_event
 
 
@@ -135,6 +141,11 @@ def event_to_slack_alert(
 
 
 class StripeInternalEventPayload(BaseModel):
+    # Optional during the rollout window: tasks queued by the previous webhook
+    # producer contain only the event type and object payload.
+    event_id: str | None = None
+    created: int | None = None
+    api_version: str | None = None
     stripe_event_type: str
     stripe_event_data: Any = None
 
@@ -146,6 +157,9 @@ def handle_stripe_event(data: StripeInternalEventPayload):
     result = process_stripe_event(
         event_type=data.stripe_event_type,
         event_data=data.stripe_event_data,
+        event_id=data.event_id,
+        event_created=data.created,
+        api_version=data.api_version,
     )
     trigger_email_delivery()
     return result
@@ -317,88 +331,172 @@ async def handle_lapse_expired_schools(session: DBSessionDep):
     A comped grant (a "contribute a month" payment, or a school-invite free
     trial) gives a school bounded access via a Subscription with no auto-renewing
     Stripe subscription behind it. Unlike Stripe, these do not auto-lapse, so this
-    sweep sets such schools INACTIVE once the grant (any source in
-    ``COMP_GRANT_SOURCES``) has expired.
+    sweep sets such schools INACTIVE once a retireable grant has expired.
 
-    Schools with an active auto-renewing Stripe subscription are never lapsed here
-    (Stripe drives their lifecycle). Intended to run on a Cloud Scheduler job
-    (OIDC auth via the background-tasks service account); the scheduler is wired
-    separately in the infrastructure repo.
+    Expired local paid-through periods are also retired so a missed Stripe event
+    cannot leave the cached School.state active indefinitely. A later
+    authoritative paid event can reactivate them. Intended to run on a Cloud
+    Scheduler job (OIDC auth via the background-tasks service account); the
+    scheduler is wired separately in the infrastructure repo.
     """
     now = datetime.utcnow()
-    expired_grant_candidates = (
-        await session.execute(
-            select(Subscription.id, Subscription.school_id).where(
-                Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
-                Subscription.is_active.is_(True),
-                Subscription.expiration < now,
-            )
-        )
-    ).all()
-
+    batch_size = 100
     lapsed = 0
+    attempts_expired = 0
     grants_expired = 0
-    for grant_id, school_id in expired_grant_candidates:
-        school = await lock_school_access_async(session, school_id)
-        if school is None:
-            continue
-        grant = (
-            await session.execute(
-                select(Subscription)
-                .where(Subscription.id == grant_id)
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
-        if (
-            grant is None
-            or not grant.is_active
-            or grant.expiration is None
-            or grant.expiration >= now
-        ):
-            continue
+    subscriptions_expired = 0
 
-        grant.is_active = False
-        grants_expired += 1
-
-        has_stripe_sub = (
+    while True:
+        candidates = (
             await session.execute(
-                select(Subscription.id)
+                select(SchoolBillingAttempt.id, SchoolBillingAttempt.school_id)
                 .where(
-                    Subscription.school_id == grant.school_id,
-                    Subscription.is_active.is_(True),
+                    SchoolBillingAttempt.status.in_(
+                        (
+                            SchoolBillingAttemptStatus.CHECKOUT_OPEN,
+                            SchoolBillingAttemptStatus.INVOICE_OPEN,
+                        )
+                    ),
+                    SchoolBillingAttempt.expires_at.is_not(None),
+                    SchoolBillingAttempt.expires_at <= now,
+                )
+                .limit(batch_size)
+            )
+        ).all()
+        if not candidates:
+            break
+        changed = 0
+        for attempt_id, school_id in candidates:
+            school = await lock_school_access_async(session, school_id)
+            if school is None:
+                continue
+            attempt = (
+                await session.execute(
+                    select(SchoolBillingAttempt)
+                    .where(SchoolBillingAttempt.id == attempt_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                attempt is None
+                or attempt.status
+                not in (
+                    SchoolBillingAttemptStatus.CHECKOUT_OPEN,
+                    SchoolBillingAttemptStatus.INVOICE_OPEN,
+                )
+                or attempt.expires_at is None
+                or attempt.expires_at > now
+            ):
+                continue
+            attempt.status = SchoolBillingAttemptStatus.EXPIRED
+            attempts_expired += 1
+            changed += 1
+        await session.commit()
+        if changed == 0:
+            break
+
+    while True:
+        candidates = (
+            await session.execute(
+                select(Subscription.id, Subscription.school_id)
+                .where(
+                    Subscription.school_id.is_not(None),
                     Subscription.stripe_customer_id != "",
-                )
-                .limit(1)
-            )
-        ).first()
-        if has_stripe_sub is not None:
-            continue
-
-        other_live_comp_grant = (
-            await session.execute(
-                select(Subscription.id)
-                .where(
-                    Subscription.school_id == grant.school_id,
-                    Subscription.id != grant.id,
                     Subscription.is_active.is_(True),
-                    Subscription.info["source"].astext.in_(COMP_GRANT_SOURCES),
-                    Subscription.expiration > now,
+                    Subscription.expiration < now,
                 )
-                .limit(1)
+                .limit(batch_size)
             )
-        ).first()
-        if other_live_comp_grant is not None:
-            continue
+        ).all()
+        if not candidates:
+            break
+        changed = 0
+        for subscription_id, school_id in candidates:
+            school = await lock_school_access_async(session, school_id)
+            if school is None:
+                continue
+            subscription = (
+                await session.execute(
+                    select(Subscription)
+                    .where(Subscription.id == subscription_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                subscription is None
+                or not subscription.is_active
+                or subscription.expiration is None
+                or subscription.expiration >= now
+            ):
+                continue
+            subscription.is_active = False
+            subscriptions_expired += 1
+            changed += 1
+            if await recompute_school_access(session, school):
+                lapsed += 1
+        await session.commit()
+        if changed == 0:
+            break
 
-        if school.state == SchoolState.ACTIVE:
-            school.state = SchoolState.INACTIVE
-            lapsed += 1
-            logger.info(
-                "Lapsed school after complimentary grant expired",
-                school=school.name,
-                grant_id=grant.id,
+    while True:
+        candidates = (
+            await session.execute(
+                select(Subscription.id, Subscription.school_id)
+                .where(
+                    Subscription.info["source"].astext.in_(RETIREABLE_SOURCES),
+                    Subscription.is_active.is_(True),
+                    Subscription.expiration < now,
+                )
+                .limit(batch_size)
             )
+        ).all()
+        if not candidates:
+            break
+        changed = 0
+        for grant_id, school_id in candidates:
+            school = await lock_school_access_async(session, school_id)
+            if school is None:
+                continue
+            grant = (
+                await session.execute(
+                    select(Subscription)
+                    .where(Subscription.id == grant_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                grant is None
+                or not grant.is_active
+                or grant.expiration is None
+                or grant.expiration >= now
+            ):
+                continue
 
-    await session.commit()
-    logger.info("Lapse sweep complete", lapsed=lapsed, grants_expired=grants_expired)
-    return {"msg": "ok", "lapsed": lapsed, "grants_expired": grants_expired}
+            grant.is_active = False
+            grants_expired += 1
+            changed += 1
+            if await recompute_school_access(session, school):
+                lapsed += 1
+                logger.info(
+                    "Lapsed school after complimentary grant expired",
+                    school=school.name,
+                    grant_id=grant.id,
+                )
+        await session.commit()
+        if changed == 0:
+            break
+
+    logger.info(
+        "Lapse sweep complete",
+        lapsed=lapsed,
+        attempts_expired=attempts_expired,
+        grants_expired=grants_expired,
+        subscriptions_expired=subscriptions_expired,
+    )
+    return {
+        "msg": "ok",
+        "lapsed": lapsed,
+        "attempts_expired": attempts_expired,
+        "grants_expired": grants_expired,
+        "subscriptions_expired": subscriptions_expired,
+    }

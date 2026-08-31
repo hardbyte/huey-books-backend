@@ -54,7 +54,7 @@ def _make_pending_school(session, test_school):
 
 
 def _email_count(session) -> int:
-    session.rollback()
+    session.flush()
     return session.execute(
         text("SELECT COUNT(*) FROM event_outbox WHERE event_type='email_notification'")
     ).scalar()
@@ -87,7 +87,7 @@ def test_paid_checkout_activates_school_and_emails(
         session, None, test_school, _checkout_event(test_school, "paid")
     )
 
-    session.rollback()
+    session.commit()
     session.refresh(test_school)
     assert test_school.state == SchoolState.ACTIVE
     assert _email_count(session) == before + 1  # one receipt
@@ -111,7 +111,7 @@ def test_comped_checkout_activates_school(
         _checkout_event(test_school, "no_payment_required", "cs_comp"),
     )
 
-    session.rollback()
+    session.commit()
     session.refresh(test_school)
     assert test_school.state == SchoolState.ACTIVE
 
@@ -132,7 +132,7 @@ def test_unpaid_checkout_does_not_activate(
         session, None, test_school, _checkout_event(test_school, "unpaid")
     )
 
-    session.rollback()
+    session.commit()
     session.refresh(test_school)
     assert test_school.state == SchoolState.PENDING  # not activated
     # The subscription must not be marked active on an unpaid checkout either.
@@ -155,18 +155,20 @@ def test_duplicate_paid_event_does_not_re_email(
     _handle_checkout_session_completed(
         session, None, test_school, _checkout_event(test_school, "paid", "cs_1")
     )
+    session.commit()
     after_first = _email_count(session)
     # Stripe redelivers the same event; school already active -> no second receipt.
     _handle_checkout_session_completed(
         session, None, test_school, _checkout_event(test_school, "paid", "cs_2")
     )
+    session.commit()
     assert _email_count(session) == after_first
 
 
 def test_subscription_cancelled_deactivates_school(session, test_school):
     test_school.state = SchoolState.ACTIVE
     session.add(test_school)
-    session.add(Product(id="price_cancel_test", name="Supporter School"))
+    session.merge(Product(id="price_cancel_test", name="Supporter School"))
     session.flush()
     session.add(
         Subscription(
@@ -188,6 +190,6 @@ def test_subscription_cancelled_deactivates_school(session, test_school):
         {"id": "sub_cancel", "object": "subscription", "ended_at": 1893456000},
     )
 
-    session.rollback()
+    session.commit()
     session.refresh(test_school)
     assert test_school.state == SchoolState.INACTIVE

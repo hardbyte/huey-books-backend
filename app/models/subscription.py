@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi_permissions import All, Allow  # type: ignore[import-untyped]
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -97,6 +97,21 @@ class Subscription(Base):
 
     latest_checkout_session_id: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, index=True
+    )
+    stripe_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    collection_method: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_stripe_event_created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_subscriptions_active_expiration",
+            "expiration",
+            "school_id",
+            postgresql_where=text("is_active"),
+        ),
     )
 
     def __acl__(self) -> List[tuple[Any, str, Any]]:

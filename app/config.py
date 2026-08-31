@@ -292,6 +292,19 @@ class Settings(BaseSettings):
     # this * 30). Contributions stack (extend the expiry).
     SCHOOL_CONTRIBUTION_MONTHLY_CENTS: int = 2500
 
+    # Country codes (ISO-3, matching School.country_code) where an automated
+    # net-terms invoice is the preferred school payment path over recurring
+    # cards — e.g. India, where RBI e-mandate rules make recurring cards
+    # unreliable. Surfaced via GET /schools/billing-config so the frontend can
+    # order the pay-by-card vs pay-by-invoice buttons accordingly.
+    INVOICE_FIRST_COUNTRY_CODES: Annotated[set[str], NoDecode] = {"IND"}
+    # Net terms for an automated school invoice subscription: the invoice is due
+    # this many days after issue (Stripe ``days_until_due``).
+    INVOICE_DAYS_UNTIL_DUE: int = 30
+    # Grace added to the due date before the invoice_pending grant lapses, giving
+    # Stripe's dunning/reminder schedule room to collect before access drops.
+    INVOICE_PENDING_GRACE_DAYS: int = 14
+
     # School invitations (referral → free trial). A paying school can refer
     # another; the invited school gets INVITE_GRANT_DAYS free access on accept.
     INVITE_GRANT_DAYS: int = 90
@@ -311,6 +324,7 @@ class Settings(BaseSettings):
         "STRIPE_SCHOOL_PRICE_IDS",
         "STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS",
         "STAFF_ALERT_EMAILS",
+        "INVOICE_FIRST_COUNTRY_CODES",
         mode="before",
     )
     @classmethod
