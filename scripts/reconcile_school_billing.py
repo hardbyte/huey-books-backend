@@ -64,6 +64,23 @@ def paid_subscription_evidence(stripe_subscription) -> PaidSubscriptionEvidence 
     )
 
 
+def is_reconciled_subscription_active(
+    evidence: PaidSubscriptionEvidence, *, now: datetime | None = None
+) -> bool:
+    """Whether a reconciled subscription should count as active.
+
+    ``evidence`` is only produced when the latest invoice is paid, so a
+    subscription that Stripe has ``canceled`` but whose paid period has not yet
+    elapsed still entitles the school until ``period_end``. Otherwise fall back
+    to the live Stripe statuses.
+    """
+    if evidence.stripe_status in {"active", "past_due", "trialing"}:
+        return True
+    return evidence.stripe_status == "canceled" and evidence.period_end > (
+        now or datetime.utcnow()
+    )
+
+
 def _candidate_subscriptions(school_id: UUID | None) -> list[tuple[str, UUID]]:
     Session = get_session_maker()
     with Session() as session:
@@ -133,11 +150,7 @@ def reconcile(*, apply: bool, school_id: UUID | None) -> int:
                 subscription.expiration = evidence.period_end
                 subscription.stripe_status = evidence.stripe_status
                 subscription.collection_method = evidence.collection_method
-                subscription.is_active = evidence.stripe_status in {
-                    "active",
-                    "past_due",
-                    "trialing",
-                }
+                subscription.is_active = is_reconciled_subscription_active(evidence)
                 recompute_school_access_sync(session, school)
                 session.commit()
             reconciled += 1
