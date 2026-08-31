@@ -14,6 +14,7 @@ from uuid import uuid4
 import stripe
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from stripe import APIConnectionError, APIError, StripeError
 from structlog import get_logger
 
 from app.config import get_settings
@@ -48,6 +49,44 @@ class SchoolBillingError(Exception):
 
 class SchoolBillingConflictError(SchoolBillingError):
     """The school already has a blocking billing obligation."""
+
+
+def _is_definite_stripe_failure(error: BaseException) -> bool:
+    """Whether a Stripe exception means Stripe *definitively* rejected the call.
+
+    A definite rejection (e.g. ``CardError``, ``InvalidRequestError``, an
+    idempotency conflict) is a response from Stripe saying it processed and
+    refused the request, so no customer/subscription/charge was created and the
+    attempt's open-collectible slot can be released for an immediate retry.
+
+    Left as uncertain — and therefore requiring staff review — are a network
+    error (``APIConnectionError``: the request may or may not have reached
+    Stripe), a server-side ``APIError`` (5xx: Stripe may have created the
+    resource before failing to respond), and any non-Stripe exception.
+    """
+    return isinstance(error, StripeError) and not isinstance(
+        error, (APIConnectionError, APIError)
+    )
+
+
+async def _fail_attempt_on_definite_stripe_error(
+    session: AsyncSession,
+    attempt: SchoolBillingAttempt,
+    error: BaseException,
+    *,
+    failure_reason: str,
+) -> None:
+    """Mark the reserved attempt FAILED when Stripe definitively rejected it.
+
+    Freeing the open-collectible slot lets an admin retry immediately instead of
+    being blocked by the "uncertain Stripe result requires staff review" path.
+    An uncertain result is deliberately left CREATING so the slot stays held.
+    """
+    if not _is_definite_stripe_failure(error):
+        return
+    attempt.status = SchoolBillingAttemptStatus.FAILED
+    attempt.failure_reason = failure_reason
+    await session.commit()
 
 
 def _validate_attempt_replay(
@@ -203,6 +242,16 @@ async def _ensure_school_billing_customer(
         return account.stripe_customer_id
 
     onboarding = (school.info or {}).get("onboarding") or {}
+    # Re-read immediately before creating a Stripe Customer: under READ COMMITTED
+    # this sees an account a concurrent request committed since the check above,
+    # avoiding the common orphaned-Customer case. A rare orphan can still occur
+    # if the concurrent commit lands between this read and add_account below (the
+    # IntegrityError fallback recovers the winner's id but leaves that Customer
+    # orphaned); that residual is acceptable.
+    account = await school_billing_repository.get_account(session, school_id)
+    if account is not None:
+        return account.stripe_customer_id
+
     customer = await asyncio.to_thread(
         stripe.Customer.create,
         email=attempt.billing_email or onboarding.get("contact_email"),
@@ -296,6 +345,9 @@ async def create_school_checkout_session(
             "Failed to create school checkout session",
             wriveted_school_id=wriveted_id,
             error=str(e),
+        )
+        await _fail_attempt_on_definite_stripe_error(
+            session, attempt, e, failure_reason="stripe_checkout_create_failed"
         )
         raise SchoolBillingError("Could not create checkout session. Please try again.")
 
@@ -533,6 +585,12 @@ async def create_school_invoice_subscription(
             "Failed to create school invoice subscription",
             wriveted_school_id=wriveted_id,
             error=str(e),
+        )
+        await _fail_attempt_on_definite_stripe_error(
+            session,
+            attempt,
+            e,
+            failure_reason="stripe_invoice_subscription_create_failed",
         )
         raise SchoolBillingError(
             "Could not create invoice subscription. Please try again."

@@ -1,6 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from scripts.reconcile_school_billing import paid_subscription_evidence
+from scripts.reconcile_school_billing import (
+    PaidSubscriptionEvidence,
+    is_reconciled_subscription_active,
+    paid_subscription_evidence,
+)
 
 
 def test_paid_subscription_evidence_requires_paid_invoice():
@@ -40,3 +44,39 @@ def test_paid_subscription_evidence_requires_a_paid_timestamp():
     }
 
     assert paid_subscription_evidence(subscription) is None
+
+
+def test_canceled_but_paid_through_is_still_active():
+    now = datetime(2026, 1, 1)
+    evidence = PaidSubscriptionEvidence(
+        paid_at=now - timedelta(days=10),
+        period_end=now + timedelta(days=30),
+        stripe_status="canceled",
+        collection_method="send_invoice",
+    )
+
+    assert is_reconciled_subscription_active(evidence, now=now) is True
+
+
+def test_canceled_and_period_elapsed_is_inactive():
+    now = datetime(2026, 1, 1)
+    evidence = PaidSubscriptionEvidence(
+        paid_at=now - timedelta(days=400),
+        period_end=now - timedelta(days=1),
+        stripe_status="canceled",
+        collection_method="send_invoice",
+    )
+
+    assert is_reconciled_subscription_active(evidence, now=now) is False
+
+
+def test_active_status_is_active_regardless_of_period():
+    now = datetime(2026, 1, 1)
+    evidence = PaidSubscriptionEvidence(
+        paid_at=now - timedelta(days=1),
+        period_end=now - timedelta(days=1),
+        stripe_status="active",
+        collection_method="charge_automatically",
+    )
+
+    assert is_reconciled_subscription_active(evidence, now=now) is True

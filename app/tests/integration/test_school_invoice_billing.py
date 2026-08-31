@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, Mock, patch
 from uuid import uuid4
 
 import pytest
+import stripe
 from sqlalchemy import select
 
 from app.models.product import Product
@@ -756,6 +757,92 @@ async def test_expired_creating_attempt_requires_review_without_retrying_stripe(
 
     mock_stripe.Customer.create.assert_not_called()
     mock_stripe.Subscription.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_definite_stripe_failure_marks_attempt_failed_and_frees_slot(
+    mock_stripe, async_session, monkeypatch
+):
+    """A definite Stripe rejection during create (Stripe processed and refused,
+    so nothing was created) marks the attempt FAILED, freeing the
+    open-collectible slot so an immediate retry succeeds."""
+    _configure_billing_settings(monkeypatch)
+    school = await _new_school(async_session)
+
+    mock_stripe.Customer.create.return_value = Mock(id=f"cus_{uuid4().hex}")
+    mock_stripe.Subscription.create.side_effect = stripe.InvalidRequestError(
+        "No such price", "items"
+    )
+
+    with pytest.raises(school_billing_module.SchoolBillingError):
+        await create_school_invoice_subscription(
+            async_session, school, billing_email="bursar@school.example"
+        )
+
+    failed_attempt = (
+        await async_session.execute(
+            select(SchoolBillingAttempt).where(
+                SchoolBillingAttempt.school_id == school.wriveted_identifier
+            )
+        )
+    ).scalar_one()
+    assert failed_attempt.status == SchoolBillingAttemptStatus.FAILED
+    assert failed_attempt.failure_reason == "stripe_invoice_subscription_create_failed"
+
+    # The freed slot lets a fresh create succeed immediately (no staff review).
+    sub_obj = MagicMock()
+    sub_obj.id = "sub_retry"
+    sub_obj.get.return_value = {"hosted_invoice_url": "https://pay.stripe.test/i/x"}
+    mock_stripe.Subscription.create.side_effect = None
+    mock_stripe.Subscription.create.return_value = sub_obj
+
+    retry = await create_school_invoice_subscription(
+        async_session, school, billing_email="bursar@school.example"
+    )
+    assert retry.status == SchoolBillingAttemptStatus.INVOICE_OPEN
+    assert retry.attempt_id != failed_attempt.id
+
+
+@pytest.mark.asyncio
+@patch("app.services.school_billing.stripe")
+async def test_uncertain_stripe_failure_keeps_attempt_creating_for_review(
+    mock_stripe, async_session, monkeypatch
+):
+    """A network error leaves the Stripe result unknown, so the attempt stays
+    CREATING (slot held) and, once its recovery window elapses, a subsequent
+    create is refused pending staff review — Stripe may have created a sub."""
+    _configure_billing_settings(monkeypatch)
+    school = await _new_school(async_session)
+
+    mock_stripe.Customer.create.return_value = Mock(id=f"cus_{uuid4().hex}")
+    mock_stripe.Subscription.create.side_effect = stripe.APIConnectionError(
+        "connection reset"
+    )
+
+    with pytest.raises(school_billing_module.SchoolBillingError):
+        await create_school_invoice_subscription(
+            async_session, school, billing_email="bursar@school.example"
+        )
+
+    attempt = (
+        await async_session.execute(
+            select(SchoolBillingAttempt).where(
+                SchoolBillingAttempt.school_id == school.wriveted_identifier
+            )
+        )
+    ).scalar_one()
+    assert attempt.status == SchoolBillingAttemptStatus.CREATING
+    assert attempt.failure_reason is None
+
+    # Simulate the 23h recovery window elapsing: the slot must NOT be reusable.
+    attempt.expires_at = datetime.utcnow() - timedelta(minutes=1)
+    await async_session.commit()
+
+    with pytest.raises(SchoolBillingConflictError, match="requires staff review"):
+        await create_school_invoice_subscription(
+            async_session, school, billing_email="bursar@school.example"
+        )
 
 
 @pytest.mark.asyncio
