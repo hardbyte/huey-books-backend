@@ -80,3 +80,15 @@ def test_active_status_is_active_regardless_of_period():
     )
 
     assert is_reconciled_subscription_active(evidence, now=now) is True
+
+
+def test_unpaid_status_is_inactive_even_with_future_period_end():
+    now = datetime(2026, 1, 1)
+    evidence = PaidSubscriptionEvidence(
+        paid_at=now - timedelta(days=1),
+        period_end=now + timedelta(days=30),
+        stripe_status="unpaid",
+        collection_method="send_invoice",
+    )
+
+    assert is_reconciled_subscription_active(evidence, now=now) is False

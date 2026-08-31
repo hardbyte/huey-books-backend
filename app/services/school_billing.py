@@ -14,7 +14,7 @@ from uuid import uuid4
 import stripe
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from stripe import APIConnectionError, APIError, StripeError
+from stripe import APIConnectionError, APIError, IdempotencyError, StripeError
 from structlog import get_logger
 
 from app.config import get_settings
@@ -56,8 +56,9 @@ def _is_definite_stripe_failure(error: BaseException) -> bool:
 
     A definite rejection (e.g. ``CardError``, ``InvalidRequestError``, an
     idempotency conflict) is a response from Stripe saying it processed and
-    refused the request, so no customer/subscription/charge was created and the
-    attempt's open-collectible slot can be released for an immediate retry.
+    refused the request, so no collectible subscription or charge was created
+    for that operation and the attempt's open-collectible slot can be released
+    for an immediate retry.
 
     Left as uncertain — and therefore requiring staff review — are a network
     error (``APIConnectionError``: the request may or may not have reached
@@ -65,7 +66,7 @@ def _is_definite_stripe_failure(error: BaseException) -> bool:
     resource before failing to respond), and any non-Stripe exception.
     """
     return isinstance(error, StripeError) and not isinstance(
-        error, (APIConnectionError, APIError)
+        error, (APIConnectionError, APIError, IdempotencyError)
     )
 
 
@@ -568,12 +569,6 @@ async def create_school_invoice_subscription(
             if hasattr(latest_invoice, "get")
             else latest_invoice
         )
-        if attempt_po_number and invoice_id:
-            stripe.Invoice.modify(
-                invoice_id,
-                custom_fields=[{"name": "PO number", "value": attempt_po_number}],
-                idempotency_key=f"{attempt.id}:invoice-po",
-            )
         return subscription, latest_invoice, invoice_id
 
     try:
@@ -595,6 +590,23 @@ async def create_school_invoice_subscription(
         raise SchoolBillingError(
             "Could not create invoice subscription. Please try again."
         )
+
+    if attempt_po_number and invoice_id:
+        try:
+            await asyncio.to_thread(
+                stripe.Invoice.modify,
+                invoice_id,
+                custom_fields=[{"name": "PO number", "value": attempt_po_number}],
+                idempotency_key=f"{attempt.id}:invoice-po",
+            )
+        except Exception as error:
+            logger.error(
+                "Failed to attach purchase order number to school invoice",
+                wriveted_school_id=wriveted_id,
+                stripe_subscription_id=subscription.id,
+                stripe_invoice_id=invoice_id,
+                error=str(error),
+            )
 
     hosted_invoice_url = (
         latest_invoice.get("hosted_invoice_url") if latest_invoice else None

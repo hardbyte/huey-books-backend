@@ -76,7 +76,9 @@ def is_reconciled_subscription_active(
     """
     if evidence.stripe_status in {"active", "past_due", "trialing"}:
         return True
-    return evidence.period_end > (now or datetime.utcnow())
+    return evidence.stripe_status == "canceled" and evidence.period_end > (
+        now or datetime.utcnow()
+    )
 
 
 def _candidate_subscriptions(school_id: UUID | None) -> list[tuple[str, UUID]]:
