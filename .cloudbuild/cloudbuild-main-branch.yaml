@@ -68,7 +68,7 @@ steps:
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
-        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1U7swsJn6IrlrOboE65oFHjq"},
+        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1UAPlFJn6IrlrOboF4lFDyQv"},
         STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api
@@ -120,7 +120,7 @@ steps:
         WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
-        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1U7swsJn6IrlrOboE65oFHjq"},
+        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1UAPlFJn6IrlrOboF4lFDyQv"},
         STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api-internal
@@ -207,7 +207,7 @@ steps:
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
-        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1U7swsJn6IrlrOboE65oFHjq"},
+        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1UAPlFJn6IrlrOboF4lFDyQv"},
         STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         HUEY_BOOKS_APP_URL=https://hueybooks.com,
@@ -260,7 +260,7 @@ steps:
         WRIVETED_API_BASE_URL=https://api.wriveted.com,
         EMAIL_PROVIDER=resend,
         STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
-        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1U7swsJn6IrlrOboE65oFHjq"},
+        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1UAPlFJn6IrlrOboF4lFDyQv"},
         STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=wriveted-api-internal
