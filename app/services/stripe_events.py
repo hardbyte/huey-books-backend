@@ -1,3 +1,5 @@
+import hashlib
+import json
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
@@ -80,23 +82,34 @@ def process_stripe_event(
     event_created_at = (
         datetime.utcfromtimestamp(event_created) if event_created is not None else None
     )
+    # Exactly-once guard. Events queued during the rollout window may lack an
+    # event_id; fall back to a deterministic hash of the payload so redelivery is
+    # still deduplicated rather than re-running handlers (duplicate emails/alerts).
+    receipt_key = (
+        event_id
+        or "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                {"type": event_type, "data": event_data}, sort_keys=True, default=str
+            ).encode()
+        ).hexdigest()
+    )
     Session = get_session_maker()
     with Session.begin() as session:
-        if event_id is not None:
-            claimed_event_id = session.execute(
-                pg_insert(StripeEventReceipt)
-                .values(
-                    event_id=event_id,
-                    event_type=event_type,
-                    event_created_at=event_created_at,
-                    api_version=api_version,
-                )
-                .on_conflict_do_nothing(index_elements=[StripeEventReceipt.event_id])
-                .returning(StripeEventReceipt.event_id)
-            ).scalar_one_or_none()
-            if claimed_event_id is None:
-                logger.info("Ignoring duplicate Stripe event", event_id=event_id)
-                return {"status": "duplicate"}
+        claimed_event_id = session.execute(
+            pg_insert(StripeEventReceipt)
+            .values(
+                event_id=receipt_key,
+                event_type=event_type,
+                event_created_at=event_created_at,
+                api_version=api_version,
+            )
+            .on_conflict_do_nothing(index_elements=[StripeEventReceipt.event_id])
+            .returning(StripeEventReceipt.event_id)
+        ).scalar_one_or_none()
+        if claimed_event_id is None:
+            logger.info("Ignoring duplicate Stripe event", event_id=receipt_key)
+            return {"status": "duplicate"}
         if not _handle_durable_school_billing_event(
             session, event_type, event_data, event_created_at
         ):
@@ -294,14 +307,17 @@ def _handle_durable_school_billing_event(
         if school is None:
             return True
         if local_subscription is not None:
+            # Row-lock the local subscription, but do NOT suppress the payment by
+            # the status watermark: invoice.paid is authoritative for payment and a
+            # later customer.subscription.updated must not shadow it. The upsert is
+            # non-regressing (paid_at set-once, expiration only advances), so an
+            # out-of-order or redelivered invoice.paid is safe/idempotent.
             local_subscription = session.execute(
                 select(Subscription)
                 .where(Subscription.id == local_subscription.id)
                 .with_for_update()
                 .execution_options(populate_existing=True)
             ).scalar_one()
-            if _subscription_event_is_stale(local_subscription, event_created_at):
-                return True
         subscription = _upsert_school_subscription(
             session,
             attempt,
@@ -400,8 +416,6 @@ def _handle_durable_school_billing_event(
                 .with_for_update()
                 .execution_options(populate_existing=True)
             ).scalar_one()
-            if _subscription_event_is_stale(local_subscription, event_created_at):
-                return True
         if event_type == "customer.subscription.deleted":
             if local_subscription is not None:
                 local_subscription.is_active = False
@@ -419,6 +433,14 @@ def _handle_durable_school_billing_event(
                 attempt.status = SchoolBillingAttemptStatus.CANCELLED
                 _advance_event_watermark(attempt, event_created_at)
         else:
+            # A created/updated event is informational: suppress it if an older
+            # event arrives after a newer one. (The deleted branch above is
+            # terminal and applied unconditionally, so a cancellation is never
+            # shadowed by a later-timestamped update.)
+            if local_subscription is not None and _subscription_event_is_stale(
+                local_subscription, event_created_at
+            ):
+                return True
             stripe_subscription = authoritative_subscription
             if stripe_subscription is None:
                 return True
@@ -552,18 +574,29 @@ def _upsert_school_subscription(
     )
     existing = subscription_repository.get_by_id(session, subscription_id)
     if paid:
-        paid_at = event_created_at or datetime.utcnow()
+        # Set-once: keep the original payment time so a redelivered/out-of-order
+        # invoice.paid does not rewrite it.
+        paid_at = (
+            existing.paid_at
+            if existing is not None and existing.paid_at is not None
+            else (event_created_at or datetime.utcnow())
+        )
     elif existing is not None:
         paid_at = existing.paid_at
     else:
         paid_at = None
-    # A subscription update can move current_period_end before a renewal invoice
-    # is paid. Preserve the locally paid-through boundary until invoice.paid.
-    expiration = (
-        stripe_period_end
-        if paid or existing is None or existing.paid_at is None
-        else existing.expiration
-    )
+    # Expiration only advances. On payment take the later of the known paid-through
+    # boundary and this invoice's period end (a stale/older invoice.paid can't
+    # regress it). A subscription update can move current_period_end before a
+    # renewal invoice is paid, so preserve the paid-through boundary until then.
+    if paid:
+        expiration = stripe_period_end
+        if existing is not None and existing.expiration is not None:
+            expiration = max(existing.expiration, stripe_period_end)
+    elif existing is None or existing.paid_at is None:
+        expiration = stripe_period_end
+    else:
+        expiration = existing.expiration
     status = stripe_subscription.get("status")
     return subscription_repository.upsert(
         session,
@@ -1714,7 +1747,7 @@ def _apply_customer_balance_credit(
 
 def _handle_invoice_upcoming(session, event_data):
     """Remind an active school's contact that their subscription renews soon."""
-    stripe_subscription_id = event_data.get("subscription")
+    stripe_subscription_id = _invoice_subscription_id(event_data)
     if not stripe_subscription_id:
         return
     subscription = subscription_repository.get_by_id(

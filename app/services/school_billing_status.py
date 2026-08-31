@@ -202,7 +202,9 @@ def _build_school_billing_status(
             unit_amount=settings.STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY.get(
                 school.country_code, settings.STRIPE_SCHOOL_DEFAULT_UNIT_AMOUNT
             ),
-            currency=settings.STRIPE_SCHOOL_CURRENCY,
+            currency=settings.STRIPE_SCHOOL_CURRENCY_BY_COUNTRY.get(
+                school.country_code, settings.STRIPE_SCHOOL_CURRENCY
+            ),
             interval=settings.STRIPE_SCHOOL_BILLING_INTERVAL,
             interval_count=settings.STRIPE_SCHOOL_BILLING_INTERVAL_COUNT,
             invoice_days_until_due=settings.INVOICE_DAYS_UNTIL_DUE,

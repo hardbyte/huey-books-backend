@@ -150,12 +150,34 @@ def upgrade():
         postgresql_where=sa.text("is_active"),
     )
 
+    # Existing real Stripe subscriptions predate this feature and are all
+    # card/charge_automatically. Backfill paid_at so the aggregate entitlement
+    # resolver recognizes them via the paid branch (it requires paid_at IS NOT
+    # NULL) instead of the narrower legacy fallback.
     op.execute(
         """
         UPDATE subscriptions
         SET stripe_status = CASE WHEN is_active THEN 'active' ELSE 'canceled' END,
-            collection_method = 'charge_automatically'
+            collection_method = 'charge_automatically',
+            paid_at = COALESCE(paid_at, created_at, now())
         WHERE stripe_customer_id <> ''
+        """
+    )
+    # Backfill billing accounts from known Stripe customers so an existing paying
+    # school reuses its customer (and the portal works) instead of minting a
+    # duplicate Stripe Customer on its next billing action. One account per school
+    # (prefer the active/most-recent row); ON CONFLICT DO NOTHING covers both the
+    # school_id PK and the stripe_customer_id unique constraint.
+    op.execute(
+        """
+        INSERT INTO school_billing_accounts
+            (school_id, stripe_customer_id, created_at, updated_at)
+        SELECT DISTINCT ON (school_id)
+            school_id, stripe_customer_id, now(), now()
+        FROM subscriptions
+        WHERE stripe_customer_id <> '' AND school_id IS NOT NULL
+        ORDER BY school_id, is_active DESC, updated_at DESC
+        ON CONFLICT DO NOTHING
         """
     )
 

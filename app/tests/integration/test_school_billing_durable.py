@@ -961,3 +961,69 @@ async def test_comp_school_can_see_status_and_start_conversion(
     assert status_response.json()["capabilities"]["card"] is True
     assert checkout_response.status_code == 200, checkout_response.text
     assert checkout_response.json()["status"] == "checkout_open"
+
+
+@patch("app.services.stripe_events.StripeSubscription.retrieve")
+def test_invoice_paid_applies_even_after_a_later_subscription_update(
+    mock_retrieve, session, test_school
+):
+    """P1 regression: an out-of-order invoice.paid (earlier timestamp than a
+    customer.subscription.updated that already advanced the subscription's event
+    watermark) must still apply payment. Otherwise paid_at stays NULL, the school
+    is never activated, and the lapse sweep later drops a paying school.
+    """
+    now = datetime.utcnow()
+    subscription_id = f"sub_ooo_{uuid4().hex}"
+    customer_id = f"cus_{uuid4().hex}"
+    period_end = now + timedelta(days=365)
+    session.merge(Product(id="price_ooo", name="School invoice"))
+    # Local row as left by subscription.created + a LATER subscription.updated:
+    # watermark ahead of the payment event, still unpaid/inactive.
+    session.add(
+        Subscription(
+            id=subscription_id,
+            school_id=test_school.wriveted_identifier,
+            type=SubscriptionType.SCHOOL,
+            stripe_customer_id=customer_id,
+            is_active=False,
+            paid_at=None,
+            expiration=now + timedelta(days=1),
+            product_id="price_ooo",
+            stripe_status="active",
+            collection_method="send_invoice",
+            last_stripe_event_created_at=now,
+        )
+    )
+    test_school.state = SchoolState.INACTIVE
+    session.commit()
+
+    mock_retrieve.return_value = {
+        "id": subscription_id,
+        "object": "subscription",
+        "customer": customer_id,
+        "status": "active",
+        "collection_method": "send_invoice",
+        "current_period_end": int(period_end.timestamp()),
+        "items": {"data": [{"price": {"id": "price_ooo"}}]},
+    }
+
+    process_stripe_event(
+        "invoice.paid",
+        {
+            "id": f"in_{uuid4().hex}",
+            "object": "invoice",
+            "customer": customer_id,
+            "subscription": subscription_id,
+            "collection_method": "send_invoice",
+        },
+        event_id=f"evt_invoice_paid_{uuid4()}",
+        # Earlier than the subscription watermark (out-of-order delivery).
+        event_created=int((now - timedelta(minutes=5)).timestamp()),
+    )
+
+    session.expire_all()
+    refreshed = session.get(Subscription, subscription_id)
+    assert refreshed.paid_at is not None
+    assert refreshed.is_active is True
+    assert refreshed.expiration == datetime.utcfromtimestamp(int(period_end.timestamp()))
+    assert test_school.state == SchoolState.ACTIVE

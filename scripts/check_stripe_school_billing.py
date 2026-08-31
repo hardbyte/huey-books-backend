@@ -117,12 +117,15 @@ def main() -> int:
         expected_amount = settings.STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY.get(
             label, settings.STRIPE_SCHOOL_DEFAULT_UNIT_AMOUNT
         )
+        expected_currency = settings.STRIPE_SCHOOL_CURRENCY_BY_COUNTRY.get(
+            label, settings.STRIPE_SCHOOL_CURRENCY
+        )
         issues.extend(
             price_configuration_issues(
                 price,
                 label=label,
                 expected_unit_amount=expected_amount,
-                expected_currency=settings.STRIPE_SCHOOL_CURRENCY,
+                expected_currency=expected_currency,
                 expected_interval=settings.STRIPE_SCHOOL_BILLING_INTERVAL,
                 expected_interval_count=settings.STRIPE_SCHOOL_BILLING_INTERVAL_COUNT,
             )

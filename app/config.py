@@ -290,6 +290,12 @@ class Settings(BaseSettings):
     STRIPE_SCHOOL_DEFAULT_UNIT_AMOUNT: int = 24000
     STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY: dict[str, int] = {"IND": 8000}
     STRIPE_SCHOOL_CURRENCY: str = "aud"
+    # Currency must be resolved alongside the per-country amount: a country with a
+    # separate price is typically denominated in its own currency, so disclosing
+    # the amount in the global currency would misstate the charge. Keys are
+    # country codes; values are ISO currency codes matching that country's Stripe
+    # price. check_stripe_school_billing.py validates these against Stripe.
+    STRIPE_SCHOOL_CURRENCY_BY_COUNTRY: dict[str, str] = {"IND": "inr"}
     STRIPE_SCHOOL_BILLING_INTERVAL: str = "year"
     STRIPE_SCHOOL_BILLING_INTERVAL_COUNT: int = 1
     # One-off Stripe price ids for a "contribute a month" payment toward a
