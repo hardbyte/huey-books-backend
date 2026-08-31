@@ -53,6 +53,7 @@ from app.services.school_emails import (
     render_school_contribution_notice_html,
     render_school_renewal_reminder_html,
 )
+from app.services.stripe_price_cache import invalidate_price_cache
 
 logger = get_logger()
 settings = get_settings()
@@ -119,6 +120,15 @@ def process_stripe_event(
 
 def _dispatch_stripe_event(session, event_type: str, event_data: dict) -> None:
     if event_type in (
+        "price.created",
+        "price.updated",
+        "price.deleted",
+        "product.created",
+        "product.updated",
+    ):
+        _handle_price_catalog_event(event_type, event_data)
+        return
+    if event_type in (
         "checkout.session.completed",
         "checkout.session.async_payment_succeeded",
     ) and _is_contribution_checkout(event_data):
@@ -162,6 +172,22 @@ def _dispatch_stripe_event(session, event_type: str, event_data: dict) -> None:
             logger.warning("Payment failed")
         case _:
             logger.info("Unhandled Stripe event", event_type=event_type)
+
+
+def _handle_price_catalog_event(event_type: str, event_data: dict) -> None:
+    """Invalidate the cached Stripe price terms when a price/product changes.
+
+    Cheap and cache-only (no DB writes). A price event names the affected price,
+    so invalidate just that entry; a product event does not, so clear the whole
+    cache (any of its prices may have moved).
+    """
+    if event_type.startswith("price."):
+        price_id = event_data.get("id")
+        invalidate_price_cache(price_id)
+        logger.info("Invalidated cached Stripe price", price_id=price_id)
+    else:
+        invalidate_price_cache()
+        logger.info("Invalidated all cached Stripe prices after product change")
 
 
 def _handle_durable_school_billing_event(

@@ -50,7 +50,7 @@ def test_configuration_issues_reports_version_status_and_events():
     assert any(issue.startswith("missing events:") for issue in issues)
 
 
-def test_price_configuration_accepts_disclosed_recurring_price():
+def test_price_configuration_accepts_active_recurring_price():
     price = SimpleNamespace(
         id="price_school",
         active=True,
@@ -59,35 +59,21 @@ def test_price_configuration_accepts_disclosed_recurring_price():
         recurring=SimpleNamespace(interval="year", interval_count=1),
     )
 
-    assert (
-        price_configuration_issues(
-            price,
-            label="IND",
-            expected_unit_amount=8000,
-            expected_currency="aud",
-            expected_interval="year",
-            expected_interval_count=1,
-        )
-        == []
-    )
+    assert price_configuration_issues(price, label="IND") == []
 
 
-def test_price_configuration_reports_display_mismatch():
+def test_price_configuration_reports_inactive_and_non_recurring():
     price = SimpleNamespace(
         id="price_school",
-        active=True,
+        active=False,
         unit_amount=24000,
         currency="nzd",
-        recurring=SimpleNamespace(interval="month", interval_count=6),
+        recurring=None,
     )
 
-    issues = price_configuration_issues(
-        price,
-        label="IND",
-        expected_unit_amount=8000,
-        expected_currency="aud",
-        expected_interval="year",
-        expected_interval_count=1,
-    )
+    issues = price_configuration_issues(price, label="IND")
 
-    assert len(issues) == 3
+    assert issues == [
+        "IND price price_school is not active",
+        "IND price price_school is not recurring",
+    ]

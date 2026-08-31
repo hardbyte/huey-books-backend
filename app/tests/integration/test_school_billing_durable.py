@@ -32,6 +32,7 @@ from app.services.school_access import (
 from app.services.school_billing import create_school_checkout_session
 from app.services.school_billing_status import resolve_school_billing_status
 from app.services.stripe_events import process_stripe_event
+from app.services.stripe_price_cache import StripePriceInfo
 
 
 @pytest.mark.asyncio
@@ -736,6 +737,21 @@ def _configure_stripe(monkeypatch, *, country_prices=None):
         school_billing_status_module,
         "get_settings",
         lambda: school_billing_module.settings,
+    )
+    price_info = StripePriceInfo(
+        unit_amount=24000, currency="aud", interval="year", interval_count=1
+    )
+
+    async def _fake_get_price_info(price_id, **kwargs):
+        return price_info
+
+    monkeypatch.setattr(
+        school_billing_status_module, "get_price_info", _fake_get_price_info
+    )
+    monkeypatch.setattr(
+        school_billing_status_module,
+        "get_price_info_sync",
+        lambda price_id, **kwargs: price_info,
     )
 
 

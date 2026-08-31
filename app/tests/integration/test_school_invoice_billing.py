@@ -392,6 +392,8 @@ async def test_lapse_sweep_expires_invoice_pending_grant(async_session):
 
 def _configure_billing_settings(monkeypatch):
     from app.services import school_billing
+    from app.services import school_billing_status as school_billing_status_module
+    from app.services.stripe_price_cache import StripePriceInfo
 
     monkeypatch.setattr(school_billing.settings, "STRIPE_SECRET_KEY", "sk_test_x")
     monkeypatch.setattr(
@@ -402,6 +404,22 @@ def _configure_billing_settings(monkeypatch):
     )
     monkeypatch.setattr(school_billing.settings, "INVOICE_DAYS_UNTIL_DUE", 30)
     monkeypatch.setattr(school_billing.settings, "INVOICE_PENDING_GRACE_DAYS", 14)
+
+    price_info = StripePriceInfo(
+        unit_amount=24000, currency="aud", interval="year", interval_count=1
+    )
+
+    async def _fake_get_price_info(price_id, **kwargs):
+        return price_info
+
+    monkeypatch.setattr(
+        school_billing_status_module, "get_price_info", _fake_get_price_info
+    )
+    monkeypatch.setattr(
+        school_billing_status_module,
+        "get_price_info_sync",
+        lambda price_id, **kwargs: price_info,
+    )
 
 
 async def _new_school(async_session, *, country_code="ATA") -> School:

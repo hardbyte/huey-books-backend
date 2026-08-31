@@ -283,21 +283,6 @@ class Settings(BaseSettings):
     # whose country_code has an entry here uses that price; otherwise the default
     # (STRIPE_SCHOOL_PRICE_IDS[0]). Set as JSON in the env var.
     STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY: dict[str, str] = {}
-    # Display metadata for the configured recurring school prices. Stripe is
-    # still authoritative for charging; these values are validated during the
-    # rollout and let the UI disclose the commitment without a Stripe API call
-    # on every billing-status read.
-    STRIPE_SCHOOL_DEFAULT_UNIT_AMOUNT: int = 24000
-    STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY: dict[str, int] = {"IND": 8000}
-    STRIPE_SCHOOL_CURRENCY: str = "aud"
-    # Currency must be resolved alongside the per-country amount: a country with a
-    # separate price is typically denominated in its own currency, so disclosing
-    # the amount in the global currency would misstate the charge. Keys are
-    # country codes; values are ISO currency codes matching that country's Stripe
-    # price. check_stripe_school_billing.py validates these against Stripe.
-    STRIPE_SCHOOL_CURRENCY_BY_COUNTRY: dict[str, str] = {"IND": "inr"}
-    STRIPE_SCHOOL_BILLING_INTERVAL: str = "year"
-    STRIPE_SCHOOL_BILLING_INTERVAL_COUNT: int = 1
     # One-off Stripe price ids for a "contribute a month" payment toward a
     # school's subscription (first is the default).
     STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS: Annotated[List[str], NoDecode] = []

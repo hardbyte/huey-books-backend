@@ -26,6 +26,11 @@ from app.services.school_access import (
     INVOICE_PENDING_GRANT_SOURCE,
     subscription_blocks_new_billing,
 )
+from app.services.stripe_price_cache import (
+    StripePriceInfo,
+    get_price_info,
+    get_price_info_sync,
+)
 
 PAID_ENTITLEMENT_SOURCE = "paid_subscription"
 LEGACY_ENTITLEMENT_SOURCE = "legacy_subscription"
@@ -41,6 +46,18 @@ def select_school_price_id(school: School) -> str:
     return (
         settings.STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY.get(school.country_code)
         or settings.STRIPE_SCHOOL_PRICE_IDS[0]
+    )
+
+
+def _build_offer(price_id: str, price_info: StripePriceInfo) -> SchoolBillingOffer:
+    settings = get_settings()
+    return SchoolBillingOffer(
+        price_id=price_id,
+        unit_amount=price_info.unit_amount,
+        currency=price_info.currency,
+        interval=price_info.interval,
+        interval_count=price_info.interval_count,
+        invoice_days_until_due=settings.INVOICE_DAYS_UNTIL_DUE,
     )
 
 
@@ -72,8 +89,10 @@ async def resolve_school_billing_status(
     has_billing_account = (
         await session.get(SchoolBillingAccount, school.wriveted_identifier) is not None
     )
+    price_id = select_school_price_id(school)
+    offer = _build_offer(price_id, await get_price_info(price_id))
     return _build_school_billing_status(
-        school, latest_attempt, subscriptions, has_billing_account
+        school, latest_attempt, subscriptions, has_billing_account, offer
     )
 
 
@@ -100,8 +119,10 @@ def resolve_school_billing_status_sync(
     has_billing_account = (
         session.get(SchoolBillingAccount, school.wriveted_identifier) is not None
     )
+    price_id = select_school_price_id(school)
+    offer = _build_offer(price_id, get_price_info_sync(price_id))
     return _build_school_billing_status(
-        school, latest_attempt, subscriptions, has_billing_account
+        school, latest_attempt, subscriptions, has_billing_account, offer
     )
 
 
@@ -110,6 +131,7 @@ def _build_school_billing_status(
     latest_attempt: SchoolBillingAttempt | None,
     subscriptions: list[Subscription],
     has_billing_account: bool,
+    offer: SchoolBillingOffer,
 ) -> SchoolBillingStatus:
     now = datetime.utcnow()
     entitlement, paid_subscription = _resolve_entitlement(subscriptions, now)
@@ -197,18 +219,7 @@ def _build_school_billing_status(
             blocking_reason=blocking_reason,
         ),
         invoice_first=school.country_code in settings.INVOICE_FIRST_COUNTRY_CODES,
-        offer=SchoolBillingOffer(
-            price_id=select_school_price_id(school),
-            unit_amount=settings.STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY.get(
-                school.country_code, settings.STRIPE_SCHOOL_DEFAULT_UNIT_AMOUNT
-            ),
-            currency=settings.STRIPE_SCHOOL_CURRENCY_BY_COUNTRY.get(
-                school.country_code, settings.STRIPE_SCHOOL_CURRENCY
-            ),
-            interval=settings.STRIPE_SCHOOL_BILLING_INTERVAL,
-            interval_count=settings.STRIPE_SCHOOL_BILLING_INTERVAL_COUNT,
-            invoice_days_until_due=settings.INVOICE_DAYS_UNTIL_DUE,
-        ),
+        offer=offer,
     )
 
 

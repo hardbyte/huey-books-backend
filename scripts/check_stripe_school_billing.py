@@ -51,40 +51,18 @@ def configuration_issues(
     return issues
 
 
-def price_configuration_issues(
-    price,
-    *,
-    label: str,
-    expected_unit_amount: int,
-    expected_currency: str,
-    expected_interval: str,
-    expected_interval_count: int,
-) -> list[str]:
+def price_configuration_issues(price, *, label: str) -> list[str]:
+    """Validate a configured school price is charge-ready.
+
+    Stripe is the source of truth for the offer's amount/currency/interval, so
+    those are no longer asserted against config; we only confirm the price is
+    active and recurring (a one-off or archived price would break the offer).
+    """
     issues: list[str] = []
-    recurring = price.recurring
     if price.active is not True:
         issues.append(f"{label} price {price.id} is not active")
-    if price.unit_amount != expected_unit_amount:
-        issues.append(
-            f"{label} price {price.id} amount is {price.unit_amount!r}; "
-            f"expected {expected_unit_amount}"
-        )
-    if price.currency.lower() != expected_currency.lower():
-        issues.append(
-            f"{label} price {price.id} currency is {price.currency!r}; "
-            f"expected {expected_currency!r}"
-        )
-    if recurring is None:
+    if price.recurring is None:
         issues.append(f"{label} price {price.id} is not recurring")
-    elif (
-        recurring.interval != expected_interval
-        or recurring.interval_count != expected_interval_count
-    ):
-        issues.append(
-            f"{label} price {price.id} recurs every "
-            f"{recurring.interval_count} {recurring.interval}; expected every "
-            f"{expected_interval_count} {expected_interval}"
-        )
     return issues
 
 
@@ -114,22 +92,7 @@ def main() -> int:
     configured_prices.update(settings.STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY)
     for label, price_id in configured_prices.items():
         price = stripe.Price.retrieve(price_id)
-        expected_amount = settings.STRIPE_SCHOOL_UNIT_AMOUNT_BY_COUNTRY.get(
-            label, settings.STRIPE_SCHOOL_DEFAULT_UNIT_AMOUNT
-        )
-        expected_currency = settings.STRIPE_SCHOOL_CURRENCY_BY_COUNTRY.get(
-            label, settings.STRIPE_SCHOOL_CURRENCY
-        )
-        issues.extend(
-            price_configuration_issues(
-                price,
-                label=label,
-                expected_unit_amount=expected_amount,
-                expected_currency=expected_currency,
-                expected_interval=settings.STRIPE_SCHOOL_BILLING_INTERVAL,
-                expected_interval_count=settings.STRIPE_SCHOOL_BILLING_INTERVAL_COUNT,
-            )
-        )
+        issues.extend(price_configuration_issues(price, label=label))
     if issues:
         for issue in issues:
             print(f"FAIL: {issue}")
