@@ -1,8 +1,8 @@
-import json
 from typing import Any
 
 import httpx
 from google.cloud import tasks_v2
+from pydantic_core import to_json
 from structlog import get_logger
 
 from app.config import get_settings
@@ -14,9 +14,20 @@ logger = get_logger()
 def queue_background_task(endpoint: str, payload: Any = None):
     url = f"{settings.WRIVETED_INTERNAL_API}v1/{endpoint}"
 
+    # pydantic's JSON encoder handles types stdlib json rejects (Decimal, datetime,
+    # UUID) — e.g. a Stripe Price on a price.* webhook carries Decimal fields.
+    body = to_json(payload) if payload is not None else None
+
     if settings.GCP_CLOUD_TASKS_NAME is None:
         logger.warning("Calling internal API directly", url=url)
-        return httpx.post(url, json=payload, timeout=120)
+        if body is None:
+            return httpx.post(url, timeout=120)
+        return httpx.post(
+            url,
+            content=body,
+            headers={"Content-Type": "application/json"},
+            timeout=120,
+        )
     else:
         client = tasks_v2.CloudTasksClient()
         project = settings.GCP_PROJECT_ID
@@ -50,10 +61,10 @@ def queue_background_task(endpoint: str, payload: Any = None):
             }
         }
 
-        # Convert payload to bytes and add to request
-        if payload is not None:
-            payload = json.dumps(payload).encode()
-            task["http_request"]["body"] = payload
+        # Add the pydantic-serialized JSON body (Decimal/datetime-safe).
+        if body is not None:
+            task["http_request"]["body"] = body
+            task["http_request"]["headers"] = {"Content-Type": "application/json"}
 
         response = client.create_task(request={"parent": parent, "task": task})
 

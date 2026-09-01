@@ -68,14 +68,16 @@ def test_stripe_webhook_validates_signature(
 
 
 def test_stripe_webhook_queues_serializable_payload_for_price_event(client):
-    """A price.updated event carries a Stripe Price object. The Cloud Tasks payload
-    is json.dumps'd, and a raw Price is not JSON-serializable (regression: this
-    threw TypeError and returned 500), so the handler must hand off a plain dict.
+    """A price.updated event carries a Stripe Price whose to_dict() still holds
+    non-JSON types (nested StripeObjects and Decimal *_decimal fields). Two
+    regressions returned 500 here: the raw Price, then a Decimal. The queued
+    payload must serialize via the background-task encoder (pydantic to_json).
     """
-    import json
+    from decimal import Decimal
     from unittest.mock import patch
 
     import stripe
+    from pydantic_core import to_json
 
     from app.api.dependencies.stripe_security import get_stripe_event
     from app.main import app
@@ -85,6 +87,7 @@ def test_stripe_webhook_queues_serializable_payload_for_price_event(client):
             "id": "price_x",
             "object": "price",
             "unit_amount": 500000,
+            "unit_amount_decimal": Decimal("500000"),
             "currency": "inr",
             "recurring": {"interval": "year", "interval_count": 1},
         },
@@ -118,7 +121,9 @@ def test_stripe_webhook_queues_serializable_payload_for_price_event(client):
 
     assert resp.status_code == 200
     payload = captured["payload"]
-    json.dumps(payload)  # would raise TypeError without the to_dict() conversion
+    # The real background-task serializer must encode it (raw json.dumps would
+    # raise on the nested Decimal); this is what queue_background_task now uses.
+    to_json(payload)
     assert isinstance(payload["stripe_event_data"], dict)
     assert payload["stripe_event_data"]["unit_amount"] == 500000
     assert payload["stripe_event_data"]["recurring"]["interval"] == "year"
