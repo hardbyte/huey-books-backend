@@ -8,6 +8,7 @@ instead of direct background task queuing.
 from unittest.mock import MagicMock, Mock, patch
 from uuid import uuid4
 
+import stripe
 from sqlalchemy import text
 
 from app.models.event_outbox import EventPriority
@@ -47,20 +48,30 @@ def test_stripe_welcome_email_creates_outbox_event(session):
         patch("app.services.stripe_events.StripePrice") as mock_price,
         patch("app.services.stripe_events.StripeProduct") as mock_product,
     ):
-        # Set up mock responses that support both dict-like and attribute access
-        subscription_mock = MagicMock()
-        subscription_mock.customer = "cus_test_123"
-        subscription_mock.current_period_end = 1672531200
-        subscription_mock.__getitem__.return_value = {
-            "data": [{"price": {"id": "price_test_123"}}]
-        }
+        # Real stripe-python v15 resource objects (dict-style .get() is gone; the
+        # code reads them via to_dict() / attribute access).
+        subscription_mock = stripe.Subscription.construct_from(
+            {
+                "id": "sub_test_123",
+                "object": "subscription",
+                "customer": "cus_test_123",
+                "current_period_end": 1672531200,
+                "items": {"data": [{"price": {"id": "price_test_123"}}]},
+            },
+            "sk_test",
+        )
         mock_subscription.retrieve.return_value = subscription_mock
 
-        customer_mock = Mock(spec=["get", "metadata", "name", "save"])
-        customer_mock.get.return_value = f"parent-{user_uuid}@test.com"
-        customer_mock.metadata = {}
-        customer_mock.name = "Test Parent"  # Set as simple attribute
-        customer_mock.save.return_value = None
+        customer_mock = stripe.Customer.construct_from(
+            {
+                "id": "cus_test_123",
+                "object": "customer",
+                "email": f"parent-{user_uuid}@test.com",
+                "name": "Test Parent",
+                "metadata": {},
+            },
+            "sk_test",
+        )
         mock_customer.retrieve.return_value = customer_mock
 
         mock_price.retrieve.return_value = Mock(product="prod_test_123")

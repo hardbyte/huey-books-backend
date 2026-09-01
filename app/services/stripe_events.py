@@ -53,6 +53,7 @@ from app.services.school_emails import (
     render_school_contribution_notice_html,
     render_school_renewal_reminder_html,
 )
+from app.services.stripe_fields import stripe_field as _sget
 from app.services.stripe_price_cache import invalidate_price_cache
 
 logger = get_logger()
@@ -243,7 +244,7 @@ def _handle_durable_school_billing_event(
         authoritative_subscription is not None
         and event_type != "customer.subscription.deleted"
     ):
-        items = (authoritative_subscription.get("items") or {}).get("data") or []
+        items = (_sget(authoritative_subscription, "items") or {}).get("data") or []
         price_id = (items[0].get("price") or {}).get("id") if items else None
         if price_id is not None:
             # Product synchronization can call Stripe. Complete it before any
@@ -569,7 +570,7 @@ def _upsert_school_subscription(
     checkout_session_id: str | None = None,
     school: School | None = None,
 ) -> Subscription:
-    subscription_id = _stripe_id(stripe_subscription.get("id")) or (
+    subscription_id = _stripe_id(_sget(stripe_subscription, "id")) or (
         attempt.stripe_subscription_id if attempt is not None else None
     )
     if subscription_id is None:
@@ -581,14 +582,14 @@ def _upsert_school_subscription(
     if school is None:
         raise ValueError("School is required for a school subscription")
 
-    items = (stripe_subscription.get("items") or {}).get("data") or []
+    items = (_sget(stripe_subscription, "items") or {}).get("data") or []
     price_id = ((items[0].get("price") or {}).get("id") if items else None) or (
         attempt.configured_price_id if attempt is not None else None
     )
     if price_id is None:
         raise ValueError("Stripe price id is required")
     _sync_stripe_price_with_wriveted_product(session, price_id)
-    period_end = stripe_subscription.get("current_period_end")
+    period_end = _sget(stripe_subscription, "current_period_end")
     if period_end is None and items:
         period_end = items[0].get("current_period_end")
     stripe_period_end = (
@@ -623,7 +624,7 @@ def _upsert_school_subscription(
         expiration = stripe_period_end
     else:
         expiration = existing.expiration
-    status = stripe_subscription.get("status")
+    status = _sget(stripe_subscription, "status")
     return subscription_repository.upsert(
         session,
         SubscriptionCreateIn(
@@ -631,7 +632,7 @@ def _upsert_school_subscription(
             type=SubscriptionType.SCHOOL,
             product_id=price_id,
             stripe_customer_id=str(
-                _stripe_id(stripe_subscription.get("customer"))
+                _stripe_id(_sget(stripe_subscription, "customer"))
                 or (attempt.stripe_customer_id if attempt is not None else "")
             ),
             school_id=str(school.wriveted_identifier),
@@ -641,7 +642,7 @@ def _upsert_school_subscription(
             expiration=expiration,
             latest_checkout_session_id=checkout_session_id,
             stripe_status=status,
-            collection_method=stripe_subscription.get("collection_method"),
+            collection_method=_sget(stripe_subscription, "collection_method"),
             paid_at=paid_at,
             last_stripe_event_created_at=(
                 event_created_at
@@ -728,7 +729,7 @@ def _extract_user_and_customer_from_stripe_object(
 
     # check customer metadata for a wriveted user id
     # (this is stored upon the first successful checkout)
-    metadata = stripe_customer.get("metadata")
+    metadata = _sget(stripe_customer, "metadata")
     stripe_customer_wriveted_id = metadata.get("wriveted_id") if metadata else None
     if stripe_customer_wriveted_id:
         wriveted_user = crud.user.get(session, stripe_customer_wriveted_id)
@@ -819,7 +820,7 @@ def _resolve_school_from_metadata(
     candidate_ids: list = []
 
     if stripe_customer is not None:
-        cust_meta = stripe_customer.get("metadata") or {}
+        cust_meta = _sget(stripe_customer, "metadata") or {}
         candidate_ids.append(cust_meta.get("wriveted_school_id"))
 
     if object_type == "subscription":
@@ -832,7 +833,7 @@ def _resolve_school_from_metadata(
             try:
                 stripe_subscription = StripeSubscription.retrieve(subscription_id)
                 candidate_ids.append(
-                    (stripe_subscription.get("metadata") or {}).get(
+                    (_sget(stripe_subscription, "metadata") or {}).get(
                         "wriveted_school_id"
                     )
                 )
@@ -862,7 +863,7 @@ def _stamp_customer_school_metadata(stripe_customer, school: School) -> None:
     so later customer/subscription/invoice events resolve the school directly."""
     if stripe_customer is None or school is None:
         return
-    metadata = stripe_customer.metadata or {}
+    metadata = _sget(stripe_customer, "metadata") or {}
     if metadata.get("wriveted_school_id") == str(school.wriveted_identifier):
         return
     try:
@@ -908,7 +909,7 @@ def _handle_invoice_paid(
     # Resolve the school from the subscription's own metadata when the event did
     # not carry it (invoice events have no client_reference_id).
     if school is None:
-        metadata_school_id = (stripe_subscription.get("metadata") or {}).get(
+        metadata_school_id = (_sget(stripe_subscription, "metadata") or {}).get(
             "wriveted_school_id"
         )
         if metadata_school_id:
@@ -922,7 +923,7 @@ def _handle_invoice_paid(
     is_active = stripe_subscription.status in {"active", "past_due"}
     expiration = datetime.utcfromtimestamp(stripe_subscription.current_period_end)
     paid_at = datetime.utcnow()
-    collection_method = stripe_subscription.get("collection_method")
+    collection_method = _sget(stripe_subscription, "collection_method")
 
     subscription = subscription_repository.get_by_id(
         session, subscription_id=stripe_subscription_id
@@ -981,7 +982,7 @@ def _handle_invoice_paid(
             "stripe_invoice_id": event_data.get("id"),
             "stripe_customer_id": stripe_customer_id,
             "stripe_subscription_id": stripe_subscription_id,
-            "collection_method": stripe_subscription.get("collection_method"),
+            "collection_method": _sget(stripe_subscription, "collection_method"),
             "expiration": str(subscription.expiration),
         },
         school=school,
@@ -1118,14 +1119,16 @@ def _handle_checkout_session_completed(
 
     stripe_customer_id = stripe_subscription.customer
     stripe_customer = StripeCustomer.retrieve(stripe_customer_id)
-    stripe_customer_email = stripe_customer.get("email")
+    stripe_customer_email = _sget(stripe_customer, "email")
 
     if not stripe_customer_email:
         logger.warning("Checkout session emitted without an email address")
 
     checkout_session_id = event_data.get("id")
 
-    if wriveted_user and not stripe_customer.metadata.get("wriveted_id"):
+    if wriveted_user and not (_sget(stripe_customer, "metadata") or {}).get(
+        "wriveted_id"
+    ):
         # we have a wriveted user, but no wriveted id on the stripe customer
         logger.info(
             "Updating Stripe customer metadata with Wriveted user id",
@@ -1160,7 +1163,7 @@ def _handle_checkout_session_completed(
     stripe_status = getattr(stripe_subscription, "status", None)
     if not isinstance(stripe_status, str):
         stripe_status = None
-    collection_method = stripe_subscription.get("collection_method")
+    collection_method = _sget(stripe_subscription, "collection_method")
     if not isinstance(collection_method, str):
         collection_method = None
 
@@ -1718,7 +1721,7 @@ def _apply_customer_balance_credit(
 
     # Retrieving the customer can fail transiently; let that re-raise to retry.
     customer = StripeCustomer.retrieve(stripe_customer_id)
-    customer_currency = (customer.get("currency") or "").lower()
+    customer_currency = (_sget(customer, "currency") or "").lower()
     if customer_currency and customer_currency != currency:
         # Permanent: a balance transaction must match the customer's currency.
         logger.error(
@@ -1835,7 +1838,7 @@ def _is_unpaid_invoice_subscription(event_data: dict) -> bool:
         status = latest_invoice.get("status")
     elif isinstance(latest_invoice, str) and latest_invoice:
         try:
-            status = stripe.Invoice.retrieve(latest_invoice).get("status")
+            status = _sget(stripe.Invoice.retrieve(latest_invoice), "status")
         except Exception as e:
             logger.warning(
                 "Could not retrieve latest invoice to check paid status",
@@ -1868,7 +1871,7 @@ def _handle_subscription_created(
 
         # check customer metadata for a wriveted user id
         # (this is stored upon the first successful checkout)
-        if user_id := stripe_customer["metadata"].get("wriveted_id"):
+        if user_id := (_sget(stripe_customer, "metadata") or {}).get("wriveted_id"):
             wriveted_user = crud.user.get(session, user_id)
             logger.info(
                 "Found wriveted user id in Stripe Customer metadata", user=wriveted_user
@@ -1931,7 +1934,7 @@ def _handle_subscription_updated(
 
         # check customer metadata for a wriveted user id
         # (this is stored upon the first successful checkout)
-        if user_id := stripe_customer["metadata"].get("wriveted_id"):
+        if user_id := (_sget(stripe_customer, "metadata") or {}).get("wriveted_id"):
             wriveted_user = crud.user.get(session, user_id)
             logger.info(
                 "Found wriveted user id in Stripe Customer metadata", user=wriveted_user

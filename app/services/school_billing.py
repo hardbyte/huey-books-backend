@@ -38,6 +38,7 @@ from app.services.school_billing_status import (
     resolve_school_billing_status,
     select_school_price_id,
 )
+from app.services.stripe_fields import stripe_field
 
 logger = get_logger()
 settings = get_settings()
@@ -563,7 +564,7 @@ async def create_school_invoice_subscription(
             expand=["latest_invoice"],
             idempotency_key=f"{attempt.id}:invoice-subscription",
         )
-        latest_invoice = subscription.get("latest_invoice")
+        latest_invoice = stripe_field(subscription, "latest_invoice")
         invoice_id = (
             latest_invoice.get("id")
             if hasattr(latest_invoice, "get")
