@@ -75,18 +75,22 @@ def _mock_invoice_subscription(
     period_end=1893456000,
     collection_method="send_invoice",
 ):
-    """A MagicMock standing in for a retrieved Stripe Subscription."""
-    sub = MagicMock()
-    sub.status = status
-    sub.current_period_end = period_end
-    sub.customer = customer
-    sub.__getitem__.side_effect = lambda key: {
-        "items": {"data": [{"price": {"id": price_id}}]}
-    }[key]
-    sub.get.side_effect = lambda key, default=None: {
-        "metadata": {"wriveted_school_id": str(school_id)},
-        "collection_method": collection_method,
-    }.get(key, default)
+    """A real stripe-python v15 Subscription resource object standing in for a
+    retrieved subscription (not a MagicMock — exercises the resource-object
+    access path, which no longer supports dict-style .get())."""
+    sub = stripe.Subscription.construct_from(
+        {
+            "id": "sub_invoice",
+            "object": "subscription",
+            "status": status,
+            "current_period_end": period_end,
+            "customer": customer,
+            "collection_method": collection_method,
+            "metadata": {"wriveted_school_id": str(school_id)},
+            "items": {"data": [{"price": {"id": price_id}}]},
+        },
+        "sk_test",
+    )
     mock_sub.retrieve.return_value = sub
     return sub
 
@@ -445,12 +449,17 @@ async def test_create_invoice_subscription_grants_access_and_calls_stripe(
 
     customer_id = f"cus_{uuid4().hex}"
     mock_stripe.Customer.create.return_value = Mock(id=customer_id)
-    sub_obj = MagicMock()
-    sub_obj.id = "sub_new"
-    sub_obj.get.return_value = {
-        "id": "in_new",
-        "hosted_invoice_url": "https://pay.stripe.test/i/x",
-    }
+    sub_obj = stripe.Subscription.construct_from(
+        {
+            "id": "sub_new",
+            "object": "subscription",
+            "latest_invoice": {
+                "id": "in_new",
+                "hosted_invoice_url": "https://pay.stripe.test/i/x",
+            },
+        },
+        "sk_test",
+    )
     mock_stripe.Subscription.create.return_value = sub_obj
 
     before = datetime.utcnow()
@@ -1320,3 +1329,35 @@ def test_deactivate_school_on_non_payment_leaves_paying_school(session, test_sch
         select(School).where(School.wriveted_identifier == wid)
     ).scalar_one()
     assert refreshed.state == SchoolState.ACTIVE
+
+
+@patch("app.services.stripe_events.StripeCustomer")
+def test_extract_handles_retrieved_customer_resource_object(mock_customer, session):
+    """Regression: a Customer fetched via retrieve() is a stripe-python v15
+    resource object, which no longer supports dict-style .get(). Extracting the
+    user/customer from an event that resolves the customer via retrieve() must
+    not raise AttributeError (this crashed prod on a non-Huey invoice.deleted).
+    """
+    from app.services.stripe_events import _extract_user_and_customer_from_stripe_object
+
+    mock_customer.retrieve.return_value = stripe.Customer.construct_from(
+        {
+            "id": "cus_extract",
+            "object": "customer",
+            "email": "someone@example.com",
+            "metadata": {},
+        },
+        "sk_test",
+    )
+
+    wriveted_user, school, stripe_customer = (
+        _extract_user_and_customer_from_stripe_object(
+            session, {"customer": "cus_extract", "object": "invoice"}, "invoice"
+        )
+    )
+
+    # Empty metadata / no client_reference_id → nothing to resolve; the point is
+    # it read stripe_customer.get("metadata") without raising on the v15 object.
+    assert wriveted_user is None
+    assert school is None
+    assert stripe_customer is not None
