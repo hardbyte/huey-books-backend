@@ -8,11 +8,19 @@ updates:
     # Check for updates once a week
     schedule:
       interval: "weekly"
+    # Batch routine minor/patch bumps into one PR; majors stay separate so a
+    # breaking change gets its own review.
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
   # Maintain dependencies for GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]
   # Enable version updates for Docker
   - package-ecosystem: "docker"
     # Look for a `Dockerfile` in the `root` directory
@@ -20,3 +28,6 @@ updates:
     # Check for updates once a week
     schedule:
       interval: "weekly"
+    groups:
+      docker-minor-patch:
+        update-types: ["minor", "patch"]
