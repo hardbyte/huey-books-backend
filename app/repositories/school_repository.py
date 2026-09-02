@@ -195,7 +195,9 @@ class SchoolRepositoryImpl(SchoolRepository):
             .where(School.wriveted_identifier == wriveted_id)
             .options(selectinload(School.admins))
             .options(selectinload(School.country))
-            .options(selectinload(School.subscription))
+            .options(
+                selectinload(School.subscription).selectinload(Subscription.product)
+            )
             .options(selectinload(School.booklists))
             .options(selectinload(School.collection))
         )
