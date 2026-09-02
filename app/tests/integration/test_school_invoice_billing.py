@@ -390,6 +390,54 @@ async def test_lapse_sweep_expires_invoice_pending_grant(async_session):
     assert result["lapsed"] >= 1
 
 
+@pytest.mark.asyncio
+async def test_aget_school_eager_loads_subscription_product(async_session):
+    """Regression: serializing a school on an invoice_pending comp used to 500
+    with MissingGreenlet because ``subscription.product`` was lazy-loaded in the
+    async request. ``aget_by_wriveted_id_or_404`` must eager-load the product."""
+    from sqlalchemy import inspect as sa_inspect
+
+    await async_session.merge(
+        Product(id=INVOICE_PENDING_PRODUCT_ID, name="Invoice pending")
+    )
+    await async_session.flush()
+
+    school = School(
+        name=f"Eager Product {uuid4().hex[:8]}",
+        wriveted_identifier=uuid4(),
+        state=SchoolState.ACTIVE,
+    )
+    async_session.add(school)
+    await async_session.flush()
+    async_session.add(
+        Subscription(
+            id=invoice_pending_grant_id(school.wriveted_identifier),
+            school_id=school.wriveted_identifier,
+            type=SubscriptionType.SCHOOL,
+            stripe_customer_id="",
+            is_active=True,
+            expiration=datetime.utcnow() + timedelta(days=30),
+            product_id=INVOICE_PENDING_PRODUCT_ID,
+            info={"source": INVOICE_PENDING_GRANT_SOURCE},
+        )
+    )
+    await async_session.commit()
+    # Drop identity-map copies so the fetch must satisfy .product from its own
+    # eager-load options, not from objects already cached in this session.
+    async_session.expunge_all()
+
+    fetched = await school_repository.aget_by_wriveted_id_or_404(
+        db=async_session, wriveted_id=school.wriveted_identifier
+    )
+
+    assert "subscription" not in sa_inspect(fetched).unloaded
+    subscription = fetched.subscription
+    assert subscription is not None
+    # The crux: product is already loaded, so no lazy IO happens on access.
+    assert "product" not in sa_inspect(subscription).unloaded
+    assert subscription.product.id == INVOICE_PENDING_PRODUCT_ID
+
+
 # --------------------------------------------------------------------------- #
 # create_school_invoice_subscription service
 # --------------------------------------------------------------------------- #
