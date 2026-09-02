@@ -53,10 +53,13 @@ update_collections_function = PGFunction(
 refresh_search_view_v1_function = PGFunction(
     schema="public",
     signature="refresh_search_view_v1_function()",
-    definition="""returns trigger LANGUAGE plpgsql
+    # SECURITY DEFINER: only an MV's owner may REFRESH it, and the MV is owned by
+    # the migration role, not the cloudrun runtime role. The body runs a fixed,
+    # fully-qualified statement, so definer rights carry no injection surface.
+    definition="""returns trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
       AS $function$
         BEGIN
-        REFRESH MATERIALIZED VIEW search_view_v1;
+        REFRESH MATERIALIZED VIEW public.search_view_v1;
         RETURN NEW;
       END;
       $function$
@@ -66,7 +69,10 @@ refresh_search_view_v1_function = PGFunction(
 refresh_recommendable_editions_function = PGFunction(
     schema="public",
     signature="refresh_recommendable_editions_function()",
-    definition="""returns void LANGUAGE plpgsql
+    # SECURITY DEFINER so the cloudrun runtime role can trigger the refresh: only
+    # the MV owner (the migration role) may REFRESH, and the body is a fixed,
+    # fully-qualified statement, so definer rights carry no injection surface.
+    definition="""returns void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
       AS $function$
         BEGIN
         -- CONCURRENTLY avoids an ACCESS EXCLUSIVE lock so recommendation reads are
@@ -80,10 +86,12 @@ refresh_recommendable_editions_function = PGFunction(
 refresh_work_collection_frequency_view_function = PGFunction(
     schema="public",
     signature="refresh_work_collection_frequency_view_function()",
-    definition="""returns trigger LANGUAGE plpgsql
+    # SECURITY DEFINER: see refresh_recommendable_editions_function — the runtime
+    # role isn't the MV owner, and the body is a fixed, fully-qualified statement.
+    definition="""returns trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
       AS $function$
         BEGIN
-        REFRESH MATERIALIZED VIEW work_collection_frequency;
+        REFRESH MATERIALIZED VIEW public.work_collection_frequency;
         RETURN NEW;
       END;
       $function$
