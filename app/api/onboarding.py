@@ -15,14 +15,11 @@ from app.config import get_settings
 from app.models import SchoolState
 from app.models.user import User
 from app.repositories.event_repository import event_repository
-from app.schemas.school import normalize_school_info
-from app.services.background_tasks import queue_background_task
 from app.services.email_notification import (
     EmailType,
     send_email_reliable,
     trigger_email_delivery_async,
 )
-from app.services.experiments import get_experiments
 from app.services.onboarding_service import (
     OnboardingSchoolAmbiguous,
     OnboardingSchoolNotClaimable,
