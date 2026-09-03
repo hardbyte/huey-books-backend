@@ -69,7 +69,8 @@ async def test_authorization_code_happy_path(session, async_session):
     )
     assert result["token_type"] == "Bearer"
     claims = tokens.decode_access_token(result["access_token"])
-    assert claims["sub"] == str(user.id)
+    assert claims["uid"] == str(user.id)
+    assert str(user.id) in claims["sub"].lower()
     assert claims["school_id"] == SCHOOL
     assert "catalogue:read" in claims["scope"]
     assert result["refresh_token"]

@@ -44,7 +44,8 @@ def test_mint_and_verify_roundtrip():
     token = _mint()
     claims = tokens.decode_access_token(token)
     settings = get_settings()
-    assert claims["sub"] == "user-1"
+    assert claims["uid"] == "user-1"
+    assert claims["sub"] == "Wriveted:User-Account:user-1"
     assert claims["school_id"] == "school-A"
     assert claims["grant_id"] == "grant-1"
     assert claims["scope"] == "catalogue:read books:label"

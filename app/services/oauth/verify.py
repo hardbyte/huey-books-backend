@@ -31,8 +31,12 @@ LEGACY_KID = "legacy-hs256"
 CLOCK_LEEWAY_SECONDS = 60
 
 
-class TokenError(Exception):
-    """Verification failed — malformed, wrong key, expired, wrong aud/iss/typ."""
+class TokenError(JWTError):
+    """Verification failed — malformed, wrong key, expired, wrong aud/iss/typ.
+
+    Subclasses jose's JWTError so existing ``except jwt.JWTError`` handlers in the
+    auth pipeline treat an OAuth-token failure the same as any invalid token.
+    """
 
 
 @dataclass(frozen=True)

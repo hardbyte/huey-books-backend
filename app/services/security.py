@@ -11,8 +11,21 @@ ALGORITHM = "HS256"
 
 def get_raw_payload_from_access_token(token) -> dict[str, Any]:
     settings = get_settings()
-    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-    return payload
+    try:
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.JWTError:
+        # Only OAuth (RS256) tokens carry a kid; legacy tokens do not. Route just
+        # those to the RS256 verifier and otherwise re-raise, so expired/invalid
+        # legacy tokens are rejected exactly as before (no leeway change).
+        try:
+            header = jwt.get_unverified_header(token)
+        except jwt.JWTError:
+            raise
+        if "kid" not in header:
+            raise
+        from app.services.oauth import verify
+
+        return verify.verify_token(token)
 
 
 class TokenPayload(BaseModel):

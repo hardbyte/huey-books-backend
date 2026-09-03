@@ -57,7 +57,10 @@ def mint_access_token(
     claims = {
         "iss": settings.OAUTH_ISSUER,
         "aud": settings.OAUTH_API_AUDIENCE,
-        "sub": str(user_id),
+        # Subject in the service's canonical form so the existing auth pipeline
+        # resolves the user; get_active_principals then scopes the principals.
+        "sub": f"Wriveted:User-Account:{user_id}",
+        "uid": str(user_id),
         "iat": now,
         "exp": now + datetime.timedelta(seconds=ttl),
         "jti": uuid.uuid4().hex,

@@ -218,11 +218,31 @@ async def get_current_active_superuser(
     return current_user
 
 
+async def get_optional_oauth_claims(
+    token: Optional[str] = Depends(get_optional_auth_header_data),
+) -> Optional[dict]:
+    """Verified claims of an OAuth (typ=oauth) access token, else None.
+
+    Uses the oauth verifier (kid-dispatched, issuer/audience/typ enforced) so a
+    legacy or forged token never returns oauth claims here.
+    """
+    if token is None:
+        return None
+    from app.services.oauth import tokens as oauth_tokens
+
+    try:
+        return oauth_tokens.decode_access_token(token)
+    except jwt.JWTError:
+        return None
+
+
 async def get_active_principals(
     maybe_user: Optional[User] = Depends(get_user_from_valid_token),
     maybe_service_account: Optional[ServiceAccount] = Depends(
         get_optional_service_account
     ),
+    oauth_claims: Optional[dict] = Depends(get_optional_oauth_claims),
+    db: Session = Depends(get_session),
 ):
     """
     RBAC Access Control using https://github.com/holgi/fastapi-permissions
@@ -258,6 +278,34 @@ async def get_active_principals(
     - batch
     - share
     """
+
+    # An OAuth token is confined to its granted school and scopes, regardless of
+    # the user's wider authority (least privilege; cross-school is impossible).
+    if (
+        oauth_claims is not None
+        and maybe_user is not None
+        and maybe_user.is_active
+        and str(maybe_user.id) == oauth_claims.get("uid")
+    ):
+        from sqlalchemy import select
+
+        from app.models.school import School
+        from app.services.oauth.authz import build_oauth_principals
+
+        school_int = db.execute(
+            select(School.id).where(
+                School.wriveted_identifier == oauth_claims["school_id"]
+            )
+        ).scalar_one_or_none()
+        if school_int is None:
+            return [Everyone]
+        real = set(await maybe_user.get_principals())
+        return build_oauth_principals(
+            maybe_user.id,
+            real,
+            school_int,
+            set((oauth_claims.get("scope") or "").split()),
+        )
 
     principals = [Everyone]
 
