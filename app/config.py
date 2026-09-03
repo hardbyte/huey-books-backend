@@ -268,6 +268,10 @@ class Settings(BaseSettings):
     OAUTH_PRIVATE_KEY_PEM: str = ""
     OAUTH_ACCESS_TOKEN_TTL_SECONDS: int = 30 * 60
     OAUTH_REFRESH_TOKEN_TTL_SECONDS: int = 60 * 60 * 24 * 30
+    # The single confidential client permitted at the token endpoint — the MCP
+    # OAuth proxy. Its secret MUST be set in prod (empty disables the flow).
+    OAUTH_MCP_CLIENT_ID: str = "mcp-proxy"
+    OAUTH_MCP_CLIENT_SECRET: str = ""
 
     class LoggingLevel(str, enum.Enum):
         DEBUG = "DEBUG"

@@ -23,6 +23,7 @@ from app.api.illustrators import router as illustrator_router
 from app.api.invitations import router as invitations_router
 from app.api.kpis import router as kpis_router
 from app.api.labelset import router as labelset_router
+from app.api.oauth import token_router as oauth_token_router
 from app.api.onboarding import router as onboarding_router
 from app.api.recommendations import router as recommendations_router
 from app.api.reviews import router as reviews_router
@@ -53,6 +54,7 @@ api_router.include_router(
 api_router.include_router(cms_content_router, prefix="/cms")  # Admin-only CMS endpoints
 api_router.include_router(collections_router)
 api_router.include_router(commerce_router)
+api_router.include_router(oauth_token_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(broadcast_router)
 api_router.include_router(broadcast_router_public)
