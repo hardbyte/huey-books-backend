@@ -336,5 +336,5 @@ def import_from_isbn_list() -> str:
    metadata by Huey Books shortly after import, and can then be labelled."""
 
 
-# ASGI app to mount on the FastAPI application (see app/main.py).
-http_app = mcp.http_app(path="/")
+# Served at the root of the MCP host (see app/main.py host routing).
+http_app = mcp.http_app(path="/mcp")

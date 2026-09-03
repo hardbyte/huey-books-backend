@@ -77,4 +77,4 @@ USER 1000
 # exec makes uvicorn PID 1 for signal handling; an import/boot failure exits
 # non-zero so the revision never goes healthy instead of serving a broken app.
 ENTRYPOINT ["sh", "-c", "exec uvicorn \"$@\" --host 0.0.0.0 --port \"${PORT:-8080}\"", "sh"]
-CMD ["app.main:app"]
+CMD ["app.main:asgi_app"]

@@ -59,21 +59,6 @@ init_logging(settings)
 logger = get_logger()
 logger.info("Starting Wriveted API")
 
-# The mounted MCP needs its own session-manager lifespan entered too.
-if settings.MCP_ENABLED:
-    from contextlib import asynccontextmanager
-
-    from app.mcp.server import http_app as mcp_http_app
-
-    _api_lifespan = lifespan
-
-    @asynccontextmanager
-    async def lifespan(app):  # noqa: F811
-        async with _api_lifespan(app):
-            async with mcp_http_app.lifespan(app):
-                yield
-
-
 app = FastAPI(
     title="Wriveted API",
     description=api_docs,
@@ -83,41 +68,6 @@ app = FastAPI(
     lifespan=lifespan,
     # version=metadata.version("wriveted-api"),
 )
-
-if settings.MCP_ENABLED:
-    # RFC 9728 PRM lives at the origin root, but the sub-app only serves it under
-    # /mcp; alias it (and the RFC 8414 AS-metadata root form) here.
-    _mcp_base = settings.MCP_BASE_URL.rstrip("/")
-
-    @app.get("/.well-known/oauth-protected-resource/mcp")
-    @app.get("/.well-known/oauth-protected-resource/mcp/")
-    async def mcp_protected_resource_metadata():
-        return {
-            # No trailing slash: must equal the URL the client dialed.
-            "resource": _mcp_base,
-            "authorization_servers": [_mcp_base],
-            "scopes_supported": [],
-            "bearer_methods_supported": ["header"],
-        }
-
-    @app.get("/.well-known/oauth-authorization-server/mcp")
-    async def mcp_as_metadata_alias():
-        return RedirectResponse(f"{_mcp_base}/.well-known/oauth-authorization-server")
-
-    app.mount("/mcp", mcp_http_app)
-
-    # Serve /mcp without the 307→/mcp/ redirect, which strips the Authorization
-    # header on some clients. Pure-ASGI so the MCP SSE stream isn't buffered.
-    class _McpSlashRewrite:
-        def __init__(self, app):
-            self.app = app
-
-        async def __call__(self, scope, receive, send):
-            if scope["type"] == "http" and scope.get("path") == "/mcp":
-                scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
-            await self.app(scope, receive, send)
-
-    app.add_middleware(_McpSlashRewrite)
 
 init_tracing(app, settings)
 
@@ -209,3 +159,31 @@ async def redirect_old_docs_route():
     Redirects to the OpenAPI documentation for the current version
     """
     return RedirectResponse("/v1/docs", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+# Production entrypoint. When the MCP is enabled it is served at the ROOT of its
+# own host (settings.MCP_HOST) so FastMCP serves the RFC 9728 metadata natively,
+# with no subpath redirect or aliasing; every other host falls through to the API.
+if settings.MCP_ENABLED and settings.MCP_HOST:
+    from contextlib import asynccontextmanager
+
+    from starlette.applications import Starlette
+    from starlette.routing import Host, Mount
+
+    from app.mcp.server import http_app as mcp_host_app
+
+    @asynccontextmanager
+    async def _combined_lifespan(_):
+        async with app.router.lifespan_context(app):
+            async with mcp_host_app.lifespan(mcp_host_app):
+                yield
+
+    asgi_app = Starlette(
+        lifespan=_combined_lifespan,
+        routes=[
+            Host(settings.MCP_HOST, app=mcp_host_app),
+            Mount("/", app=app),
+        ],
+    )
+else:
+    asgi_app = app
