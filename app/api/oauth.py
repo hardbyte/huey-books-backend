@@ -187,7 +187,8 @@ async def oauth_authorize(
     if school_int is None:
         raise HTTPException(status_code=404, detail="School not found")
     principals = set(await current_user.get_principals())
-    if (
+    is_wriveted_admin = "role:admin" in principals
+    if not is_wriveted_admin and (
         f"schooladmin:{school_int}" not in principals
         and f"educator:{school_int}" not in principals
     ):

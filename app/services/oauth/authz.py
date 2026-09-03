@@ -33,11 +33,14 @@ def build_oauth_principals(
     write = bool(scopes & _WRITE_SCOPES)
     educator = f"educator:{school_id_int}"
     schooladmin = f"schooladmin:{school_id_int}"
+    # A Wriveted admin may act at any school; still confined to the ONE granted
+    # school here so an OAuth token can never span schools.
+    is_admin = "role:admin" in real_principals
     # Read access to the granted school (only if the user actually holds it).
-    if educator in real_principals:
+    if educator in real_principals or is_admin:
         scoped.append(educator)
     # Full (write) access to the granted school only when a write scope is present.
-    if schooladmin in real_principals and write:
+    if (schooladmin in real_principals or is_admin) and write:
         scoped.append(schooladmin)
 
     return scoped

@@ -35,3 +35,19 @@ def test_no_membership_at_granted_school_grants_no_school_principal():
     # Global catalogue-read roles still carried.
     assert "role:reader" in p and "role:educator" in p
     assert f"user:{USER}" in p
+
+
+def test_wriveted_admin_granted_any_school_confined_to_that_school():
+    admin = {"role:admin", f"user:{USER}"}
+    p = build_oauth_principals(USER, admin, 99, {"books:label", "catalogue:read"})
+    # Admin gets full access at the granted school even without explicit membership.
+    assert "schooladmin:99" in p and "educator:99" in p
+    # But is still confined to that one school.
+    assert "schooladmin:12" not in p and "educator:12" not in p
+
+
+def test_wriveted_admin_read_only_scope_drops_write():
+    admin = {"role:admin", f"user:{USER}"}
+    p = build_oauth_principals(USER, admin, 99, {"catalogue:read"})
+    assert "educator:99" in p
+    assert "schooladmin:99" not in p
