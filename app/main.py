@@ -106,6 +106,19 @@ if settings.MCP_ENABLED:
 
     app.mount("/mcp", mcp_http_app)
 
+    # Serve /mcp without the 307→/mcp/ redirect, which strips the Authorization
+    # header on some clients. Pure-ASGI so the MCP SSE stream isn't buffered.
+    class _McpSlashRewrite:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http" and scope.get("path") == "/mcp":
+                scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
+            await self.app(scope, receive, send)
+
+    app.add_middleware(_McpSlashRewrite)
+
 init_tracing(app, settings)
 
 
