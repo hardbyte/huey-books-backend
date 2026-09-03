@@ -59,6 +59,22 @@ init_logging(settings)
 logger = get_logger()
 logger.info("Starting Wriveted API")
 
+# The mounted MCP server (streamable HTTP) runs its own session-manager lifespan,
+# which must be entered alongside the API's. Nest both under one lifespan.
+if settings.MCP_ENABLED:
+    from contextlib import asynccontextmanager
+
+    from app.mcp.server import http_app as mcp_http_app
+
+    _api_lifespan = lifespan
+
+    @asynccontextmanager
+    async def lifespan(app):  # noqa: F811
+        async with _api_lifespan(app):
+            async with mcp_http_app.lifespan(app):
+                yield
+
+
 app = FastAPI(
     title="Wriveted API",
     description=api_docs,
@@ -68,6 +84,9 @@ app = FastAPI(
     lifespan=lifespan,
     # version=metadata.version("wriveted-api"),
 )
+
+if settings.MCP_ENABLED:
+    app.mount("/mcp", mcp_http_app)
 
 init_tracing(app, settings)
 
