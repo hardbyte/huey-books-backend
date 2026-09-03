@@ -34,6 +34,18 @@ class MCPContext:
     school_wid: str
 
 
+_WRITE_SCOPES = {"books:import", "books:label"}
+
+
+def require_write_scope(ctx: "MCPContext", scope: str) -> None:
+    """Fail closed unless the token carries the write scope this tool needs."""
+    if scope not in ctx.scopes:
+        raise ToolError(
+            f"This action needs the '{scope}' permission, which this connection "
+            "was not granted. Re-authorise the tool with write access."
+        )
+
+
 @asynccontextmanager
 async def mcp_context():
     """Yield the caller's DB session, user, granted school and confined principals."""

@@ -9,19 +9,45 @@ from __future__ import annotations
 
 from fastapi import BackgroundTasks
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from mcp.types import Icon
+from sqlalchemy import select
+from starlette.concurrency import run_in_threadpool
 
 from app.api.common.pagination import PaginatedQueryParams
 from app.api.recommendations import get_recommendations_with_fallback
 from app.config import get_settings
+from app.db.session import get_session_maker
 from app.mcp._logo import LOGO_DATA_URI
-from app.mcp.context import mcp_context
+from app.mcp.context import mcp_context, require_write_scope
 from app.mcp.vocabulary import vocabulary
+from app.models.collection import Collection
+from app.repositories.labelset_repository import labelset_repository
 from app.repositories.school_repository import school_repository
+from app.repositories.work_repository import work_repository
+from app.schemas.labelset import LabelSetCreateIn
 from app.schemas.recommendations import HueyRecommendationFilter
+from app.services.collection_service import CollectionService
+from app.services.collections import add_editions_to_collection_by_isbn
+from app.services.recommendations import enqueue_debounced_mv_refresh
 from app.services.search import book_search
 
 settings = get_settings()
+
+_READONLY = getattr(settings, "MCP_READONLY", False)
+
+
+def _collection_item_brief(item) -> dict:
+    """Compact view of a held item, with the cover of the exact edition held."""
+    edition = item.edition
+    brief = {
+        "isbn": getattr(edition, "isbn", None) or item.edition_isbn,
+        "title": getattr(edition, "title", None)
+        or getattr(getattr(item, "work", None), "title", None),
+        "cover_url": getattr(edition, "cover_url", None),
+        "copies_total": item.copies_total,
+    }
+    return {k: v for k, v in brief.items() if v is not None}
 
 
 def _build_auth():
@@ -134,6 +160,131 @@ async def get_recommendations(
             "count": len(books),
             "books": [b.model_dump(mode="json") for b in books],
         }
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+async def get_book(work_id: int) -> dict:
+    """Get a book's details and its current labels (hues, age, reading ability)."""
+    async with mcp_context():
+        pass
+
+    def _get() -> dict:
+        from app.schemas.work import WorkDetail
+
+        with get_session_maker()() as db:
+            work = work_repository.get_or_404(db, work_id)
+            return WorkDetail.model_validate(work).model_dump(mode="json")
+
+    return await run_in_threadpool(_get)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+async def get_collection(limit: int = 20, offset: int = 0) -> dict:
+    """List books in this school's collection, with holding totals."""
+    async with mcp_context() as ctx:
+        school_id = ctx.school.id
+
+    def _list() -> dict:
+        with get_session_maker()() as db:
+            collection = db.execute(
+                select(Collection).where(Collection.school_id == school_id)
+            ).scalar_one_or_none()
+            if collection is None:
+                return {"error": "This school has no catalogue uploaded yet."}
+            count, items = CollectionService().list_items(
+                db,
+                collection_id=collection.id,
+                query=None,
+                reader_id=None,
+                read_status=None,
+                skip=offset,
+                limit=min(limit, 50),
+            )
+            return {
+                "total": count,
+                "items": [_collection_item_brief(i) for i in items],
+            }
+
+    return await run_in_threadpool(_list)
+
+
+if not _READONLY:
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    async def import_books(isbns: list[str]) -> dict:
+        """Add books to this school's collection by ISBN (catalogue upload). Unknown
+        books are created automatically and enriched by Huey Books afterwards.
+        Confirm the list with the librarian before calling."""
+        if len(isbns) > 200:
+            raise ToolError("Too many ISBNs in one import (max 200); split the list.")
+        async with mcp_context() as ctx:
+            require_write_scope(ctx, "books:import")
+            collection = (
+                await ctx.db.execute(
+                    select(Collection).where(Collection.school_id == ctx.school.id)
+                )
+            ).scalar_one_or_none()
+            if collection is None:
+                # First upload for this school: start its catalogue.
+                collection = Collection(name=ctx.school.name, school_id=ctx.school.id)
+                ctx.db.add(collection)
+                await ctx.db.flush()
+            from app.schemas.collection import CollectionItemCreateIn
+
+            await add_editions_to_collection_by_isbn(
+                ctx.db,
+                collection_data=[CollectionItemCreateIn(edition_isbn=i) for i in isbns],
+                collection=collection,
+                account=ctx.user,
+            )
+            return {
+                "requested": len(isbns),
+                "note": "Editions added; metadata enrichment follows shortly.",
+            }
+
+    @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
+    async def label_book(
+        work_id: int,
+        primary_hue: str,
+        min_age: int,
+        max_age: int,
+        reading_ability: str,
+        summary: str | None = None,
+        secondary_hue: str | None = None,
+    ) -> dict:
+        """Set a book's labels: primary (and optional secondary) hue, age range,
+        reading-ability tier and a short summary. Overwrites existing labels, so
+        confirm the proposed labelset with the librarian first. Use valid keys from
+        list_label_vocabulary. Returns the updated labels."""
+        async with mcp_context() as ctx:
+            require_write_scope(ctx, "books:label")
+
+        # EDUCATOR provenance: a school staff member applies these (human in the
+        # loop), not Wriveted staff nor an automated classifier.
+        update = LabelSetCreateIn(
+            hue_primary_key=primary_hue,
+            hue_secondary_key=secondary_hue,
+            min_age=min_age,
+            max_age=max_age,
+            reading_ability_keys=[reading_ability],
+            huey_summary=summary,
+            hue_origin="EDUCATOR",
+            age_origin="EDUCATOR",
+            reading_ability_origin="EDUCATOR",
+            summary_origin="EDUCATOR",
+        )
+
+        def _label() -> dict:
+            with get_session_maker()() as db:
+                work = work_repository.get_or_404(db, work_id)
+                labelset = labelset_repository.get_or_create(db, work, False)
+                labelset = labelset_repository.patch(db, labelset, update, True)
+                return labelset.get_label_dict(db)
+
+        result = await run_in_threadpool(_label)
+        # Label edits change recommendation eligibility, so refresh the MV (debounced).
+        enqueue_debounced_mv_refresh()
+        return result
 
 
 @mcp.prompt
