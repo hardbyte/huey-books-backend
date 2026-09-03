@@ -96,7 +96,9 @@ if settings.MCP_ENABLED:
     @app.get("/.well-known/oauth-protected-resource/mcp/")
     async def mcp_protected_resource_metadata():
         return {
-            "resource": f"{_mcp_base}/",
+            # Canonical resource id must equal the URL the client dialed
+            # (no trailing slash), or strict clients reject the metadata.
+            "resource": _mcp_base,
             "authorization_servers": [_mcp_base],
             "scopes_supported": [],
             "bearer_methods_supported": ["header"],
