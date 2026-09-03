@@ -218,36 +218,38 @@ if not _READONLY:
         """Add books to this school's collection by ISBN (catalogue upload). Unknown
         books are created automatically and enriched by Huey Books afterwards.
         Confirm the list with the librarian before calling."""
-        if len(isbns) > 200:
-            raise ToolError("Too many ISBNs in one import (max 200); split the list.")
+        if len(isbns) > 5000:
+            raise ToolError("Too many ISBNs in one import (max 5000); split the list.")
         async with mcp_context() as ctx:
             require_write_scope(ctx, "books:import")
-            collection = (
-                await ctx.db.execute(
-                    select(Collection).where(
-                        Collection.school_id == ctx.school.wriveted_identifier
-                    )
-                )
+            school_uuid = ctx.school.wriveted_identifier
+            school_name = ctx.school.name
+            user_id = ctx.user.id
+
+        from app.models.user import User
+        from app.schemas.collection import CollectionItemCreateIn
+
+        # add_editions_to_collection_by_isbn (like the collection endpoints) takes
+        # the sync Session, so run it on one rather than the async ctx.db.
+        with get_session_maker()() as db:
+            collection = db.execute(
+                select(Collection).where(Collection.school_id == school_uuid)
             ).scalar_one_or_none()
             if collection is None:
                 # First upload for this school: start its catalogue.
-                collection = Collection(
-                    name=ctx.school.name, school_id=ctx.school.wriveted_identifier
-                )
-                ctx.db.add(collection)
-                await ctx.db.flush()
-            from app.schemas.collection import CollectionItemCreateIn
-
+                collection = Collection(name=school_name, school_id=school_uuid)
+                db.add(collection)
+                db.flush()
             await add_editions_to_collection_by_isbn(
-                ctx.db,
+                db,
                 collection_data=[CollectionItemCreateIn(edition_isbn=i) for i in isbns],
                 collection=collection,
-                account=ctx.user,
+                account=db.get(User, user_id),
             )
-            return {
-                "requested": len(isbns),
-                "note": "Editions added; metadata enrichment follows shortly.",
-            }
+        return {
+            "requested": len(isbns),
+            "note": "Editions added; metadata enrichment follows shortly.",
+        }
 
     @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
     async def label_book(
