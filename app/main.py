@@ -59,8 +59,7 @@ init_logging(settings)
 logger = get_logger()
 logger.info("Starting Wriveted API")
 
-# The mounted MCP server (streamable HTTP) runs its own session-manager lifespan,
-# which must be entered alongside the API's. Nest both under one lifespan.
+# The mounted MCP needs its own session-manager lifespan entered too.
 if settings.MCP_ENABLED:
     from contextlib import asynccontextmanager
 
@@ -86,26 +85,21 @@ app = FastAPI(
 )
 
 if settings.MCP_ENABLED:
-    # RFC 9728 protected-resource metadata must live at the ORIGIN root
-    # (/.well-known/oauth-protected-resource/<resource-path>), but the mounted
-    # sub-app only serves it under /mcp. Alias it at the root path clients are
-    # directed to by the /mcp 401's WWW-Authenticate header.
+    # RFC 9728 PRM lives at the origin root, but the sub-app only serves it under
+    # /mcp; alias it (and the RFC 8414 AS-metadata root form) here.
     _mcp_base = settings.MCP_BASE_URL.rstrip("/")
 
     @app.get("/.well-known/oauth-protected-resource/mcp")
     @app.get("/.well-known/oauth-protected-resource/mcp/")
     async def mcp_protected_resource_metadata():
         return {
-            # Canonical resource id must equal the URL the client dialed
-            # (no trailing slash), or strict clients reject the metadata.
+            # No trailing slash: must equal the URL the client dialed.
             "resource": _mcp_base,
             "authorization_servers": [_mcp_base],
             "scopes_supported": [],
             "bearer_methods_supported": ["header"],
         }
 
-    # Clients that derive the AS-metadata URL RFC 8414-style (well-known inserted
-    # at the root, resource path suffixed) land here; send them to the sub-app's.
     @app.get("/.well-known/oauth-authorization-server/mcp")
     async def mcp_as_metadata_alias():
         return RedirectResponse(f"{_mcp_base}/.well-known/oauth-authorization-server")

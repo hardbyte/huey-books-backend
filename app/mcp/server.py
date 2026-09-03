@@ -259,8 +259,7 @@ if not _READONLY:
         async with mcp_context() as ctx:
             require_write_scope(ctx, "books:label")
 
-        # EDUCATOR provenance: a school staff member applies these (human in the
-        # loop), not Wriveted staff nor an automated classifier.
+        # EDUCATOR provenance: applied by school staff, not Wriveted nor a classifier.
         update = LabelSetCreateIn(
             hue_primary_key=primary_hue,
             hue_secondary_key=secondary_hue,
