@@ -76,6 +76,9 @@ def _build_auth():
         token_verifier=verifier,
         base_url=settings.MCP_BASE_URL,
         forward_pkce=True,
+        # Our upstream (admin school-picker + Authorize, validated by the backend
+        # /oauth/authorize) IS the user consent, so skip the proxy's own screen.
+        require_authorization_consent="external",
     )
 
 
