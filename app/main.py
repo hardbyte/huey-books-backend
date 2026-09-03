@@ -11,6 +11,7 @@ from structlog import get_logger
 
 from app.api.analytics import router as analytics_router
 from app.api.external_api_router import api_router
+from app.api.oauth import well_known_router as oauth_well_known_router
 from app.config import get_settings
 from app.events import lifespan
 from app.logging import init_logging, init_tracing
@@ -141,6 +142,7 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(
     analytics_router, prefix=f"{settings.API_V1_STR}/cms", tags=["analytics"]
 )
+app.include_router(oauth_well_known_router)  # root-mounted: /.well-known/jwks.json
 
 
 @app.get("/")

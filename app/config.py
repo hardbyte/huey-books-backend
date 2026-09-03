@@ -258,6 +258,17 @@ class Settings(BaseSettings):
     # 2 years
     SERVICE_ACCOUNT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 365 * 2
 
+    # --- OAuth 2.1 authorization server (remote MCP auth) ---
+    # Access tokens issued to the MCP server are RS256-signed so a resource
+    # server can verify them via JWKS without holding a shared secret.
+    OAUTH_ISSUER: str = "https://api.hueybooks.com"
+    OAUTH_API_AUDIENCE: str = "https://api.hueybooks.com"
+    # PKCS8 PEM. Empty => an ephemeral key is generated at startup (fine for
+    # local/tests; MUST be set in prod so tokens survive restarts and scale-out).
+    OAUTH_PRIVATE_KEY_PEM: str = ""
+    OAUTH_ACCESS_TOKEN_TTL_SECONDS: int = 30 * 60
+    OAUTH_REFRESH_TOKEN_TTL_SECONDS: int = 60 * 60 * 24 * 30
+
     class LoggingLevel(str, enum.Enum):
         DEBUG = "DEBUG"
         INFO = "INFO"
