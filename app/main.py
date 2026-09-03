@@ -86,6 +86,28 @@ app = FastAPI(
 )
 
 if settings.MCP_ENABLED:
+    # RFC 9728 protected-resource metadata must live at the ORIGIN root
+    # (/.well-known/oauth-protected-resource/<resource-path>), but the mounted
+    # sub-app only serves it under /mcp. Alias it at the root path clients are
+    # directed to by the /mcp 401's WWW-Authenticate header.
+    _mcp_base = settings.MCP_BASE_URL.rstrip("/")
+
+    @app.get("/.well-known/oauth-protected-resource/mcp")
+    @app.get("/.well-known/oauth-protected-resource/mcp/")
+    async def mcp_protected_resource_metadata():
+        return {
+            "resource": f"{_mcp_base}/",
+            "authorization_servers": [_mcp_base],
+            "scopes_supported": [],
+            "bearer_methods_supported": ["header"],
+        }
+
+    # Clients that derive the AS-metadata URL RFC 8414-style (well-known inserted
+    # at the root, resource path suffixed) land here; send them to the sub-app's.
+    @app.get("/.well-known/oauth-authorization-server/mcp")
+    async def mcp_as_metadata_alias():
+        return RedirectResponse(f"{_mcp_base}/.well-known/oauth-authorization-server")
+
     app.mount("/mcp", mcp_http_app)
 
 init_tracing(app, settings)
