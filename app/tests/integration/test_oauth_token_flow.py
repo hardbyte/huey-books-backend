@@ -219,6 +219,68 @@ async def test_revoked_grant_rejects_rotation(session, async_session):
         await grants.rotate_refresh_token(async_session, refresh_token=first["refresh_token"], client_id=CLIENT_ID)
 
 
+def _challenge(verifier: str) -> str:
+    return tokens._b64url_no_pad(hashlib.sha256(verifier.encode()).digest())
+
+
+def test_authorize_consent_happy_path(client, test_school, admin_of_test_school_headers, monkeypatch):
+    monkeypatch.setattr(get_settings(), "OAUTH_ALLOWED_REDIRECT_URIS", ["http://localhost:9999/cb"])
+    resp = client.post(
+        "/v1/oauth/authorize",
+        headers=admin_of_test_school_headers,
+        json={
+            "client_id": "mcp-proxy",
+            "redirect_uri": "http://localhost:9999/cb",
+            "scope": "catalogue:read books:label",
+            "school_id": str(test_school.wriveted_identifier),
+            "code_challenge": _challenge("a" * 64),
+            "code_challenge_method": "S256",
+            "state": "xyz",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    url = resp.json()["redirect_url"]
+    assert url.startswith("http://localhost:9999/cb?code=")
+    assert "state=xyz" in url
+
+
+def test_authorize_rejects_unknown_school(client, admin_of_test_school_headers, monkeypatch):
+    monkeypatch.setattr(get_settings(), "OAUTH_ALLOWED_REDIRECT_URIS", ["http://localhost:9999/cb"])
+    resp = client.post(
+        "/v1/oauth/authorize",
+        headers=admin_of_test_school_headers,
+        json={
+            "client_id": "mcp-proxy",
+            "redirect_uri": "http://localhost:9999/cb",
+            "scope": "catalogue:read",
+            "school_id": "22222222-2222-2222-2222-222222222222",
+            "code_challenge": _challenge("b" * 64),
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_authorize_rejects_bad_redirect_and_scope(client, test_school, admin_of_test_school_headers, monkeypatch):
+    monkeypatch.setattr(get_settings(), "OAUTH_ALLOWED_REDIRECT_URIS", ["http://localhost:9999/cb"])
+    base = {
+        "client_id": "mcp-proxy",
+        "school_id": str(test_school.wriveted_identifier),
+        "code_challenge": _challenge("c" * 64),
+    }
+    bad_redirect = client.post(
+        "/v1/oauth/authorize",
+        headers=admin_of_test_school_headers,
+        json={**base, "redirect_uri": "https://evil.example/cb", "scope": "catalogue:read"},
+    )
+    assert bad_redirect.status_code == 400
+    bad_scope = client.post(
+        "/v1/oauth/authorize",
+        headers=admin_of_test_school_headers,
+        json={**base, "redirect_uri": "http://localhost:9999/cb", "scope": "admin:everything"},
+    )
+    assert bad_scope.status_code == 400
+
+
 def _basic(client_id, secret):
     import base64
 

@@ -285,6 +285,9 @@ class Settings(BaseSettings):
     # OAuth proxy. Its secret MUST be set in prod (empty disables the flow).
     OAUTH_MCP_CLIENT_ID: str = "mcp-proxy"
     OAUTH_MCP_CLIENT_SECRET: str = ""
+    # Exact redirect URIs the authorize endpoint will issue a code to (the MCP
+    # proxy's callback; localhost is allowed for local development).
+    OAUTH_ALLOWED_REDIRECT_URIS: list[str] = []
 
     class LoggingLevel(str, enum.Enum):
         DEBUG = "DEBUG"

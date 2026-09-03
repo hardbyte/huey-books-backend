@@ -13,14 +13,20 @@ proxy's trusted upstream authorization server.
 import base64
 import binascii
 import secrets
-from urllib.parse import unquote
+import uuid
+from urllib.parse import quote, unquote
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from sqlalchemy import select
 
 from app.api.dependencies.async_db_dep import DBSessionDep
+from app.api.dependencies.security import get_current_active_user
 from app.config import get_settings
-from app.services.oauth import grants, keys
+from app.models.school import School
+from app.models.user import User
+from app.services.oauth import grants, keys, tokens
 from app.services.oauth.grants import OAuthError
 
 # Root-mounted (NOT under /v1): JWKS lives at the origin's /.well-known path.
@@ -127,3 +133,78 @@ async def oauth_token(
         return _error(exc.error, exc.description)
 
     return JSONResponse(result, headers=_NO_STORE)
+
+
+# The consent step: the admin-UI authorize page (where the librarian is logged in
+# via Firebase) POSTs here with the chosen school + scopes; this mints the code
+# and returns where the browser should be redirected (the proxy's callback).
+authorize_router = APIRouter(prefix="/oauth", tags=["OAuth"])
+
+
+class OAuthConsentIn(BaseModel):
+    client_id: str
+    redirect_uri: str
+    scope: str
+    school_id: uuid.UUID  # the school's wriveted_identifier
+    code_challenge: str
+    code_challenge_method: str = "S256"
+    state: str | None = None
+
+
+def _redirect_uri_allowed(redirect_uri: str, allowed: list[str]) -> bool:
+    if redirect_uri in allowed:
+        return True
+    # Loopback for local development (any port).
+    return redirect_uri.startswith(("http://localhost", "http://127.0.0.1"))
+
+
+@authorize_router.post("/authorize")
+async def oauth_authorize(
+    body: OAuthConsentIn,
+    db: DBSessionDep,
+    current_user: User = Depends(get_current_active_user),
+) -> dict:
+    """Consent submission — mint an authorization code for a school the librarian
+    is a member of. Requires the librarian's own (Firebase-exchanged) session."""
+    settings = get_settings()
+    if body.client_id != settings.OAUTH_MCP_CLIENT_ID:
+        raise HTTPException(status_code=400, detail="Unknown client")
+    if not _redirect_uri_allowed(
+        body.redirect_uri, settings.OAUTH_ALLOWED_REDIRECT_URIS
+    ):
+        raise HTTPException(status_code=400, detail="redirect_uri not allowed")
+    if body.code_challenge_method != "S256" or not body.code_challenge:
+        raise HTTPException(status_code=400, detail="PKCE S256 challenge required")
+    requested = body.scope.split()
+    if not set(requested) <= set(tokens.SUPPORTED_SCOPES):
+        raise HTTPException(status_code=400, detail="Unsupported scope requested")
+
+    school_int = (
+        await db.execute(
+            select(School.id).where(School.wriveted_identifier == body.school_id)
+        )
+    ).scalar_one_or_none()
+    if school_int is None:
+        raise HTTPException(status_code=404, detail="School not found")
+    principals = set(await current_user.get_principals())
+    if (
+        f"schooladmin:{school_int}" not in principals
+        and f"educator:{school_int}" not in principals
+    ):
+        raise HTTPException(status_code=403, detail="Not a member of this school")
+
+    code = await grants.create_authorization_code(
+        db,
+        user_id=str(current_user.id),
+        school_id=str(body.school_id),
+        client_id=body.client_id,
+        redirect_uri=body.redirect_uri,
+        scopes=requested,
+        code_challenge=body.code_challenge,
+        code_challenge_method=body.code_challenge_method,
+    )
+    sep = "&" if "?" in body.redirect_uri else "?"
+    url = f"{body.redirect_uri}{sep}code={quote(code)}"
+    if body.state:
+        url += f"&state={quote(body.state)}"
+    return {"redirect_url": url}
