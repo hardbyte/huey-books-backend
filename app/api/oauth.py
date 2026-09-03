@@ -10,9 +10,12 @@ served by the MCP server via FastMCP's OAuthProxy; this backend is only the
 proxy's trusted upstream authorization server.
 """
 
+import base64
+import binascii
 import secrets
+from urllib.parse import unquote
 
-from fastapi import APIRouter, Form
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies.async_db_dep import DBSessionDep
@@ -25,30 +28,49 @@ well_known_router = APIRouter(tags=["OAuth"])
 
 
 @well_known_router.get("/.well-known/jwks.json")
-def jwks() -> dict:
+def jwks() -> JSONResponse:
     """Public keys for verifying RS256 access tokens issued by this service."""
-    return keys.jwks()
+    return JSONResponse(keys.jwks(), headers={"Cache-Control": "public, max-age=300"})
 
 
 # Mounted under the API prefix; the proxy is configured with the absolute URL.
 token_router = APIRouter(prefix="/oauth", tags=["OAuth"])
 
 _NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+_ERROR_STATUS = {"invalid_client": 401}
 
 
-def _error(error: str, description: str = "", status_code: int = 400) -> JSONResponse:
+def _error(
+    error: str, description: str = "", status_code: int | None = None
+) -> JSONResponse:
     return JSONResponse(
         {"error": error, "error_description": description},
-        status_code=status_code,
+        status_code=status_code or _ERROR_STATUS.get(error, 400),
         headers=_NO_STORE,
     )
 
 
+def _basic_auth(request: Request) -> tuple[str, str] | None:
+    """Parse client_secret_basic credentials (FastMCP's proxy default)."""
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("basic "):
+        return None
+    try:
+        decoded = base64.b64decode(header[6:]).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return None
+    client_id, sep, client_secret = decoded.partition(":")
+    if not sep:
+        return None
+    return unquote(client_id), unquote(client_secret)
+
+
 @token_router.post("/token")
 async def oauth_token(
+    request: Request,
     db: DBSessionDep,
     grant_type: str = Form(...),
-    client_id: str = Form(...),
+    client_id: str | None = Form(None),
     client_secret: str | None = Form(None),
     code: str | None = Form(None),
     redirect_uri: str | None = Form(None),
@@ -58,6 +80,14 @@ async def oauth_token(
     """OAuth 2.1 token endpoint for the MCP proxy (confidential client)."""
     settings = get_settings()
 
+    # Accept client_secret_basic (proxy default) or client_secret_post; reject a
+    # conflicting mix.
+    basic = _basic_auth(request)
+    if basic is not None:
+        if client_id is not None and (client_id, client_secret) != basic:
+            return _error("invalid_request", "conflicting client credentials")
+        client_id, client_secret = basic
+
     expected_secret = settings.OAUTH_MCP_CLIENT_SECRET
     client_ok = (
         client_id == settings.OAUTH_MCP_CLIENT_ID
@@ -66,7 +96,10 @@ async def oauth_token(
         and secrets.compare_digest(client_secret, expected_secret)
     )
     if not client_ok:
-        return _error("invalid_client", "client authentication failed", 401)
+        resp = _error("invalid_client", "client authentication failed")
+        if basic is not None:
+            resp.headers["WWW-Authenticate"] = 'Basic realm="oauth"'
+        return resp
 
     try:
         if grant_type == "authorization_code":

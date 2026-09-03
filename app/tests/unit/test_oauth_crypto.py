@@ -99,6 +99,28 @@ def test_algorithm_confusion_rejected():
         verify.verify_token(forged)
 
 
+def test_legacy_hs256_cannot_forge_oauth_typ():
+    """A holder of the legacy HS256 secret must not be able to mint a token that
+    the OAuth-aware path accepts, even by setting typ='oauth' (H3)."""
+    settings = get_settings()
+    forged = jwt.encode(
+        {"sub": "u", "typ": "oauth", "school_id": "any", "scope": "books:label"},
+        settings.SECRET_KEY,
+        algorithm="HS256",
+    )
+    # It verifies as a legacy token, but not as an oauth token.
+    assert verify.verify_token(forged)["sub"] == "u"
+    with pytest.raises(verify.TokenError):
+        tokens.decode_access_token(forged)
+
+
+def test_kid_must_be_string():
+    settings = get_settings()
+    tok = jwt.encode({"sub": "u"}, settings.SECRET_KEY, algorithm="HS256", headers={"kid": ["x"]})
+    with pytest.raises(verify.TokenError):
+        verify.verify_token(tok)
+
+
 def test_unknown_kid_rejected():
     settings = get_settings()
     tok = jwt.encode({"sub": "u"}, settings.SECRET_KEY, algorithm="HS256", headers={"kid": "nope"})

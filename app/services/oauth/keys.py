@@ -35,6 +35,18 @@ def _jwk_thumbprint(public_jwk: dict) -> str:
     return _b64url(hashlib.sha256(canonical.encode()).digest())
 
 
+def _jwk_from_public_pem(public_pem: str) -> dict:
+    public_jwk = jwk.construct(public_pem, "RS256").to_dict()
+    # jose returns bytes for n/e on some backends; normalise to str.
+    public_jwk = {
+        k: (v.decode() if isinstance(v, bytes) else v) for k, v in public_jwk.items()
+    }
+    public_jwk.update(
+        {"kid": _jwk_thumbprint(public_jwk), "alg": "RS256", "use": "sig"}
+    )
+    return public_jwk
+
+
 @lru_cache(maxsize=1)
 def _keypair() -> tuple[str, dict, str]:
     """Return (private_pem, public_jwk, kid). Cached for the process lifetime."""
@@ -43,6 +55,11 @@ def _keypair() -> tuple[str, dict, str]:
     if pem:
         private_key = serialization.load_pem_private_key(pem.encode(), password=None)
     else:
+        if not settings.OAUTH_ALLOW_EPHEMERAL_KEY:
+            raise RuntimeError(
+                "OAUTH_PRIVATE_KEY_PEM must be set (OAUTH_ALLOW_EPHEMERAL_KEY is off): "
+                "an ephemeral key breaks token verification across instances."
+            )
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         pem = private_key.private_bytes(
             serialization.Encoding.PEM,
@@ -58,14 +75,19 @@ def _keypair() -> tuple[str, dict, str]:
         )
         .decode()
     )
-    public_jwk = jwk.construct(public_pem, "RS256").to_dict()
-    # jose returns bytes for n/e on some backends; normalise to str.
-    public_jwk = {
-        k: (v.decode() if isinstance(v, bytes) else v) for k, v in public_jwk.items()
-    }
-    kid = _jwk_thumbprint(public_jwk)
-    public_jwk.update({"kid": kid, "alg": "RS256", "use": "sig"})
-    return pem, public_jwk, kid
+    public_jwk = _jwk_from_public_pem(public_pem)
+    return pem, public_jwk, public_jwk["kid"]
+
+
+@lru_cache(maxsize=1)
+def previous_public_jwks() -> list[dict]:
+    """Retired public keys still accepted during a rotation window."""
+    settings = get_settings()
+    return [
+        _jwk_from_public_pem(pem)
+        for pem in settings.OAUTH_PREVIOUS_PUBLIC_KEYS_PEM
+        if pem.strip()
+    ]
 
 
 def signing_key() -> tuple[str, str]:
@@ -79,5 +101,5 @@ def public_jwk() -> dict:
 
 
 def jwks() -> dict:
-    """The JWKS document served at the JWKS endpoint."""
-    return {"keys": [public_jwk()]}
+    """The JWKS document served at the JWKS endpoint (current + retired keys)."""
+    return {"keys": [public_jwk(), *previous_public_jwks()]}

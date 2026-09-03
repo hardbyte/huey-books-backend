@@ -266,8 +266,21 @@ class Settings(BaseSettings):
     # PKCS8 PEM. Empty => an ephemeral key is generated at startup (fine for
     # local/tests; MUST be set in prod so tokens survive restarts and scale-out).
     OAUTH_PRIVATE_KEY_PEM: str = ""
+    # Set False in prod/staging so an empty private key fails fast at startup
+    # instead of silently issuing per-instance keys that fail cross-instance.
+    OAUTH_ALLOW_EPHEMERAL_KEY: bool = True
+    # Retired public keys (PEM) still published in JWKS and accepted for
+    # verification during a key rotation, then removed once old tokens expire.
+    OAUTH_PREVIOUS_PUBLIC_KEYS_PEM: list[str] = []
     OAUTH_ACCESS_TOKEN_TTL_SECONDS: int = 30 * 60
     OAUTH_REFRESH_TOKEN_TTL_SECONDS: int = 60 * 60 * 24 * 30
+    # Absolute lifetime of a login, regardless of rotation (refresh cannot slide
+    # a session past this).
+    OAUTH_REFRESH_ABSOLUTE_TTL_SECONDS: int = 60 * 60 * 24 * 180
+    # Grace window in which presenting an already-rotated refresh token is a
+    # benign cross-instance race (issue a fresh pair) rather than theft. Outside
+    # it, reuse revokes the whole family.
+    OAUTH_REFRESH_REUSE_GRACE_SECONDS: int = 30
     # The single confidential client permitted at the token endpoint — the MCP
     # OAuth proxy. Its secret MUST be set in prod (empty disables the flow).
     OAUTH_MCP_CLIENT_ID: str = "mcp-proxy"

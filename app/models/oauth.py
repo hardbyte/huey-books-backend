@@ -34,7 +34,7 @@ class OAuthGrant(Base):
     # Space-separated consented scopes.
     scopes: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text("now()"), nullable=False
+        DateTime, server_default=text("(now() at time zone 'utc')"), nullable=False
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -72,10 +72,12 @@ class OAuthAuthorizationCode(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text("now()"), nullable=False
+        DateTime, server_default=text("(now() at time zone 'utc')"), nullable=False
     )
 
     grant: Mapped["OAuthGrant"] = relationship(back_populates="authorization_codes")
+
+    __table_args__ = (Index("ix_oauth_codes_grant_id", "grant_id"),)
 
 
 class OAuthRefreshToken(Base):
@@ -100,9 +102,12 @@ class OAuthRefreshToken(Base):
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text("now()"), nullable=False
+        DateTime, server_default=text("(now() at time zone 'utc')"), nullable=False
     )
 
     grant: Mapped["OAuthGrant"] = relationship(back_populates="refresh_tokens")
 
-    __table_args__ = (Index("ix_oauth_refresh_family", "family_id"),)
+    __table_args__ = (
+        Index("ix_oauth_refresh_family", "family_id"),
+        Index("ix_oauth_refresh_grant_id", "grant_id"),
+    )

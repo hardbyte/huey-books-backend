@@ -66,6 +66,18 @@ def _registry() -> dict[str, VerifyKey]:
             audience=settings.OAUTH_API_AUDIENCE,
             purpose="oauth",
         ),
+        # Retired keys still accepted during a rotation window.
+        **{
+            jwk_dict["kid"]: VerifyKey(
+                kid=jwk_dict["kid"],
+                algorithm="RS256",
+                key={"keys": [jwk_dict]},
+                issuer=settings.OAUTH_ISSUER,
+                audience=settings.OAUTH_API_AUDIENCE,
+                purpose="oauth",
+            )
+            for jwk_dict in keys.previous_public_jwks()
+        },
     }
 
 
@@ -77,6 +89,8 @@ def verify_token(token: str, *, require_typ: Optional[str] = None) -> dict:
         raise TokenError(f"malformed token header: {exc}") from exc
 
     kid = header.get("kid", LEGACY_KID)
+    if not isinstance(kid, str):
+        raise TokenError("invalid kid header")
     vkey = _registry().get(kid)
     if vkey is None:
         raise TokenError(f"unknown key id: {kid!r}")
@@ -97,8 +111,13 @@ def verify_token(token: str, *, require_typ: Optional[str] = None) -> dict:
     except JWTError as exc:
         raise TokenError(str(exc)) from exc
 
-    if require_typ is not None and claims.get("typ") != require_typ:
-        raise TokenError(
-            f"wrong token type: expected {require_typ!r}, got {claims.get('typ')!r}"
-        )
+    if require_typ is not None:
+        # Bind the required type to the key's purpose: only the RS256 OAuth key
+        # may vouch for oauth-typed claims. Otherwise a holder of the legacy
+        # HS256 secret (both services) could mint tokens with typ="oauth" and
+        # arbitrary school_id/scope that the OAuth-aware API path would honour.
+        if claims.get("typ") != require_typ or vkey.purpose != "oauth":
+            raise TokenError(
+                f"wrong token type: expected {require_typ!r} from an oauth key"
+            )
     return claims

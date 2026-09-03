@@ -26,7 +26,10 @@ def upgrade() -> None:
         sa.Column("client_id", sa.String(255), nullable=False),
         sa.Column("scopes", sa.String(1024), nullable=False, server_default=""),
         sa.Column(
-            "created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False
+            "created_at",
+            sa.DateTime(),
+            server_default=sa.text("(now() at time zone 'utc')"),
+            nullable=False,
         ),
         sa.Column("revoked_at", sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(
@@ -53,7 +56,10 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(), nullable=False),
         sa.Column("used_at", sa.DateTime(), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False
+            "created_at",
+            sa.DateTime(),
+            server_default=sa.text("(now() at time zone 'utc')"),
+            nullable=False,
         ),
         sa.ForeignKeyConstraint(
             ["grant_id"],
@@ -61,6 +67,9 @@ def upgrade() -> None:
             name="fk_oauth_code_grant",
             ondelete="CASCADE",
         ),
+    )
+    op.create_index(
+        "ix_oauth_codes_grant_id", "oauth_authorization_codes", ["grant_id"]
     )
 
     op.create_table(
@@ -74,7 +83,10 @@ def upgrade() -> None:
         sa.Column("consumed_at", sa.DateTime(), nullable=True),
         sa.Column("revoked_at", sa.DateTime(), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False
+            "created_at",
+            sa.DateTime(),
+            server_default=sa.text("(now() at time zone 'utc')"),
+            nullable=False,
         ),
         sa.ForeignKeyConstraint(
             ["grant_id"],
@@ -84,11 +96,14 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_oauth_refresh_family", "oauth_refresh_tokens", ["family_id"])
+    op.create_index("ix_oauth_refresh_grant_id", "oauth_refresh_tokens", ["grant_id"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_oauth_refresh_grant_id", table_name="oauth_refresh_tokens")
     op.drop_index("ix_oauth_refresh_family", table_name="oauth_refresh_tokens")
     op.drop_table("oauth_refresh_tokens")
+    op.drop_index("ix_oauth_codes_grant_id", table_name="oauth_authorization_codes")
     op.drop_table("oauth_authorization_codes")
     op.drop_index("ix_oauth_grants_school_id", table_name="oauth_grants")
     op.drop_index("ix_oauth_grants_user_id", table_name="oauth_grants")

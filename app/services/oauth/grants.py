@@ -1,13 +1,17 @@
 """Authorization-code and refresh-token flows over the OAuth persistence.
 
-Design points that matter for security:
+Security properties:
   * Codes and refresh tokens are looked up by SHA-256 hash; the plaintext exists
     only in the response to the client.
+  * Single-use is enforced ATOMICALLY: the consume is a conditional
+    ``UPDATE ... WHERE not-yet-used ... RETURNING``, so two concurrent redemptions
+    cannot both win (a plain SELECT-then-UPDATE would race under READ COMMITTED).
   * Authorization codes are single-use, short-lived, and bound to the exact
-    redirect_uri and a PKCE challenge.
-  * Refresh tokens rotate: each use consumes the old token and issues a new one
-    in the same family. Presenting an already-consumed token is treated as theft
-    — the whole family and its grant are revoked.
+    redirect_uri and a PKCE challenge. Redeeming a used code revokes its grant.
+  * Refresh tokens rotate. Presenting an already-rotated token inside a short
+    grace window is treated as a benign cross-instance race (a fresh pair is
+    issued); outside the window it is theft and the whole family + grant is
+    revoked. An absolute cap bounds how long rotation can extend a login.
 Errors are raised as ``OAuthError`` carrying an RFC 6749 error code.
 """
 
@@ -15,6 +19,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import re
 import secrets
 import uuid
 
@@ -26,6 +31,10 @@ from app.models.oauth import OAuthAuthorizationCode, OAuthGrant, OAuthRefreshTok
 from app.services.oauth import tokens
 
 AUTHORIZATION_CODE_TTL_SECONDS = 60
+
+# token_urlsafe alphabet; PKCE verifier per RFC 7636 section 4.1.
+_OPAQUE_RE = re.compile(r"^[A-Za-z0-9_-]{1,512}$")
+_VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 
 
 class OAuthError(Exception):
@@ -41,6 +50,12 @@ def _now() -> datetime.datetime:
 
 def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("ascii")).hexdigest()
+
+
+def _require(pattern: re.Pattern, value: str, what: str) -> None:
+    # Reject malformed/non-ASCII input before it reaches .encode("ascii").
+    if not value or not pattern.match(value):
+        raise OAuthError("invalid_grant", f"malformed {what}")
 
 
 async def create_authorization_code(
@@ -114,6 +129,23 @@ async def _issue_tokens(
     }
 
 
+async def _revoke_grant_and_tokens(db: AsyncSession, grant_id) -> None:
+    now = _now()
+    await db.execute(
+        update(OAuthGrant)
+        .where(OAuthGrant.id == grant_id, OAuthGrant.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    await db.execute(
+        update(OAuthRefreshToken)
+        .where(
+            OAuthRefreshToken.grant_id == grant_id,
+            OAuthRefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+
+
 async def exchange_authorization_code(
     db: AsyncSession,
     *,
@@ -122,97 +154,162 @@ async def exchange_authorization_code(
     code_verifier: str,
     client_id: str,
 ) -> dict:
-    row = (
+    _require(_OPAQUE_RE, code, "authorization code")
+    _require(_VERIFIER_RE, code_verifier, "code_verifier")
+    now = _now()
+    code_hash = _sha256(code)
+
+    # Atomically claim the code (single winner). Failures after this leave the
+    # code burned, which is correct.
+    claimed = (
         await db.execute(
-            select(OAuthAuthorizationCode).where(
-                OAuthAuthorizationCode.code_hash == _sha256(code)
+            update(OAuthAuthorizationCode)
+            .where(
+                OAuthAuthorizationCode.code_hash == code_hash,
+                OAuthAuthorizationCode.used_at.is_(None),
             )
+            .values(used_at=now)
+            .returning(OAuthAuthorizationCode)
         )
     ).scalar_one_or_none()
-    if row is None:
-        raise OAuthError("invalid_grant", "unknown authorization code")
-    if row.used_at is not None:
-        raise OAuthError("invalid_grant", "authorization code already used")
-    if row.expires_at < _now():
-        raise OAuthError("invalid_grant", "authorization code expired")
-    if row.redirect_uri != redirect_uri:
-        raise OAuthError("invalid_grant", "redirect_uri mismatch")
-    if not code_verifier or not tokens.verify_pkce(code_verifier, row.code_challenge):
-        raise OAuthError("invalid_grant", "PKCE verification failed")
+
+    if claimed is None:
+        # Unknown code, or an already-used one being replayed. Replay of a used
+        # code revokes any tokens issued from its grant (OAuth 2.1 4.1.2).
+        grant_id = (
+            await db.execute(
+                select(OAuthAuthorizationCode.grant_id).where(
+                    OAuthAuthorizationCode.code_hash == code_hash
+                )
+            )
+        ).scalar_one_or_none()
+        if grant_id is not None:
+            await _revoke_grant_and_tokens(db, grant_id)
+            await db.commit()
+        raise OAuthError("invalid_grant", "invalid authorization code")
+
+    # Capture before commit (expire_on_commit would otherwise trigger IO).
+    grant_id = claimed.grant_id
+    redirect = claimed.redirect_uri
+    challenge = claimed.code_challenge
+    expires_at = claimed.expires_at
+    scopes = claimed.scopes.split() if claimed.scopes else []
+    await db.commit()  # persist the burn
 
     grant = (
-        await db.execute(select(OAuthGrant).where(OAuthGrant.id == row.grant_id))
+        await db.execute(select(OAuthGrant).where(OAuthGrant.id == grant_id))
     ).scalar_one()
     if grant.revoked_at is not None:
         raise OAuthError("invalid_grant", "grant revoked")
     if grant.client_id != client_id:
         raise OAuthError("invalid_client", "client mismatch")
+    if expires_at < now:
+        raise OAuthError("invalid_grant", "authorization code expired")
+    if redirect != redirect_uri:
+        raise OAuthError("invalid_grant", "redirect_uri mismatch")
+    if not tokens.verify_pkce(code_verifier, challenge):
+        raise OAuthError("invalid_grant", "PKCE verification failed")
 
-    row.used_at = _now()
-    scopes = row.scopes.split() if row.scopes else []
     result = await _issue_tokens(db, grant, scopes, family_id=uuid.uuid4())
     await db.commit()
     return result
 
 
-async def _revoke_family(db: AsyncSession, family_id, grant_id) -> None:
-    now = _now()
-    await db.execute(
-        update(OAuthRefreshToken)
-        .where(OAuthRefreshToken.family_id == family_id)
-        .values(revoked_at=now)
-    )
-    await db.execute(
-        update(OAuthGrant).where(OAuthGrant.id == grant_id).values(revoked_at=now)
-    )
-
-
 async def rotate_refresh_token(
     db: AsyncSession, *, refresh_token: str, client_id: str
 ) -> dict:
+    _require(_OPAQUE_RE, refresh_token, "refresh token")
+    settings = get_settings()
+    now = _now()
+    token_hash = tokens.hash_refresh_token(refresh_token)
+
+    # Atomically claim an unused, unrevoked token.
+    claimed = (
+        await db.execute(
+            update(OAuthRefreshToken)
+            .where(
+                OAuthRefreshToken.token_hash == token_hash,
+                OAuthRefreshToken.consumed_at.is_(None),
+                OAuthRefreshToken.revoked_at.is_(None),
+            )
+            .values(consumed_at=now)
+            .returning(OAuthRefreshToken)
+        )
+    ).scalar_one_or_none()
+
+    if claimed is None:
+        return await _rotate_unclaimed(db, token_hash, client_id, now)
+
+    grant_id = claimed.grant_id
+    family_id = claimed.family_id
+    expires_at = claimed.expires_at
+    scopes = claimed.scopes.split() if claimed.scopes else []
+    await db.commit()
+
+    grant = (
+        await db.execute(select(OAuthGrant).where(OAuthGrant.id == grant_id))
+    ).scalar_one()
+    if grant.revoked_at is not None:
+        raise OAuthError("invalid_grant", "grant revoked")
+    if grant.client_id != client_id:
+        raise OAuthError("invalid_client", "client mismatch")
+    if expires_at < now:
+        raise OAuthError("invalid_grant", "refresh token expired")
+    # Absolute cap: rotation cannot extend a login past this.
+    absolute_end = grant.created_at + datetime.timedelta(
+        seconds=settings.OAUTH_REFRESH_ABSOLUTE_TTL_SECONDS
+    )
+    if now >= absolute_end:
+        await _revoke_grant_and_tokens(db, grant_id)
+        await db.commit()
+        raise OAuthError("invalid_grant", "login expired, re-authentication required")
+
+    result = await _issue_tokens(db, grant, scopes, family_id=family_id)
+    await db.commit()
+    return result
+
+
+async def _rotate_unclaimed(
+    db: AsyncSession, token_hash: str, client_id: str, now: datetime.datetime
+) -> dict:
+    """The token was not claimable: unknown, revoked, or already consumed."""
+    settings = get_settings()
     row = (
         await db.execute(
-            select(OAuthRefreshToken).where(
-                OAuthRefreshToken.token_hash == tokens.hash_refresh_token(refresh_token)
-            )
+            select(OAuthRefreshToken).where(OAuthRefreshToken.token_hash == token_hash)
         )
     ).scalar_one_or_none()
     if row is None:
         raise OAuthError("invalid_grant", "unknown refresh token")
+    if row.revoked_at is not None:
+        raise OAuthError("invalid_grant", "refresh token revoked")
 
     grant = (
         await db.execute(select(OAuthGrant).where(OAuthGrant.id == row.grant_id))
     ).scalar_one()
 
-    # Reuse of an already-consumed token => theft. Revoke the whole family+grant.
-    if row.consumed_at is not None:
-        await _revoke_family(db, row.family_id, grant.id)
+    # Consumed within the grace window: a benign cross-instance rotation race
+    # (FastMCP's proxy may present a just-rotated token). Issue a fresh pair in
+    # the same family without treating it as theft.
+    grace = datetime.timedelta(seconds=settings.OAUTH_REFRESH_REUSE_GRACE_SECONDS)
+    if (
+        row.consumed_at is not None
+        and now - row.consumed_at <= grace
+        and grant.revoked_at is None
+        and grant.client_id == client_id
+    ):
+        scopes = row.scopes.split() if row.scopes else []
+        result = await _issue_tokens(db, grant, scopes, family_id=row.family_id)
         await db.commit()
-        raise OAuthError("invalid_grant", "refresh token reuse detected")
-    if row.revoked_at is not None or grant.revoked_at is not None:
-        raise OAuthError("invalid_grant", "refresh token revoked")
-    if row.expires_at < _now():
-        raise OAuthError("invalid_grant", "refresh token expired")
-    if grant.client_id != client_id:
-        raise OAuthError("invalid_client", "client mismatch")
+        return result
 
-    row.consumed_at = _now()
-    scopes = row.scopes.split() if row.scopes else []
-    result = await _issue_tokens(db, grant, scopes, family_id=row.family_id)
+    # Outside the grace window: token theft. Revoke the whole family and grant.
+    await _revoke_grant_and_tokens(db, grant.id)
     await db.commit()
-    return result
+    raise OAuthError("invalid_grant", "refresh token reuse detected")
 
 
 async def revoke_grant(db: AsyncSession, grant_id) -> None:
-    """Revoke a grant and every refresh token issued under it (user-driven
-    'disconnect this app'). Access tokens die within their short TTL."""
-    now = _now()
-    await db.execute(
-        update(OAuthGrant).where(OAuthGrant.id == grant_id).values(revoked_at=now)
-    )
-    await db.execute(
-        update(OAuthRefreshToken)
-        .where(OAuthRefreshToken.grant_id == grant_id)
-        .values(revoked_at=now)
-    )
+    """User-driven 'disconnect this app'. Access tokens die within their TTL."""
+    await _revoke_grant_and_tokens(db, grant_id)
     await db.commit()
