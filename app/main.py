@@ -161,14 +161,14 @@ async def redirect_old_docs_route():
     return RedirectResponse("/v1/docs", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
-# Production entrypoint. When the MCP is enabled it is served at the ROOT of its
-# own host (settings.MCP_HOST) so FastMCP serves the RFC 9728 metadata natively,
-# with no subpath redirect or aliasing; every other host falls through to the API.
+# Production entrypoint. When enabled, the MCP is served at the ROOT of its own
+# host (settings.MCP_HOST) so FastMCP serves RFC 9728/8414 metadata natively; all
+# other hosts fall through to the API. Requests reach us via Firebase Hosting,
+# which carries the original host in X-Forwarded-Host, so dispatch on that.
 if settings.MCP_ENABLED and settings.MCP_HOST:
     from contextlib import asynccontextmanager
 
     from starlette.applications import Starlette
-    from starlette.routing import Host, Mount
 
     from app.mcp.server import http_app as mcp_host_app
 
@@ -178,12 +178,15 @@ if settings.MCP_ENABLED and settings.MCP_HOST:
             async with mcp_host_app.lifespan(mcp_host_app):
                 yield
 
-    asgi_app = Starlette(
-        lifespan=_combined_lifespan,
-        routes=[
-            Host(settings.MCP_HOST, app=mcp_host_app),
-            Mount("/", app=app),
-        ],
-    )
+    _lifespan_app = Starlette(lifespan=_combined_lifespan)
+
+    async def asgi_app(scope, receive, send):
+        if scope["type"] == "lifespan":
+            return await _lifespan_app(scope, receive, send)
+        headers = dict(scope.get("headers", []))
+        fwd = headers.get(b"x-forwarded-host", b"").decode()
+        host = fwd.split(",")[0].strip() or headers.get(b"host", b"").decode()
+        target = mcp_host_app if host.split(":")[0] == settings.MCP_HOST else app
+        await target(scope, receive, send)
 else:
     asgi_app = app
