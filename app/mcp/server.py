@@ -185,12 +185,12 @@ async def get_book(work_id: int) -> dict:
 async def get_collection(limit: int = 20, offset: int = 0) -> dict:
     """List books in this school's collection, with holding totals."""
     async with mcp_context() as ctx:
-        school_id = ctx.school.id
+        school_uuid = ctx.school.wriveted_identifier
 
     def _list() -> dict:
         with get_session_maker()() as db:
             collection = db.execute(
-                select(Collection).where(Collection.school_id == school_id)
+                select(Collection).where(Collection.school_id == school_uuid)
             ).scalar_one_or_none()
             if collection is None:
                 return {"error": "This school has no catalogue uploaded yet."}
@@ -224,12 +224,16 @@ if not _READONLY:
             require_write_scope(ctx, "books:import")
             collection = (
                 await ctx.db.execute(
-                    select(Collection).where(Collection.school_id == ctx.school.id)
+                    select(Collection).where(
+                        Collection.school_id == ctx.school.wriveted_identifier
+                    )
                 )
             ).scalar_one_or_none()
             if collection is None:
                 # First upload for this school: start its catalogue.
-                collection = Collection(name=ctx.school.name, school_id=ctx.school.id)
+                collection = Collection(
+                    name=ctx.school.name, school_id=ctx.school.wriveted_identifier
+                )
                 ctx.db.add(collection)
                 await ctx.db.flush()
             from app.schemas.collection import CollectionItemCreateIn
