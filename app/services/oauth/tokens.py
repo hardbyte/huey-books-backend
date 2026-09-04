@@ -1,9 +1,11 @@
 """Minting of OAuth access tokens, PKCE verification, refresh-token hashing.
 
-Access tokens are the per-school API credential: an RS256 JWT the resource
-server (MCP) and this API both verify via the shared ``verify.verify_token``.
-Authority is bound at consent (school_id + scopes come from the grant, never
-from a tool argument).
+Access tokens are the API credential: an RS256 JWT the resource server (MCP) and
+this API both verify via the shared ``verify.verify_token``. The token's authority
+(default school_id + scopes) is bound at consent from the grant. The MCP may
+resolve a different school per call, but only within the caller's real authority
+(a Wriveted admin may target any school; others only the granted school(s)) — see
+``app/mcp/context.py``.
 """
 
 from __future__ import annotations
