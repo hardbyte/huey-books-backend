@@ -14,18 +14,17 @@ def get_raw_payload_from_access_token(token) -> dict[str, Any]:
     try:
         return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.JWTError:
-        # Only OAuth (RS256) tokens carry a kid; legacy tokens do not. Route just
-        # those to the RS256 verifier and otherwise re-raise, so expired/invalid
-        # legacy tokens are rejected exactly as before (no leeway change).
+        # OAuth (RS256, kid-bearing) tokens are for the MCP only — it verifies and
+        # scope-confines them in-process (app/mcp). They must NOT act as general
+        # user credentials on the REST API, so reject them here rather than routing
+        # them through the legacy user pipeline (which would ignore their scopes).
         try:
             header = jwt.get_unverified_header(token)
         except jwt.JWTError:
             raise
-        if "kid" not in header:
-            raise
-        from app.services.oauth import verify
-
-        return verify.verify_token(token)
+        if "kid" in header:
+            raise jwt.JWTError("OAuth tokens are not accepted on the REST API")
+        raise
 
 
 class TokenPayload(BaseModel):

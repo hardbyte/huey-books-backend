@@ -295,6 +295,7 @@ async def _rotate_unclaimed(
     if (
         row.consumed_at is not None
         and now - row.consumed_at <= grace
+        and now <= row.expires_at  # never re-issue on an expired token
         and grant.revoked_at is None
         and grant.client_id == client_id
     ):

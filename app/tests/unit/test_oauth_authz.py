@@ -51,3 +51,25 @@ def test_wriveted_admin_read_only_scope_drops_write():
     p = build_oauth_principals(USER, admin, 99, {"catalogue:read"})
     assert "educator:99" in p
     assert "schooladmin:99" not in p
+
+
+def test_global_educator_role_gated_by_write_scope():
+    # role:educator grants All on works (a write), so a read-only token must not
+    # carry it, even though the user holds it.
+    read = build_oauth_principals(USER, REAL, 12, {"catalogue:read"})
+    assert "role:educator" not in read
+    write = build_oauth_principals(USER, REAL, 12, {"books:label"})
+    assert "role:educator" in write
+
+
+def test_role_admin_is_never_carried_but_admin_can_label():
+    admin = {"role:admin", f"user:{USER}"}
+    p = build_oauth_principals(USER, admin, 99, {"books:label"})
+    assert "role:admin" not in p  # never grant All-everywhere
+    assert "role:educator" in p  # but admins may edit/label works with write scope
+
+
+def test_read_only_never_carries_write_capable_roles():
+    p = build_oauth_principals(USER, REAL, 12, {"catalogue:read"})
+    assert "role:reader" in p  # read-only role is fine
+    assert "role:educator" not in p and "role:admin" not in p

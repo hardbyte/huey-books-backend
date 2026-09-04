@@ -16,8 +16,8 @@ from fastapi_permissions import Authenticated, Everyone
 
 # Scopes that permit writes (collection import / labelling).
 _WRITE_SCOPES = {"books:import", "books:label"}
-# Global roles that only grant shared-catalogue reads; safe to carry through.
-_CATALOGUE_READ_ROLES = ("role:reader", "role:educator")
+# Genuinely read-only global role — safe to carry for a read scope.
+_READ_ONLY_ROLES = ("role:reader",)
 
 
 def build_oauth_principals(
@@ -26,11 +26,17 @@ def build_oauth_principals(
     """Confine ``real_principals`` to the granted school, gated by ``scopes``."""
     scoped: list = [Everyone, Authenticated, f"user:{user_id}"]
 
-    for role in _CATALOGUE_READ_ROLES:
+    write = bool(scopes & _WRITE_SCOPES)
+    is_admin = "role:admin" in real_principals
+
+    for role in _READ_ONLY_ROLES:
         if role in real_principals:
             scoped.append(role)
-
-    write = bool(scopes & _WRITE_SCOPES)
+    # role:educator grants catalogue WRITES (labelling works has All on works), so
+    # only carry it for a write-scoped token; admins may label too. role:admin
+    # itself is never carried — that would be All authority everywhere.
+    if write and ("role:educator" in real_principals or is_admin):
+        scoped.append("role:educator")
     educator = f"educator:{school_id_int}"
     schooladmin = f"schooladmin:{school_id_int}"
     # A Wriveted admin may act at any school; still confined to the ONE granted
