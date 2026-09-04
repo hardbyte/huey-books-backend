@@ -3,9 +3,11 @@
 MCP tools run under FastMCP's OAuthProxy, so ``get_access_token`` yields the
 backend-issued RS256 API token (already signature/issuer/audience verified).
 Rather than re-implement authorisation, we reconstruct the same OAuth-confined
-principals ``get_active_principals`` builds for the REST API: one user, one
-granted school, coarse read/write from the token scopes. An MCP action therefore
-has identical least-privilege authority and cross-school access stays impossible.
+principals ``build_oauth_principals`` produces: one user, one resolved school,
+coarse read/write from the token scopes. Each call resolves a school (explicit
+arg > session default > token default) and re-validates live membership; a
+Wriveted admin may act for any school, everyone else only for the school(s) the
+token was granted — so an MCP action never exceeds the caller's real authority.
 """
 
 from __future__ import annotations
