@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.db.session import get_session_maker
 from app.mcp._logo import LOGO_DATA_URI
 from app.mcp.context import mcp_context, require_write_scope
+from app.mcp.observability import ToolCallLogger
 from app.mcp.vocabulary import vocabulary
 from app.models.collection import Collection
 from app.repositories.labelset_repository import labelset_repository
@@ -100,6 +101,8 @@ mcp = FastMCP(
         "will do and get their go-ahead."
     ),
 )
+
+mcp.add_middleware(ToolCallLogger())
 
 
 @mcp.tool(annotations={"readOnlyHint": True})
