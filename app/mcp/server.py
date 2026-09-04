@@ -123,7 +123,7 @@ async def whoami() -> dict:
             "name": ident.user.name,
             "type": ident.user.type.value if ident.user.type else None,
             "admin": ident.is_admin,
-            "current_school": get_session_school(str(ident.user.id))
+            "current_school": get_session_school(ident.grant_id)
             or ident.default_school,
             "schools": "any (admin)" if ident.is_admin else sorted(ident.authorized),
         }
@@ -156,7 +156,7 @@ async def use_school(school: str) -> dict:
     """Set the default school for the rest of this session, so other tools don't
     need the `school` argument. Validates you may act for it."""
     async with mcp_context(school) as ctx:
-        set_session_school(str(ctx.user.id), ctx.school_wid)
+        set_session_school(ctx.grant_id, ctx.school_wid)
         return {"default_school": {"name": ctx.school.name, "id": ctx.school_wid}}
 
 

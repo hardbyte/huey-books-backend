@@ -16,9 +16,12 @@ from fastmcp.exceptions import ToolError  # noqa: E402
 
 from app.mcp import server as mcp_server  # noqa: E402
 from app.mcp.context import (  # noqa: E402
+    get_session_school,
     require_principal,
     require_scope,
     require_write_scope,
+    resolve_school,
+    set_session_school,
 )
 from app.mcp.server import _collection_item_brief  # noqa: E402
 from app.mcp.vocabulary import vocabulary  # noqa: E402
@@ -49,6 +52,82 @@ def test_require_scope_gates_reads():
     require_scope(
         SimpleNamespace(scopes={"catalogue:read"}), "catalogue:read", "search"
     )  # no raise
+
+
+def test_resolve_school_precedence():
+    assert (
+        resolve_school(
+            requested="A",
+            session_default="B",
+            token_default="C",
+            authorized={"A"},
+            is_admin=False,
+        )
+        == "A"
+    )
+    assert (
+        resolve_school(
+            requested=None,
+            session_default="B",
+            token_default="C",
+            authorized={"B"},
+            is_admin=False,
+        )
+        == "B"
+    )
+    assert (
+        resolve_school(
+            requested=None,
+            session_default=None,
+            token_default="C",
+            authorized={"C"},
+            is_admin=False,
+        )
+        == "C"
+    )
+
+
+def test_resolve_school_non_admin_confined_to_authorized_set():
+    with pytest.raises(ToolError):
+        resolve_school(
+            requested="OTHER",
+            session_default=None,
+            token_default="C",
+            authorized={"C"},
+            is_admin=False,
+        )
+
+
+def test_resolve_school_admin_may_target_any():
+    assert (
+        resolve_school(
+            requested="ANY",
+            session_default=None,
+            token_default="C",
+            authorized=set(),
+            is_admin=True,
+        )
+        == "ANY"
+    )
+
+
+def test_resolve_school_requires_a_target():
+    with pytest.raises(ToolError):
+        resolve_school(
+            requested=None,
+            session_default=None,
+            token_default=None,
+            authorized=set(),
+            is_admin=True,
+        )
+
+
+def test_session_school_keyed_by_grant_not_user():
+    set_session_school("grant-1", "school-A")
+    set_session_school("grant-2", "school-B")
+    assert get_session_school("grant-1") == "school-A"
+    assert get_session_school("grant-2") == "school-B"
+    assert get_session_school(None) is None
 
 
 def test_require_principal_enforces_confined_membership():
