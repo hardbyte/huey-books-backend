@@ -15,7 +15,11 @@ import pytest  # noqa: E402
 from fastmcp.exceptions import ToolError  # noqa: E402
 
 from app.mcp import server as mcp_server  # noqa: E402
-from app.mcp.context import require_write_scope  # noqa: E402
+from app.mcp.context import (  # noqa: E402
+    require_principal,
+    require_scope,
+    require_write_scope,
+)
 from app.mcp.server import _collection_item_brief  # noqa: E402
 from app.mcp.vocabulary import vocabulary  # noqa: E402
 
@@ -36,6 +40,27 @@ def test_require_write_scope_denies_without_scope():
 def test_require_write_scope_allows_with_scope():
     ctx = SimpleNamespace(scopes={"books:label", "catalogue:read"})
     require_write_scope(ctx, "books:label")  # no raise
+
+
+def test_require_scope_gates_reads():
+    ctx = SimpleNamespace(scopes={"offline_access"})
+    with pytest.raises(ToolError):
+        require_scope(ctx, "catalogue:read", "search")
+    require_scope(
+        SimpleNamespace(scopes={"catalogue:read"}), "catalogue:read", "search"
+    )  # no raise
+
+
+def test_require_principal_enforces_confined_membership():
+    # A plain educator (no schooladmin) is denied a schooladmin-only action.
+    ctx = SimpleNamespace(principals=["educator:12", "role:educator"])
+    with pytest.raises(ToolError):
+        require_principal(ctx, "schooladmin:12", action="import books")
+    require_principal(
+        SimpleNamespace(principals=["schooladmin:12"]),
+        "schooladmin:12",
+        action="import books",
+    )  # no raise
 
 
 def test_collection_item_brief_prefers_held_edition_cover():

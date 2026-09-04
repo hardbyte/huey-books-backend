@@ -38,13 +38,18 @@ class MCPContext:
 _WRITE_SCOPES = {"books:import", "books:label"}
 
 
-def require_write_scope(ctx: "MCPContext", scope: str) -> None:
-    """Fail closed unless the token carries the write scope this tool needs."""
+def require_scope(ctx: "MCPContext", scope: str, action: str) -> None:
+    """Fail closed unless the token carries the scope this tool needs."""
     if scope not in ctx.scopes:
         raise ToolError(
-            f"This action needs the '{scope}' permission, which this connection "
-            "was not granted. Re-authorise the tool with write access."
+            f"This connection was not granted the '{scope}' permission needed to "
+            f"{action}. Re-authorise the tool with that access."
         )
+
+
+def require_write_scope(ctx: "MCPContext", scope: str) -> None:
+    """Fail closed unless the token carries the write scope this tool needs."""
+    require_scope(ctx, scope, "make this change")
 
 
 def require_principal(ctx: "MCPContext", *principals: str, action: str) -> None:
@@ -88,6 +93,18 @@ async def mcp_context():
 
         real = set(await user.get_principals())
         principals = build_oauth_principals(user.id, real, school.id, scopes)
+        # Live membership: a token outlives its grant (refresh up to the absolute
+        # TTL), so re-check the user still belongs to the granted school on every
+        # call. build_oauth_principals only carries the school principals for a
+        # current member (or a Wriveted admin); an offboarded user has neither.
+        if (
+            f"educator:{school.id}" not in principals
+            and f"schooladmin:{school.id}" not in principals
+        ):
+            raise ToolError(
+                "You no longer have access to this school. Reconnect the tool and "
+                "choose a school you are staff at."
+            )
         yield MCPContext(
             db=db,
             user=user,

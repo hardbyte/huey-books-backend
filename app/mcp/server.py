@@ -7,7 +7,7 @@ as the REST API — see ``app/mcp/context.py`` for the OAuth-confined auth bridg
 
 from __future__ import annotations
 
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from mcp.types import Icon
@@ -19,7 +19,12 @@ from app.api.recommendations import get_recommendations_with_fallback
 from app.config import get_settings
 from app.db.session import get_session_maker
 from app.mcp._logo import LOGO_DATA_URI
-from app.mcp.context import mcp_context, require_principal, require_write_scope
+from app.mcp.context import (
+    mcp_context,
+    require_principal,
+    require_scope,
+    require_write_scope,
+)
 from app.mcp.observability import ToolCallLogger
 from app.mcp.vocabulary import vocabulary
 from app.models.collection import Collection
@@ -126,6 +131,7 @@ async def list_label_vocabulary() -> dict:
 async def search_books(query: str, limit: int = 10) -> list[dict]:
     """Search the Huey Books catalogue by title, author or keyword."""
     async with mcp_context() as ctx:
+        require_scope(ctx, "catalogue:read", "search the catalogue")
         results = await book_search(
             ctx.db,
             query_param=query,
@@ -146,6 +152,7 @@ async def get_recommendations(
     """Recommend books by hue/age/reading ability. school_only restricts to this
     school's collection. Use hue and reading-ability keys from list_label_vocabulary."""
     async with mcp_context() as ctx:
+        require_scope(ctx, "recommendations:read", "get recommendations")
         school = None
         if school_only:
             school = await school_repository.aget_by_wriveted_id_or_404(
@@ -175,8 +182,8 @@ async def get_recommendations(
 @mcp.tool(annotations={"readOnlyHint": True})
 async def get_book(work_id: int) -> dict:
     """Get a book's details and its current labels (hues, age, reading ability)."""
-    async with mcp_context():
-        pass
+    async with mcp_context() as ctx:
+        require_scope(ctx, "catalogue:read", "read a book")
 
     def _get() -> dict:
         from app.schemas.work import WorkDetail
@@ -192,6 +199,7 @@ async def get_book(work_id: int) -> dict:
 async def get_collection(limit: int = 20, offset: int = 0) -> dict:
     """List books in this school's collection, with holding totals."""
     async with mcp_context() as ctx:
+        require_scope(ctx, "catalogue:read", "read the collection")
         school_uuid = ctx.school.wriveted_identifier
 
     def _list() -> dict:
@@ -267,7 +275,11 @@ if not _READONLY:
 
             asyncio.run(_run())
 
-        await run_in_threadpool(_import)
+        try:
+            await run_in_threadpool(_import)
+        except HTTPException as exc:
+            # e.g. no valid ISBNs -> a clean tool error, not a 500.
+            raise ToolError(f"Import failed: {exc.detail}") from exc
         return {
             "requested": len(isbns),
             "note": "Editions added; metadata enrichment follows shortly.",
