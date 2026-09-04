@@ -1,9 +1,11 @@
-"""Structured logging at the MCP tool boundary: who called what, for which
-school, how long it took, and whether it succeeded."""
+"""Trace-style logging at the MCP tool boundary: bind the caller, school and a
+per-call id into structlog's contextvars so every downstream log line (services,
+repositories, the MV refresh, …) is correlated to the tool call that caused it."""
 
 from __future__ import annotations
 
 import time
+import uuid
 
 import structlog
 from fastmcp.server.dependencies import get_access_token
@@ -32,20 +34,27 @@ def _arg_summary(arguments: dict | None) -> dict:
 
 class ToolCallLogger(Middleware):
     async def on_call_tool(self, context, call_next):
-        log = logger.bind(
-            tool=getattr(context.message, "name", "?"),
-            args=_arg_summary(getattr(context.message, "arguments", None)),
-            **_caller(),
-        )
+        tool = getattr(context.message, "name", "?")
         start = time.monotonic()
-        try:
-            result = await call_next(context)
-        except Exception as exc:
-            log.warning(
-                "mcp_tool_call_failed",
+        # Bound for the duration of the call, so downstream logs inherit it (and
+        # it propagates into run_in_threadpool, which copies the context).
+        with structlog.contextvars.bound_contextvars(
+            mcp_tool=tool,
+            mcp_call_id=uuid.uuid4().hex[:12],
+            **_caller(),
+        ):
+            try:
+                result = await call_next(context)
+            except Exception as exc:
+                logger.warning(
+                    "mcp_tool_call_failed",
+                    ms=round((time.monotonic() - start) * 1000),
+                    error=str(exc),
+                )
+                raise
+            logger.info(
+                "mcp_tool_call",
                 ms=round((time.monotonic() - start) * 1000),
-                error=str(exc),
+                args=_arg_summary(getattr(context.message, "arguments", None)),
             )
-            raise
-        log.info("mcp_tool_call", ms=round((time.monotonic() - start) * 1000))
-        return result
+            return result
