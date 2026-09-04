@@ -24,11 +24,13 @@ class HueKeys(CaseInsensitiveStringEnum):
     hue06_dark_gritty = "hue06_dark_gritty"
     hue07_silly_charming = "hue07_silly_charming"
     hue08_charming_courageous = "hue08_charming_courageous"
+    hue08_charming_inspiring = "hue08_charming_inspiring"
     hue09_charming_playful = "hue09_charming_playful"
     hue10_inspiring = "hue10_inspiring"
     hue11_realistic_hope = "hue11_realistic_hope"
     hue12_funny_quirky = "hue12_funny_quirky"
     hue13_informative = "hue13_informative"
+    hue13_straightforward = "hue13_straightforward"
 
 
 class HueyRecommendationFilterBase(BaseModel):

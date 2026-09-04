@@ -21,7 +21,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import with_polymorphic
 
+from app.config import get_settings
 from app.db.session import get_async_session_maker
+from app.mcp.storage import get_mcp_storage
 from app.models.school import School
 from app.models.user import User
 from app.services.oauth.authz import build_oauth_principals
@@ -36,9 +38,6 @@ class MCPContext:
     school: School
     school_wid: str
     grant_id: str | None
-
-
-_WRITE_SCOPES = {"books:import", "books:label"}
 
 
 def require_scope(ctx: "MCPContext", scope: str, action: str) -> None:
@@ -74,23 +73,25 @@ class MCPIdentity:
     default_school: str | None
     scopes: set[str]
     grant_id: str | None
+    principals: set[str]
 
 
-# Per-connection "current school" default for use_school (a convenience; the
-# explicit `school` tool argument always works). Keyed by grant_id — one login /
-# MCP connection, stable across refreshes, distinct per client — so two of the
-# same user's connections don't retarget each other. In-memory + best-effort (not
-# shared across instances); never a security boundary (mcp_context re-validates).
-_session_school: dict[str, str] = {}
+async def set_session_school(grant_id: str | None, wid: str) -> None:
+    if not grant_id:
+        raise ToolError("Reconnect before selecting a default school.")
+    await get_mcp_storage().put(
+        grant_id,
+        {"school": wid},
+        collection="mcp-school-selection",
+        ttl=get_settings().OAUTH_REFRESH_ABSOLUTE_TTL_SECONDS,
+    )
 
 
-def set_session_school(grant_id: str, wid: str) -> None:
-    if grant_id:
-        _session_school[grant_id] = wid
-
-
-def get_session_school(grant_id: str | None) -> str | None:
-    return _session_school.get(grant_id) if grant_id else None
+async def get_session_school(grant_id: str | None) -> str | None:
+    if not grant_id:
+        return None
+    selection = await get_mcp_storage().get(grant_id, collection="mcp-school-selection")
+    return selection["school"] if selection else None
 
 
 def _claims_schools(claims: dict) -> tuple[str | None, set[str]]:
@@ -149,15 +150,16 @@ async def mcp_identity():
     default_school, authorized = _claims_schools(claims)
     async with get_async_session_maker()() as db:
         user = await _load_user(db, uid)
-        is_admin = "role:admin" in set(await user.get_principals())
+        principals = set(await user.get_principals())
         yield MCPIdentity(
             db=db,
             user=user,
-            is_admin=is_admin,
+            is_admin="role:admin" in principals,
             authorized=authorized,
             default_school=default_school,
             scopes=set((claims.get("scope") or "").split()),
             grant_id=claims.get("grant_id"),
+            principals=principals,
         )
 
 
@@ -171,27 +173,14 @@ async def mcp_context(requested_school: str | None = None):
     token was granted, and must still be a live member of the resolved school."""
     import structlog
 
-    token = get_access_token()
-    claims = getattr(token, "claims", None) or {}
-    uid = claims.get("uid")
-    grant_id = claims.get("grant_id")
-    scopes = set((claims.get("scope") or "").split())
-    default_wid, authorized = _claims_schools(claims)
-    if not uid:
-        raise ToolError("Not authenticated: token is missing its user.")
-
-    maker = get_async_session_maker()
-    async with maker() as db:
-        user = await _load_user(db, uid)
-        real = set(await user.get_principals())
-        is_admin = "role:admin" in real
-
+    async with mcp_identity() as identity:
+        db = identity.db
         target = resolve_school(
             requested=requested_school,
-            session_default=get_session_school(grant_id),
-            token_default=default_wid,
-            authorized=authorized,
-            is_admin=is_admin,
+            session_default=await get_session_school(identity.grant_id),
+            token_default=identity.default_school,
+            authorized=identity.authorized,
+            is_admin=identity.is_admin,
         )
         # Log the school actually acted on (not just the token's consent school).
         structlog.contextvars.bind_contextvars(school=target)
@@ -201,7 +190,9 @@ async def mcp_context(requested_school: str | None = None):
         if school is None:
             raise ToolError(f"Unknown school: {target}.")
 
-        principals = build_oauth_principals(user.id, real, school.id, scopes)
+        principals = build_oauth_principals(
+            identity.user.id, identity.principals, school.id, identity.scopes
+        )
         # Live membership: a token outlives its grant (refresh up to the absolute
         # TTL), so re-check the user still belongs to the resolved school on every
         # call. build_oauth_principals only carries the school principals for a
@@ -216,10 +207,10 @@ async def mcp_context(requested_school: str | None = None):
             )
         yield MCPContext(
             db=db,
-            user=user,
+            user=identity.user,
             principals=principals,
-            scopes=scopes,
+            scopes=identity.scopes,
             school=school,
             school_wid=target,
-            grant_id=grant_id,
+            grant_id=identity.grant_id,
         )

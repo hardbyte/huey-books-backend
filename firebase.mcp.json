@@ -1,0 +1,13 @@
+{
+  "hosting": {
+    "site": "hueybooks-mcp",
+    "public": "deploy/mcp-public",
+    "ignore": ["**/.*"],
+    "rewrites": [
+      {
+        "source": "**",
+        "run": { "serviceId": "wriveted-api", "region": "australia-southeast1" }
+      }
+    ]
+  }
+}

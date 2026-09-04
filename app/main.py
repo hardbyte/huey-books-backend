@@ -171,12 +171,14 @@ if settings.MCP_ENABLED and settings.MCP_HOST:
     from starlette.applications import Starlette
 
     from app.mcp.server import http_app as mcp_host_app
+    from app.mcp.storage import get_mcp_storage
 
     @asynccontextmanager
     async def _combined_lifespan(_):
         async with app.router.lifespan_context(app):
-            async with mcp_host_app.lifespan(mcp_host_app):
-                yield
+            async with get_mcp_storage().key_value:
+                async with mcp_host_app.lifespan(mcp_host_app):
+                    yield
 
     _lifespan_app = Starlette(lifespan=_combined_lifespan)
 

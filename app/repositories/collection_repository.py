@@ -116,6 +116,7 @@ class CollectionRepository(ABC):
         collection_orm_object: Collection,
         items: list[CollectionItemUpdate | CollectionItemCreateIn],
         commit: bool = True,
+        preserve_existing: bool = False,
     ):
         """Add multiple items to a collection."""
         pass
@@ -456,6 +457,7 @@ class CollectionRepositoryImpl(CollectionRepository):
         collection_orm_object: Collection,
         items: list[CollectionItemUpdate | CollectionItemCreateIn],
         commit: bool = True,
+        preserve_existing: bool = False,
     ):
         """Add multiple items to a collection."""
         item_data = [
@@ -473,23 +475,33 @@ class CollectionRepositoryImpl(CollectionRepository):
             for item in items
         ]
         stmt = pg_upsert(CollectionItem)
-        stmt = stmt.on_conflict_do_update(
-            constraint="uq_collection_items_collection_id_edition_isbn",
-            set_={
-                "copies_available": stmt.excluded.copies_available,
-                "copies_total": stmt.excluded.copies_total,
-                "info": CollectionItem.info.concat(stmt.excluded.info),
-            },
+        stmt = (
+            stmt.on_conflict_do_nothing(
+                constraint="uq_collection_items_collection_id_edition_isbn",
+            )
+            if preserve_existing
+            else stmt.on_conflict_do_update(
+                constraint="uq_collection_items_collection_id_edition_isbn",
+                set_={
+                    "copies_available": stmt.excluded.copies_available,
+                    "copies_total": stmt.excluded.copies_total,
+                    "info": CollectionItem.info.concat(stmt.excluded.info),
+                },
+            )
         )
 
         try:
-            db.execute(stmt, item_data)
+            changed_ids = (
+                db.execute(stmt.returning(CollectionItem.id), item_data).scalars().all()
+            )
         except IntegrityError as e:
             logger.warning("Integrity Error while replacing collection")
             raise e
 
         if commit:
             db.commit()
+
+        return len(changed_ids)
 
     def add_item_to_collection(
         self,

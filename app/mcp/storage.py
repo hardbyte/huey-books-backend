@@ -5,10 +5,17 @@ every Cloud Run restart, which invalidates clients' tokens."""
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from key_value.aio.stores.postgresql import PostgreSQLStore
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 
-from app.config import Settings
+from app.config import Settings, get_settings
+
+
+@lru_cache(maxsize=1)
+def get_mcp_storage():
+    return build_oauth_client_storage(get_settings())
 
 
 def build_oauth_client_storage(settings: Settings):
@@ -18,7 +25,7 @@ def build_oauth_client_storage(settings: Settings):
         "password": settings.POSTGRESQL_PASSWORD,
         "port": settings.POSTGRESQL_PORT,
         "table_name": "mcp_oauth_proxy_kv",
-        "auto_create": True,
+        "auto_create": False,
     }
     if settings.POSTGRESQL_DATABASE_SOCKET_PATH is not None:
         instance = (

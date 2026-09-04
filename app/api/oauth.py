@@ -1,10 +1,5 @@
 """OAuth authorization-server HTTP surface.
 
-Increment 2 adds the token endpoint (authorization_code + refresh_token grants,
-PKCE, rotating refresh) alongside the JWKS endpoint. The ``/oauth/authorize``
-consent+login screen (which reuses the Firebase login and a school picker) is a
-separate sub-task; it calls ``grants.create_authorization_code``.
-
 The client-facing OAuth surface (protected-resource metadata, DCR, consent) is
 served by the MCP server via FastMCP's OAuthProxy; this backend is only the
 proxy's trusted upstream authorization server.
@@ -13,12 +8,10 @@ proxy's trusted upstream authorization server.
 import base64
 import binascii
 import secrets
-import uuid
 from urllib.parse import quote, unquote, urlparse
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.dependencies.async_db_dep import DBSessionDep
@@ -26,6 +19,7 @@ from app.api.dependencies.security import get_current_active_user
 from app.config import get_settings
 from app.models.school import School
 from app.models.user import User
+from app.schemas.oauth import OAuthConsentIn
 from app.services.oauth import grants, keys, tokens
 from app.services.oauth.grants import OAuthError
 
@@ -139,16 +133,6 @@ async def oauth_token(
 # via Firebase) POSTs here with the chosen school + scopes; this mints the code
 # and returns where the browser should be redirected (the proxy's callback).
 authorize_router = APIRouter(prefix="/oauth", tags=["OAuth"])
-
-
-class OAuthConsentIn(BaseModel):
-    client_id: str
-    redirect_uri: str
-    scope: str
-    school_id: uuid.UUID  # the school's wriveted_identifier
-    code_challenge: str
-    code_challenge_method: str = "S256"
-    state: str | None = None
 
 
 def _redirect_uri_allowed(redirect_uri: str, allowed: list[str]) -> bool:
