@@ -26,15 +26,13 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True)),
         sa.Column("expires_at", sa.DateTime(timezone=True)),
     )
-    # Staging may already contain the table created by the key-value library.
+    # Adopt library-created storage without discarding existing OAuth sessions.
     table.create(op.get_bind(), checkfirst=True)
-    op.create_index(
+    sa.Index(
         "idx_mcp_oauth_proxy_kv_expires_at",
-        "mcp_oauth_proxy_kv",
-        ["expires_at"],
+        table.c.expires_at,
         postgresql_where=sa.text("expires_at IS NOT NULL"),
-        if_not_exists=True,
-    )
+    ).create(op.get_bind(), checkfirst=True)
 
 
 def downgrade() -> None:
