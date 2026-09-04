@@ -95,6 +95,8 @@ def test_all_tools_and_prompts_registered():
     prompts = {p.name for p in asyncio.run(mcp_server.mcp.list_prompts())}
     assert tools == {
         "whoami",
+        "list_my_schools",
+        "use_school",
         "list_label_vocabulary",
         "search_books",
         "get_book",

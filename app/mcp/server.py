@@ -20,14 +20,18 @@ from app.config import get_settings
 from app.db.session import get_session_maker
 from app.mcp._logo import LOGO_DATA_URI
 from app.mcp.context import (
+    get_session_school,
     mcp_context,
+    mcp_identity,
     require_principal,
     require_scope,
     require_write_scope,
+    set_session_school,
 )
 from app.mcp.observability import ToolCallLogger
 from app.mcp.vocabulary import vocabulary
 from app.models.collection import Collection
+from app.models.school import School
 from app.repositories.labelset_repository import labelset_repository
 from app.repositories.school_repository import school_repository
 from app.repositories.work_repository import work_repository
@@ -112,13 +116,48 @@ mcp.add_middleware(ToolCallLogger())
 
 @mcp.tool(annotations={"readOnlyHint": True})
 async def whoami() -> dict:
-    """Confirm which Huey Books account and school this session is acting as."""
-    async with mcp_context() as ctx:
+    """Confirm which Huey Books account this session is acting as, and how schools
+    are scoped (a Wriveted admin may act for any school; others are confined)."""
+    async with mcp_identity() as ident:
         return {
-            "name": ctx.user.name,
-            "type": ctx.user.type.value if ctx.user.type else None,
-            "school": {"name": ctx.school.name, "id": ctx.school_wid},
+            "name": ident.user.name,
+            "type": ident.user.type.value if ident.user.type else None,
+            "admin": ident.is_admin,
+            "current_school": get_session_school(str(ident.user.id))
+            or ident.default_school,
+            "schools": "any (admin)" if ident.is_admin else sorted(ident.authorized),
         }
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+async def list_my_schools() -> dict:
+    """List the schools this connection may act for (names + identifiers). Pass a
+    school's `id` as the `school` argument on other tools, or via use_school."""
+    async with mcp_identity() as ident:
+        if ident.is_admin:
+            return {
+                "mode": "admin",
+                "note": "You may act for any school. Pass its identifier as `school`.",
+            }
+        rows = (
+            await ident.db.execute(
+                select(School).where(School.wriveted_identifier.in_(ident.authorized))
+            )
+        ).scalars()
+        return {
+            "mode": "member",
+            "schools": [{"name": s.name, "id": s.wriveted_identifier} for s in rows],
+            "default": ident.default_school,
+        }
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+async def use_school(school: str) -> dict:
+    """Set the default school for the rest of this session, so other tools don't
+    need the `school` argument. Validates you may act for it."""
+    async with mcp_context(school) as ctx:
+        set_session_school(str(ctx.user.id), ctx.school_wid)
+        return {"default_school": {"name": ctx.school.name, "id": ctx.school_wid}}
 
 
 @mcp.tool(annotations={"readOnlyHint": True})
@@ -148,10 +187,12 @@ async def get_recommendations(
     reading_abilities: list[str] | None = None,
     limit: int = 5,
     school_only: bool = True,
+    school: str | None = None,
 ) -> dict:
-    """Recommend books by hue/age/reading ability. school_only restricts to this
-    school's collection. Use hue and reading-ability keys from list_label_vocabulary."""
-    async with mcp_context() as ctx:
+    """Recommend books by hue/age/reading ability. school_only restricts to the
+    school's collection. `school` selects which school (default: your current one).
+    Use hue and reading-ability keys from list_label_vocabulary."""
+    async with mcp_context(school) as ctx:
         require_scope(ctx, "recommendations:read", "get recommendations")
         school = None
         if school_only:
@@ -196,9 +237,12 @@ async def get_book(work_id: int) -> dict:
 
 
 @mcp.tool(annotations={"readOnlyHint": True})
-async def get_collection(limit: int = 20, offset: int = 0) -> dict:
-    """List books in this school's collection, with holding totals."""
-    async with mcp_context() as ctx:
+async def get_collection(
+    limit: int = 20, offset: int = 0, school: str | None = None
+) -> dict:
+    """List books in the school's collection, with holding totals. `school` selects
+    which school (default: your current one)."""
+    async with mcp_context(school) as ctx:
         require_scope(ctx, "catalogue:read", "read the collection")
         school_uuid = ctx.school.wriveted_identifier
 
@@ -229,13 +273,14 @@ async def get_collection(limit: int = 20, offset: int = 0) -> dict:
 if not _READONLY:
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    async def import_books(isbns: list[str]) -> dict:
-        """Add books to this school's collection by ISBN (catalogue upload). Unknown
-        books are created automatically and enriched by Huey Books afterwards.
-        Confirm the list with the librarian before calling."""
+    async def import_books(isbns: list[str], school: str | None = None) -> dict:
+        """Add books to the school's collection by ISBN (catalogue upload). `school`
+        selects which school (default: your current one). Unknown books are created
+        automatically and enriched by Huey Books afterwards. Confirm the list with
+        the librarian before calling."""
         if len(isbns) > 5000:
             raise ToolError("Too many ISBNs in one import (max 5000); split the list.")
-        async with mcp_context() as ctx:
+        async with mcp_context(school) as ctx:
             require_write_scope(ctx, "books:import")
             # Modifying the school collection requires schooladmin (as the REST
             # endpoint does) — a plain educator or a removed member is denied.
@@ -294,12 +339,14 @@ if not _READONLY:
         reading_ability: str,
         summary: str | None = None,
         secondary_hue: str | None = None,
+        school: str | None = None,
     ) -> dict:
         """Set a book's labels: primary (and optional secondary) hue, age range,
-        reading-ability tier and a short summary. Overwrites existing labels, so
-        confirm the proposed labelset with the librarian first. Use valid keys from
-        list_label_vocabulary. Returns the updated labels."""
-        async with mcp_context() as ctx:
+        reading-ability tier and a short summary. `school` selects which school's
+        staff authority to use (default: your current one). Overwrites existing
+        labels, so confirm the proposed labelset with the librarian first. Use valid
+        keys from list_label_vocabulary. Returns the updated labels."""
+        async with mcp_context(school) as ctx:
             require_write_scope(ctx, "books:label")
             # Editing a work's labels requires the work-edit role (as the REST
             # PATCH /work endpoint does).
