@@ -19,7 +19,7 @@ from app.api.recommendations import get_recommendations_with_fallback
 from app.config import get_settings
 from app.db.session import get_session_maker
 from app.mcp._logo import LOGO_DATA_URI
-from app.mcp.context import mcp_context, require_write_scope
+from app.mcp.context import mcp_context, require_principal, require_write_scope
 from app.mcp.observability import ToolCallLogger
 from app.mcp.vocabulary import vocabulary
 from app.models.collection import Collection
@@ -229,30 +229,45 @@ if not _READONLY:
             raise ToolError("Too many ISBNs in one import (max 5000); split the list.")
         async with mcp_context() as ctx:
             require_write_scope(ctx, "books:import")
+            # Modifying the school collection requires schooladmin (as the REST
+            # endpoint does) — a plain educator or a removed member is denied.
+            require_principal(
+                ctx, f"schooladmin:{ctx.school.id}", action="import books"
+            )
             school_uuid = ctx.school.wriveted_identifier
             school_name = ctx.school.name
             user_id = ctx.user.id
 
-        from app.models.user import User
-        from app.schemas.collection import CollectionItemCreateIn
+        def _import() -> None:
+            import asyncio
 
-        # add_editions_to_collection_by_isbn (like the collection endpoints) takes
-        # the sync Session, so run it on one rather than the async ctx.db.
-        with get_session_maker()() as db:
-            collection = db.execute(
-                select(Collection).where(Collection.school_id == school_uuid)
-            ).scalar_one_or_none()
-            if collection is None:
-                # First upload for this school: start its catalogue.
-                collection = Collection(name=school_name, school_id=school_uuid)
-                db.add(collection)
-                db.flush()
-            await add_editions_to_collection_by_isbn(
-                db,
-                collection_data=[CollectionItemCreateIn(edition_isbn=i) for i in isbns],
-                collection=collection,
-                account=db.get(User, user_id),
-            )
+            from app.models.user import User
+            from app.schemas.collection import CollectionItemCreateIn
+
+            # add_editions_to_collection_by_isbn takes the sync Session (like the
+            # collection endpoints); run the whole thing off the event loop so a
+            # large import can't stall the single Uvicorn process.
+            async def _run() -> None:
+                with get_session_maker()() as db:
+                    collection = db.execute(
+                        select(Collection).where(Collection.school_id == school_uuid)
+                    ).scalar_one_or_none()
+                    if collection is None:
+                        collection = Collection(name=school_name, school_id=school_uuid)
+                        db.add(collection)
+                        db.flush()
+                    await add_editions_to_collection_by_isbn(
+                        db,
+                        collection_data=[
+                            CollectionItemCreateIn(edition_isbn=i) for i in isbns
+                        ],
+                        collection=collection,
+                        account=db.get(User, user_id),
+                    )
+
+            asyncio.run(_run())
+
+        await run_in_threadpool(_import)
         return {
             "requested": len(isbns),
             "note": "Editions added; metadata enrichment follows shortly.",
@@ -274,6 +289,9 @@ if not _READONLY:
         list_label_vocabulary. Returns the updated labels."""
         async with mcp_context() as ctx:
             require_write_scope(ctx, "books:label")
+            # Editing a work's labels requires the work-edit role (as the REST
+            # PATCH /work endpoint does).
+            require_principal(ctx, "role:educator", action="label books")
 
         # EDUCATOR provenance: applied by school staff, not Wriveted nor a classifier.
         update = LabelSetCreateIn(

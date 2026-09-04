@@ -17,6 +17,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_access_token
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import with_polymorphic
 
 from app.db.session import get_async_session_maker
 from app.models.school import School
@@ -46,6 +47,16 @@ def require_write_scope(ctx: "MCPContext", scope: str) -> None:
         )
 
 
+def require_principal(ctx: "MCPContext", *principals: str, action: str) -> None:
+    """Fail closed unless the confined principals include one of ``principals``.
+
+    This re-applies the same RBAC the REST endpoints enforce, so an MCP write can
+    never exceed the token's granted school/role (e.g. a plain educator has no
+    schooladmin principal, and a removed member has none for the school at all)."""
+    if not any(p in ctx.principals for p in principals):
+        raise ToolError(f"You are not permitted to {action} for this school.")
+
+
 @asynccontextmanager
 async def mcp_context():
     """Yield the caller's DB session, user, granted school and confined principals."""
@@ -59,8 +70,11 @@ async def mcp_context():
 
     maker = get_async_session_maker()
     async with maker() as db:
+        # Eager-load joined-inheritance columns (e.g. Educator.school_id) so
+        # get_principals() below doesn't trigger an async lazy load (MissingGreenlet).
+        user_poly = with_polymorphic(User, "*")
         user = (
-            await db.execute(select(User).where(User.id == uid))
+            await db.execute(select(user_poly).where(user_poly.id == uid))
         ).scalar_one_or_none()
         if user is None or not user.is_active:
             raise ToolError("Not authenticated: unknown or inactive user.")
