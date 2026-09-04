@@ -68,6 +68,8 @@ def _build_auth():
         issuer=issuer,
         audience=settings.OAUTH_API_AUDIENCE,
     )
+    from app.mcp.storage import build_oauth_client_storage
+
     return OAuthProxy(
         upstream_authorization_endpoint=settings.MCP_AUTHORIZE_URL,
         upstream_token_endpoint=f"{issuer}{settings.API_V1_STR}/oauth/token",
@@ -76,6 +78,8 @@ def _build_auth():
         token_verifier=verifier,
         base_url=settings.MCP_BASE_URL,
         forward_pkce=True,
+        # Durable shared state so clients/tokens survive instance recycling.
+        client_storage=build_oauth_client_storage(settings),
         # Our upstream (admin school-picker + Authorize, validated by the backend
         # /oauth/authorize) IS the user consent, so skip the proxy's own screen.
         require_authorization_consent="external",
