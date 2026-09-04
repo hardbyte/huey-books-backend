@@ -14,7 +14,7 @@ import base64
 import binascii
 import secrets
 import uuid
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -154,8 +154,10 @@ class OAuthConsentIn(BaseModel):
 def _redirect_uri_allowed(redirect_uri: str, allowed: list[str]) -> bool:
     if redirect_uri in allowed:
         return True
-    # Loopback for local development (any port).
-    return redirect_uri.startswith(("http://localhost", "http://127.0.0.1"))
+    # Loopback for local development (any port). Parse the host so lookalikes like
+    # http://localhost.attacker.com or http://127.0.0.1@attacker.com are rejected.
+    parsed = urlparse(redirect_uri)
+    return parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1")
 
 
 @authorize_router.post("/authorize")

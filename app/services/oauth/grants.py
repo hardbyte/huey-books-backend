@@ -292,10 +292,14 @@ async def _rotate_unclaimed(
     # (FastMCP's proxy may present a just-rotated token). Issue a fresh pair in
     # the same family without treating it as theft.
     grace = datetime.timedelta(seconds=settings.OAUTH_REFRESH_REUSE_GRACE_SECONDS)
+    absolute_end = grant.created_at + datetime.timedelta(
+        seconds=settings.OAUTH_REFRESH_ABSOLUTE_TTL_SECONDS
+    )
     if (
         row.consumed_at is not None
         and now - row.consumed_at <= grace
         and now <= row.expires_at  # never re-issue on an expired token
+        and now < absolute_end  # nor past the login's absolute cap
         and grant.revoked_at is None
         and grant.client_id == client_id
     ):
