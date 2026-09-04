@@ -48,6 +48,8 @@ describes reading experience; reading ability describes decoding difficulty.
   admins may select any school; ordinary staff remain confined to their grant.
 - ISBN-only import preserves existing holding totals and availability, including
   zero available copies. Results report added/existing/invalid/duplicate input.
+- School-only recommendations filter by live holdings at work level, including
+  alternate editions; broader catalogue recommendations require `school_only=false`.
 - Label arguments are validated before any mutation. The existing origin hierarchy
   can preserve higher-authority labels; the tool returns the resulting labelset.
 - Migration `a1c2e3f40012` owns the key-value schema; runtime does no DDL. Apply
@@ -69,6 +71,8 @@ COMPOSE_PROJECT_NAME=librarian-mcp-tests POSTGRES_HOST_PORT=55432 \
 cross-instance encrypted storage, the restricted runtime role, and real MCP client
 imports/permission denial. OAuth token-flow tests cover PKCE, rotation and replay.
 Unit protocol tests verify stateless HTTP and client consent/browser binding.
+Recommendation tests cover singleton results, strict school membership, alternate
+held editions and the existing soft-scoring behavior for REST callers.
 
 Admin consent checks: `npm run build` and
 `npx playwright test --config playwright.oauth.config.ts`. Browser tests mock only

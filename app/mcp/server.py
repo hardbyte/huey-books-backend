@@ -258,6 +258,7 @@ async def get_recommendations(
             data=data,
             background_tasks=BackgroundTasks(),
             limit=min(limit, 20),
+            school_only=school_only,
         )
         return {
             "count": len(books),

@@ -70,6 +70,7 @@ async def get_recommendations_with_fallback(
     limit=5,
     remove_duplicate_authors=True,
     boost_work_ids=None,
+    school_only: bool = False,
 ) -> Tuple[list[HueyBook], Any]:
     """
     Return (filtered_books, query_parameters) by running a single scored query
@@ -84,6 +85,7 @@ async def get_recommendations_with_fallback(
     school_id = school.id if school is not None else None
     query_parameters = {
         "school_id": school_id,
+        "school_only": school_only,
         "hues": data.hues or [],
         "reading_abilities": data.reading_abilities or [],
         "age": data.age,
@@ -114,7 +116,7 @@ async def get_recommendations_with_fallback(
         for (work, edition, labelset) in row_results
     ]
     filtered_books = []
-    if len(recommended_books) > 1:
+    if recommended_books:
         if remove_duplicate_authors:
             current_authors = set()
             for book in recommended_books:
@@ -128,6 +130,8 @@ async def get_recommendations_with_fallback(
                     )
                 if len(filtered_books) >= limit:
                     break
+        else:
+            filtered_books = recommended_books[:limit]
 
         event_recommendation_data = [json.loads(b.json()) for b in filtered_books[:10]]
 
@@ -166,6 +170,7 @@ async def get_recommended_editions_and_labelsets(
     exclude_isbns,
     boost_work_ids=None,
     limit=5,
+    school_only: bool = False,
 ):
     """
     Fetch (Work, Edition, LabelSet) tuples from the recommendable_editions MV.
@@ -184,4 +189,5 @@ async def get_recommended_editions_and_labelsets(
         exclude_isbns=exclude_isbns,
         boost_work_ids=boost_work_ids,
         limit=limit,
+        school_only=school_only,
     )
