@@ -40,7 +40,7 @@ router = APIRouter(
 
 
 @router.post("/events", response_model=EventDetail)
-async def create(
+def create(
     data: EventCreateIn,
     account: Union[ServiceAccount, User] = Depends(
         get_current_active_user_or_service_account
@@ -83,7 +83,7 @@ async def create(
 
 
 @router.get("/events", response_model=EventListsResponse)
-async def get_events(
+def get_events(
     query: list[str] = Query(
         None,
         description="List of query strings to match against event names",
@@ -204,7 +204,7 @@ async def get_events(
 
 
 @router.get("/event-types", response_model=EventTypesResponse)
-async def get_event_types(
+def get_event_types(
     level: EventLevel = None,
     pagination: PaginatedQueryParams = Depends(),
     session: Session = Depends(get_session),
