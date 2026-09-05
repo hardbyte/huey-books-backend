@@ -263,6 +263,8 @@ class LabelsetRepositoryImpl(LabelsetRepository):
         if data.info:
             merged_info = deepcopy(labelset.info or {})
             deep_merge_dicts(merged_info, data.info)
+            if "ai_assistance" in data.info:
+                merged_info["ai_assistance"] = deepcopy(data.info["ai_assistance"])
             labelset.info = merged_info
             updated = True
 

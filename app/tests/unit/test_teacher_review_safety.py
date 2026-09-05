@@ -58,6 +58,23 @@ def test_ai_metadata_rejects_unsafe_source_urls():
         LabelSetCreateIn(info={"ai_assistance": {"sources": ["javascript:alert(1)"]}})
 
 
+def test_new_research_record_does_not_inherit_an_old_model():
+    labelset = SimpleNamespace(
+        info={
+            "ai_assistance": {
+                "model": "old-model",
+                "run": "old-run",
+                "generated_at": "2020-01-01T00:00:00Z",
+            }
+        },
+        checked=None,
+    )
+    data = LabelSetCreateIn(info={"ai_assistance": {"run": "new-run", "sources": []}})
+    labelset_repository.patch(MagicMock(), labelset, data)
+    assert "model" not in labelset.info["ai_assistance"]
+    assert "generated_at" not in labelset.info["ai_assistance"]
+
+
 @pytest.mark.parametrize(
     "values",
     [
