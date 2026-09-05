@@ -28,6 +28,7 @@ from app.schemas.review import LabelSetReviewIn
 logger = get_logger()
 
 AI_ORIGINS = [
+    LabelOrigin.AI_ASSISTED,
     LabelOrigin.GPT4,
     LabelOrigin.VERTEXAI,
     LabelOrigin.PREDICTED_NIELSEN,
@@ -62,8 +63,9 @@ class ReviewRepositoryImpl:
             "max_age",
             "reading_ability_key",
             "confirmed_existing",
+            "ai_assistance",
         ]
-        input_data = data.model_dump(exclude_none=True)
+        input_data = data.model_dump(exclude_none=True, mode="json")
         for field in assessment_fields:
             assessment[field] = input_data.get(field)
 

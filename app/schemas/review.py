@@ -2,23 +2,53 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.labelset import LabelOrigin, RecommendStatus
+from app.schemas.ai_assistance import AIAssistance
+from app.schemas.recommendations import HueKeys, ReadingAbilityKey
 
 
 class LabelSetReviewIn(BaseModel):
     """Input schema for submitting or updating a review."""
 
-    hue_primary_key: Optional[str] = None
-    hue_secondary_key: Optional[str] = None
-    hue_tertiary_key: Optional[str] = None
-    min_age: Optional[int] = None
-    max_age: Optional[int] = None
-    reading_ability_key: Optional[str] = None
+    hue_primary_key: HueKeys | None = None
+    hue_secondary_key: HueKeys | None = None
+    hue_tertiary_key: HueKeys | None = None
+    min_age: int | None = Field(default=None, ge=0, le=100)
+    max_age: int | None = Field(default=None, ge=0, le=100)
+    reading_ability_key: ReadingAbilityKey | None = None
     recommend_status: Optional[RecommendStatus] = None
     notes: Optional[str] = None
     confirmed_existing: Optional[bool] = None
+    ai_assistance: AIAssistance | None = None
+
+    @model_validator(mode="after")
+    def valid_labels(self):
+        if (
+            self.min_age is not None
+            and self.max_age is not None
+            and self.min_age > self.max_age
+        ):
+            raise ValueError("Minimum age must not exceed maximum age")
+        hues = [
+            key
+            for key in (
+                self.hue_primary_key,
+                self.hue_secondary_key,
+                self.hue_tertiary_key,
+            )
+            if key
+        ]
+        if len(hues) != len(set(hues)):
+            raise ValueError("Choose distinct hues")
+        if (
+            self.hue_secondary_key or self.hue_tertiary_key
+        ) and not self.hue_primary_key:
+            raise ValueError("Choose a primary hue first")
+        if self.hue_tertiary_key and not self.hue_secondary_key:
+            raise ValueError("Choose a secondary hue before a tertiary hue")
+        return self
 
 
 class LabelSetReviewDetail(BaseModel):
@@ -38,6 +68,7 @@ class LabelSetReviewDetail(BaseModel):
     recommend_status: Optional[RecommendStatus] = None
     notes: Optional[str] = None
     confirmed_existing: Optional[bool] = None
+    ai_assistance: AIAssistance | None = None
 
     created_at: datetime
     updated_at: datetime

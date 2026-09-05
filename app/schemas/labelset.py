@@ -2,10 +2,11 @@ from datetime import datetime
 from typing import Annotated, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict
+from pydantic import BaseModel, BeforeValidator, ConfigDict, field_validator
 
 from app.models.labelset import LabelOrigin, RecommendStatus
 from app.schemas import CaseInsensitiveStringEnum
+from app.schemas.ai_assistance import AIAssistance
 from app.schemas.hue import Hue
 
 
@@ -142,6 +143,18 @@ class LabelSetDetail(LabelSetBrief):
 
 # everything is optional here. also used for patch requests
 class LabelSetCreateIn(BaseModel):
+    @field_validator("info")
+    @classmethod
+    def validate_ai_assistance(cls, value):
+        if value is not None and "ai_assistance" in value:
+            value = {
+                **value,
+                "ai_assistance": AIAssistance.model_validate(
+                    value["ai_assistance"]
+                ).model_dump(mode="json", exclude_none=True),
+            }
+        return value
+
     hue_primary_key: Optional[str] = None
     hue_secondary_key: Optional[str] = None
     hue_tertiary_key: Optional[str] = None
