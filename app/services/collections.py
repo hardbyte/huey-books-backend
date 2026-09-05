@@ -91,11 +91,11 @@ async def update_collection(
         session.flush()
         logger.debug("Updated editions", collection_id=str(collection.id))
 
-    obj_in.items = [
-        item
+    bulk_add_only = all(
+        item.action == CollectionUpdateType.ADD and item.edition_isbn is not None
         for item in item_changes
-        if item.action == CollectionUpdateType.REMOVE or item.edition_isbn is None
-    ]
+    )
+    obj_in.items = [] if bulk_add_only else item_changes
     logger.info(f"Update items now has {len(obj_in.items)} items")
 
     logger.debug(
