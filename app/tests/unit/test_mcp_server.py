@@ -282,6 +282,9 @@ async def test_http_transport_does_not_require_instance_local_sessions():
 async def test_oauth_requires_client_consent_before_school_picker(monkeypatch):
     import base64
     import hashlib
+    import re
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
     from urllib.parse import parse_qs, urlparse
 
     import httpx
@@ -297,7 +300,15 @@ async def test_oauth_requires_client_consent_before_school_picker(monkeypatch):
         "local-test-client-secret-at-least-32-characters",
     )
     monkeypatch.setattr(storage, "get_mcp_storage", lambda: MemoryStore())
-    app = FastMCP("consent-test", auth=mcp_server._build_auth()).http_app()
+    auth = mcp_server._build_auth()
+    exchange = AsyncMock(return_value={"access_token": "test-upstream-token"})
+
+    @asynccontextmanager
+    async def upstream_client():
+        yield SimpleNamespace(fetch_token=exchange)
+
+    monkeypatch.setattr(auth, "_upstream_oauth_client", upstream_client)
+    app = FastMCP("consent-test", auth=auth).http_app()
     origin = mcp_server.settings.MCP_BASE_URL
     async with app.lifespan(app):
         async with httpx.AsyncClient(
@@ -342,3 +353,39 @@ async def test_oauth_requires_client_consent_before_school_picker(monkeypatch):
                 "/auth/callback", params={"state": transaction, "code": "unbound-code"}
             )
             assert callback.status_code >= 400
+            exchange.assert_not_awaited()
+            csrf_token = re.search(
+                r'name="csrf_token" value="([^"]+)"', consent.text
+            ).group(1)
+            form = {
+                "txn_id": transaction,
+                "csrf_token": csrf_token,
+                "action": "approve",
+            }
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url=origin
+            ) as other_browser:
+                forged_consent = await other_browser.post("/consent", data=form)
+                assert forged_consent.status_code == 403
+            consent_response = await client.post("/consent", data=form)
+            assert consent_response.status_code == 302
+            upstream_state = parse_qs(
+                urlparse(consent_response.headers["location"]).query
+            )["state"][0]
+            callback_params = {"state": upstream_state, "code": "approved-code"}
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url=origin
+            ) as cookie_stripping_proxy:
+                missing_cookie = await cookie_stripping_proxy.get(
+                    "/auth/callback", params=callback_params
+                )
+                assert missing_cookie.status_code == 403
+                assert "Authorization session mismatch" in missing_cookie.text
+                exchange.assert_not_awaited()
+            callback = await client.get("/auth/callback", params=callback_params)
+            assert callback.status_code == 302
+            client_callback = urlparse(callback.headers["location"])
+            assert client_callback.netloc == "localhost:9999"
+            assert parse_qs(client_callback.query)["state"] == ["test-state"]
+            assert parse_qs(client_callback.query)["code"]
+            exchange.assert_awaited_once()

@@ -41,6 +41,10 @@ describes reading experience; reading ability describes decoding difficulty.
   by REST authentication.
 - Serve the MCP host at its origin root; `/mcp` and both well-known discovery routes
   must resolve without cross-origin redirects.
+- Preserve all cookies through the front end. [Firebase Hosting strips cookies
+  other than `__session`](https://firebase.google.com/docs/hosting/manage-cache),
+  which breaks FastMCP's host-bound consent cookies. It is unsuitable for this
+  MCP endpoint. Keep consent and browser binding enabled.
 - Use stateless Streamable HTTP across Cloud Run instances. The current school is
   persisted per OAuth grant in the shared encrypted Postgres store. Storage failure
   fails the call instead of silently changing its school.
@@ -71,6 +75,8 @@ COMPOSE_PROJECT_NAME=librarian-mcp-tests POSTGRES_HOST_PORT=55432 \
 cross-instance encrypted storage, the restricted runtime role, and real MCP client
 imports/permission denial. OAuth token-flow tests cover PKCE, rotation and replay.
 Unit protocol tests verify stateless HTTP and client consent/browser binding.
+Consent tests submit the actual form and exercise the callback: the consenting
+browser reaches token exchange, while another browser without its cookie is denied.
 Recommendation tests cover singleton results, strict school membership, alternate
 held editions and the existing soft-scoring behavior for REST callers.
 
@@ -82,19 +88,32 @@ OpenCode 1.18.27 successfully read staging identity, vocabulary, search results 
 collection entries with its configured Grok model. The local Qwen3 14B model did
 not select the requested tools; this is not a passing end-to-end result for Ollama.
 
+Staging MCP now uses
+`https://wriveted-api-development-main-branch-393015205778.australia-southeast1.run.app/mcp`.
+The legacy Cloud Run hostname ending `-lg5ntws4da-ts.a.run.app` remains the REST API
+and OAuth issuer. Keep those hostnames distinct: dispatch selects the MCP app by
+host. The old Firebase staging endpoint is retired; clients must reconnect using
+the new endpoint. Direct-host HTTP and Chromium probes verify consent submission
+and cookie-bound callback handling; a fresh real-user authorization is still required.
+
 ## Production cutover — requires Brian's approval
 
 Merging backend #739/#740 or admin #82/#83 triggers production deployments. Do not
 merge as a supposedly dormant preparation step before approval.
 
+Before any merge, select and validate a cookie-preserving production front end for
+`mcp.hueybooks.com` (for example an HTTPS load balancer or reverse proxy). Infrastructure
+selection and approval remain outstanding. Test the full browser round trip through
+that front end, including missing-cookie rejection. Firebase Hosting is not an option.
+
 1. Record current Cloud Run revisions, image digests, environment/secret bindings and
    Firebase live releases. Merge #739, retarget #740 to main if necessary, then merge
    #740 after its checks pass. Monitor migrations and both API deployments.
 2. Merge admin #83 and #82; verify the combined live build, OAuth page and prompts.
-3. Create Firebase site `hueybooks-mcp` and use `firebase.mcp.json` to route it to
-   `wriveted-api` in `australia-southeast1`. Add the custom domain `mcp.hueybooks.com`
-   through Firebase Hosting and apply the exact DNS records it supplies. Wait for
-   certificate readiness. The site and DNS record did not yet exist at readiness review.
+3. Deploy the approved cookie-preserving front end for `mcp.hueybooks.com`, routing
+   to `wriveted-api` in `australia-southeast1`. Preserve the original host and cookies,
+   support streaming responses and disable caching for OAuth routes. Apply the exact
+   DNS records required by that front end and verify certificate readiness.
 4. Configure the public production API using `--update-env-vars`/`--update-secrets`:
 
    | Setting | Production value |
@@ -112,7 +131,7 @@ merge as a supposedly dormant preparation step before approval.
 
    Pin secret versions selected at cutover. Do not expose values in logs or shell
    output. The internal API does not need MCP enabled.
-5. Verify unauthenticated `/mcp` returns 401, discovery advertises the exact resource,
+5. Verify unauthenticated POST `/mcp` returns 401, discovery advertises the exact resource,
    a fresh client completes both consent steps, and an existing client survives a
    revision change. Check search/recommendations, then explicitly approved writes
    against a designated test school, including idempotent re-import.

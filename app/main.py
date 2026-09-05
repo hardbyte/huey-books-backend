@@ -163,8 +163,8 @@ async def redirect_old_docs_route():
 
 # Production entrypoint. When enabled, the MCP is served at the ROOT of its own
 # host (settings.MCP_HOST) so FastMCP serves RFC 9728/8414 metadata natively; all
-# other hosts fall through to the API. Requests reach us via Firebase Hosting,
-# which carries the original host in X-Forwarded-Host, so dispatch on that.
+# other hosts fall through to the API. A reverse proxy must preserve cookies
+# and provide the original host in X-Forwarded-Host.
 if settings.MCP_ENABLED and settings.MCP_HOST:
     from contextlib import asynccontextmanager
 
