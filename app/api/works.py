@@ -205,6 +205,23 @@ def get_labelling_prompt(
     """
     from app.services.labelling.prompt import system_prompt
 
+    current_labels = work.labelset.get_label_dict(session) if work.labelset else None
+    if current_labels:
+        current_labels = {
+            key: value
+            for key, value in current_labels.items()
+            if key
+            not in {
+                "info",
+                "labelled_by_user_id",
+                "labelled_by_sa_id",
+                "created_at",
+                "updated_at",
+                "checked_at",
+            }
+        }
+        if current_labels.get("huey_summary"):
+            current_labels["huey_summary"] = current_labels["huey_summary"][:1500]
     user_content = json.dumps(
         {
             "work_id": work.id,
@@ -223,9 +240,7 @@ def get_labelling_prompt(
                 }
                 for edition in work.editions[:20]
             ],
-            "current_labels": work.labelset.get_label_dict(session)
-            if work.labelset
-            else None,
+            "current_labels": current_labels,
             "identity_warning": "Verify the intended edition; a work can contain incorrectly grouped ISBNs.",
         },
         default=str,
