@@ -94,7 +94,7 @@ async def update_collection(
     obj_in.items = [
         item
         for item in item_changes
-        if CollectionUpdateType.REMOVE or item.edition_isbn is None
+        if item.action == CollectionUpdateType.REMOVE or item.edition_isbn is None
     ]
     logger.info(f"Update items now has {len(obj_in.items)} items")
 
