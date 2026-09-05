@@ -5,6 +5,7 @@ Replaces the generic CRUDLabelset class with proper repository pattern.
 """
 
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -21,6 +22,7 @@ from app.schemas.labelset import LabelSetCreateIn
 from app.utils.dict_utils import deep_merge_dicts
 
 ORIGIN_WEIGHTS = {
+    "AI_ASSISTED": 4,
     "HUMAN": 5,
     "EDUCATOR": 4.5,
     "VERTEXAI": 4,
@@ -152,12 +154,16 @@ class LabelsetRepositoryImpl(LabelsetRepository):
             or ORIGIN_WEIGHTS[labelset.hue_origin]
             <= ORIGIN_WEIGHTS[data.hue_origin.name]
         ):
-            new_hues = {
-                data.hue_primary_key,
-                data.hue_secondary_key,
-                data.hue_tertiary_key,
-            }
-            old_hues = {hue.key for hue in labelset.hues}
+            new_hues = tuple(
+                key
+                for key in (
+                    data.hue_primary_key,
+                    data.hue_secondary_key,
+                    data.hue_tertiary_key,
+                )
+                if key
+            )
+            old_hues = tuple(hue.key for hue in labelset.hues)
 
             if new_hues != old_hues:
                 db.query(LabelSetHue).filter_by(labelset_id=labelset.id).delete()
@@ -233,7 +239,7 @@ class LabelsetRepositoryImpl(LabelsetRepository):
                     updated = True
 
         # GENRES
-        if data.info and data.info["genres"]:
+        if data.info and data.info.get("genres"):
             try:
                 if not labelset.info:
                     labelset.info = {}
@@ -255,14 +261,10 @@ class LabelsetRepositoryImpl(LabelsetRepository):
 
         # INFO
         if data.info:
-            if not labelset.info:
-                labelset.info = data.info.copy()
-                updated = True
-            elif data.info.items() >= labelset.info.items():
-                deep_merge_dicts(labelset.info, data.info)
-                updated = True
-                for key in labelset.info.keys() - data.info.keys():
-                    labelset.info[key] = None
+            merged_info = deepcopy(labelset.info or {})
+            deep_merge_dicts(merged_info, data.info)
+            labelset.info = merged_info
+            updated = True
 
         if updated:
             if data.labelled_by_sa_id:
@@ -270,7 +272,8 @@ class LabelsetRepositoryImpl(LabelsetRepository):
             if data.labelled_by_user_id:
                 labelset.labelled_by_user_id = data.labelled_by_user_id
 
-        labelset.checked = data.checked
+        if "checked" in data.model_fields_set:
+            labelset.checked = data.checked
 
         if commit:
             db.commit()

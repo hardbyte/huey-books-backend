@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional, Union
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from fastapi_permissions import All, Allow
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -69,6 +69,7 @@ def _review_to_detail(review) -> LabelSetReviewDetail:
         recommend_status=assessment.get("recommend_status"),
         notes=review.notes,
         confirmed_existing=assessment.get("confirmed_existing"),
+        ai_assistance=assessment.get("ai_assistance"),
         created_at=review.created_at,
         updated_at=review.updated_at,
     )
@@ -97,11 +98,45 @@ def submit_review(
     """
     if not isinstance(account, User):
         logger.warning("Service accounts cannot submit reviews")
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=403, detail="Only users can submit reviews")
 
     labelset = labelset_repository.get_or_create(session, work, commit=True)
+
+    current = labelset.get_label_dict(session)
+    minimum = (
+        review_data.min_age if review_data.min_age is not None else labelset.min_age
+    )
+    maximum = (
+        review_data.max_age if review_data.max_age is not None else labelset.max_age
+    )
+    if minimum is not None and maximum is not None and minimum > maximum:
+        raise HTTPException(422, "Minimum age must not exceed maximum age")
+    if review_data.confirmed_existing:
+        expected = {
+            "hue_primary_key": current.get("primary_hue_key"),
+            "hue_secondary_key": current.get("secondary_hue_key"),
+            "hue_tertiary_key": current.get("tertiary_hue_key"),
+            "min_age": labelset.min_age,
+            "max_age": labelset.max_age,
+            "reading_ability_key": current["reading_ability_keys"][0]
+            if len(current["reading_ability_keys"]) == 1
+            else None,
+            "recommend_status": labelset.recommend_status,
+        }
+        required = (
+            "hue_primary_key",
+            "min_age",
+            "max_age",
+            "reading_ability_key",
+            "recommend_status",
+        )
+        if any(expected[key] is None for key in required) or any(
+            getattr(review_data, key) != value for key, value in expected.items()
+        ):
+            raise HTTPException(
+                409,
+                "Labels are incomplete or have changed. Reload and submit your proposed labels instead of confirming.",
+            )
 
     review = review_repository.upsert_review(
         db=session,
@@ -124,7 +159,16 @@ def submit_review(
             review_data,
             account,
             origin=LabelOrigin.HUMAN,
-            mark_checked=True,
+            mark_checked=all(
+                value is not None
+                for value in (
+                    review_data.hue_primary_key,
+                    review_data.reading_ability_key,
+                    review_data.min_age,
+                    review_data.max_age,
+                    review_data.recommend_status,
+                )
+            ),
         )
         promoted = True
     elif account.type in (UserAccountType.EDUCATOR, UserAccountType.SCHOOL_ADMIN):
@@ -285,7 +329,7 @@ def _promote_review_to_canonical(
         reading_ability_origin=origin if review_data.reading_ability_key else None,
         recommend_status=review_data.recommend_status,
         recommend_status_origin=origin if review_data.recommend_status else None,
-        checked=True if mark_checked else bool(labelset.checked),
+        checked=True if mark_checked else labelset.checked,
         labelled_by_user_id=account.id,
     )
 

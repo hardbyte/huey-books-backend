@@ -9,7 +9,7 @@ recommendations without overriding staff-confirmed labels.
 from app.models.labelset import LabelOrigin
 from app.repositories.labelset_repository import ORIGIN_WEIGHTS
 
-AI_ORIGINS = ["GPT4", "VERTEXAI"]
+AI_ORIGINS = ["GPT4", "VERTEXAI", "AI_ASSISTED"]
 
 
 def test_every_label_origin_has_a_weight():
