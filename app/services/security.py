@@ -11,8 +11,20 @@ ALGORITHM = "HS256"
 
 def get_raw_payload_from_access_token(token) -> dict[str, Any]:
     settings = get_settings()
-    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-    return payload
+    try:
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.JWTError:
+        # OAuth (RS256, kid-bearing) tokens are for the MCP only — it verifies and
+        # scope-confines them in-process (app/mcp). They must NOT act as general
+        # user credentials on the REST API, so reject them here rather than routing
+        # them through the legacy user pipeline (which would ignore their scopes).
+        try:
+            header = jwt.get_unverified_header(token)
+        except jwt.JWTError:
+            raise
+        if "kid" in header:
+            raise jwt.JWTError("OAuth tokens are not accepted on the REST API")
+        raise
 
 
 class TokenPayload(BaseModel):

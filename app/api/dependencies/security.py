@@ -223,6 +223,7 @@ async def get_active_principals(
     maybe_service_account: Optional[ServiceAccount] = Depends(
         get_optional_service_account
     ),
+    db: Session = Depends(get_session),
 ):
     """
     RBAC Access Control using https://github.com/holgi/fastapi-permissions
@@ -258,6 +259,9 @@ async def get_active_principals(
     - batch
     - share
     """
+
+    # OAuth (MCP) tokens never reach here: they are rejected on the REST pipeline
+    # (see get_raw_payload_from_access_token) and confined in-process by app/mcp.
 
     principals = [Everyone]
 
