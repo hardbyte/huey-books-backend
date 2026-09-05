@@ -129,6 +129,8 @@ async def add_editions_to_collection_by_isbn(
     collection_data: List[CollectionItemCreateIn],
     collection: Collection,
     account,
+    *,
+    preserve_existing: bool = False,
 ):
     """
     Mostly the same as add_editions_to_collection, but only processes a list of isbns.
@@ -169,14 +171,17 @@ async def add_editions_to_collection_by_isbn(
     # Using len(final_primary_keys) as length may be different now that it's a set
     logger.info(f"Syncing {len(final_primary_keys)} editions with collection")
 
-    crud.collection.add_items_to_collection(
+    from app.repositories.collection_repository import collection_repository
+
+    changed_count = collection_repository.add_items_to_collection(
         session,
         collection_orm_object=collection,
         items=[items[isbn] for isbn in final_primary_keys],
         commit=False,
+        preserve_existing=preserve_existing,
     )
 
-    num_collection_items_created = len(final_primary_keys)
+    num_collection_items_created = changed_count
 
     crud.event.create(
         session=session,
@@ -203,6 +208,12 @@ async def add_editions_to_collection_by_isbn(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Couldn't process input",
         )
+
+    return {
+        "added": changed_count,
+        "existing": len(final_primary_keys) - changed_count if preserve_existing else 0,
+        "valid_unique": len(items),
+    }
 
 
 def _generate_temp_update_table_ddl(engine):

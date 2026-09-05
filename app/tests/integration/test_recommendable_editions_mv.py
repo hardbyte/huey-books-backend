@@ -15,7 +15,10 @@ the test suite), so it will be present and populated from seed data.
 import pytest
 from sqlalchemy import text
 
-from app.api.recommendations import get_recommended_editions_and_labelsets
+from app.api.recommendations import (
+    get_recommendations_with_fallback,
+    get_recommended_editions_and_labelsets,
+)
 from app.models.labelset import RecommendStatus
 from app.models.labelset_hue_association import LabelSetHue, Ordinal
 from app.models.labelset_reading_ability_association import LabelSetReadingAbility
@@ -130,6 +133,71 @@ async def test_mv_exists_and_is_queryable(async_session):
         await async_session.execute(text("SELECT count(*) FROM recommendable_editions"))
     ).scalar_one()
     assert rows >= 0, "MV must be queryable (zero rows is acceptable in an empty DB)"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remove_duplicate_authors", [True, False])
+async def test_school_only_recommends_single_held_work_with_different_cover_edition(
+    session, async_session, test_school, test_user_account, remove_duplicate_authors
+):
+    from fastapi import BackgroundTasks
+
+    from app.models import Collection, CollectionItem, Edition
+    from app.schemas.recommendations import HueyRecommendationFilter
+
+    held_work, cover_edition, held_labels = _make_labeled_work(
+        session, "school-only-held", hue_ids=[1], ra_ids=[1]
+    )
+    outside_work, outside_edition, outside_labels = _make_labeled_work(
+        session, "school-only-outside", hue_ids=[1], ra_ids=[1]
+    )
+    held_edition = Edition(
+        isbn=generate_random_valid_isbn13(),
+        title="Held edition without a cover",
+        work_id=held_work.id,
+        info={},
+    )
+    collection = Collection(
+        name="School-only recommendation test", school_id=test_school.wriveted_identifier
+    )
+    session.add_all([held_edition, collection])
+    session.flush()
+    holding = CollectionItem(
+        collection_id=collection.id,
+        edition_isbn=held_edition.isbn,
+        copies_total=1,
+        copies_available=1,
+    )
+    session.add(holding)
+    session.commit()
+    _refresh_mv(session)
+    try:
+        books, query = await get_recommendations_with_fallback(
+            async_session,
+            test_user_account,
+            test_school,
+            HueyRecommendationFilter(age=8),
+            BackgroundTasks(),
+            school_only=True,
+            remove_duplicate_authors=remove_duplicate_authors,
+        )
+        assert [book.work_id for book in books] == [held_work.id]
+        assert books[0].isbn == cover_edition.isbn
+        assert query["school_only"] is True
+    finally:
+        await async_session.rollback()
+        for item in (
+            holding, collection, held_edition, held_labels, cover_edition,
+            held_work, outside_labels, outside_edition, outside_work,
+        ):
+            session.delete(item)
+        session.commit()
+
+
+@pytest.mark.asyncio
+async def test_school_only_requires_school(async_session):
+    with pytest.raises(ValueError, match="school_id is required"):
+        await get_recommended_editions_from_mv(async_session, school_only=True)
 
 
 @pytest.mark.asyncio

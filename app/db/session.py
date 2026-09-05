@@ -31,6 +31,7 @@ def database_connection(
     """
     engine = create_engine(
         database_uri,
+        pool_pre_ping=True,
         # Pool size is the maximum number of permanent connections to keep.
         # defaults to 5
         pool_size=pool_size,
@@ -80,6 +81,7 @@ def _get_async_session_maker(
 
     engine = create_async_engine(
         database_uri,
+        pool_pre_ping=True,
         # Pool size is the maximum number of permanent connections to keep.
         # defaults to 5
         pool_size=pool_size,

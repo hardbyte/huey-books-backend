@@ -289,6 +289,17 @@ class Settings(BaseSettings):
     # proxy's callback; localhost is allowed for local development).
     OAUTH_ALLOWED_REDIRECT_URIS: list[str] = []
 
+    # MCP server (app/mcp). When disabled it is not served.
+    MCP_ENABLED: bool = False
+    # Host the MCP is served at (its own origin root, so RFC 9728/8414 metadata is
+    # native). Requests to this Host are routed to the MCP; all others to the API.
+    MCP_HOST: str = "mcp.hueybooks.com"
+    # Public origin of the MCP host; FastMCP appends /mcp and the well-known paths.
+    MCP_BASE_URL: str = "https://mcp.hueybooks.com"
+    # Browser-facing consent + school-picker page (the admin app) the proxy sends
+    # the librarian to; it POSTs the backend /oauth/authorize and returns a code.
+    MCP_AUTHORIZE_URL: str = "https://admin.hueybooks.com/oauth/authorize"
+
     class LoggingLevel(str, enum.Enum):
         DEBUG = "DEBUG"
         INFO = "INFO"

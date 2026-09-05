@@ -159,3 +159,36 @@ async def redirect_old_docs_route():
     Redirects to the OpenAPI documentation for the current version
     """
     return RedirectResponse("/v1/docs", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+# Production entrypoint. When enabled, the MCP is served at the ROOT of its own
+# host (settings.MCP_HOST) so FastMCP serves RFC 9728/8414 metadata natively; all
+# other hosts fall through to the API. A reverse proxy must preserve cookies
+# and provide the original host in X-Forwarded-Host.
+if settings.MCP_ENABLED and settings.MCP_HOST:
+    from contextlib import asynccontextmanager
+
+    from starlette.applications import Starlette
+
+    from app.mcp.server import http_app as mcp_host_app
+    from app.mcp.storage import get_mcp_storage
+
+    @asynccontextmanager
+    async def _combined_lifespan(_):
+        async with app.router.lifespan_context(app):
+            async with get_mcp_storage().key_value:
+                async with mcp_host_app.lifespan(mcp_host_app):
+                    yield
+
+    _lifespan_app = Starlette(lifespan=_combined_lifespan)
+
+    async def asgi_app(scope, receive, send):
+        if scope["type"] == "lifespan":
+            return await _lifespan_app(scope, receive, send)
+        headers = dict(scope.get("headers", []))
+        fwd = headers.get(b"x-forwarded-host", b"").decode()
+        host = fwd.split(",")[0].strip() or headers.get(b"host", b"").decode()
+        target = mcp_host_app if host.split(":")[0] == settings.MCP_HOST else app
+        await target(scope, receive, send)
+else:
+    asgi_app = app

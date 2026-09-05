@@ -34,6 +34,7 @@ async def get_recommended_editions_from_mv(
     exclude_isbns: Optional[list[str]] = None,
     boost_work_ids: Optional[list[int]] = None,
     limit: int = 10,
+    school_only: bool = False,
 ) -> list[tuple[Work, Edition, LabelSet]]:
     """
     Single scored query over the recommendable_editions materialized view.
@@ -134,6 +135,22 @@ async def get_recommended_editions_from_mv(
         .order_by(total_score.desc(), func.random())
         .limit(limit)
     )
+
+    if school_only:
+        if school_id is None:
+            raise ValueError("school_id is required for school-only recommendations")
+        held_edition = aliased(Edition)
+        held_work_exists = (
+            select(literal(1))
+            .select_from(CollectionItem)
+            .join(held_edition, held_edition.isbn == CollectionItem.edition_isbn)
+            .join(Collection, Collection.id == CollectionItem.collection_id)
+            .join(SchoolModel, SchoolModel.wriveted_identifier == Collection.school_id)
+            .where(held_edition.work_id == mv.c.work_id, SchoolModel.id == school_id)
+            .correlate(mv)
+            .exists()
+        )
+        scored_q = scored_q.where(held_work_exists)
 
     # Hard filters
     # recommend_status is stored as the PostgreSQL native enum type "recommendstatus"

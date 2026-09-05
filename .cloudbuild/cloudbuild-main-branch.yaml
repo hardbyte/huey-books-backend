@@ -73,7 +73,7 @@ steps:
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api
       - >-
-        --set-secrets=
+        --update-secrets=
         POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,
         SECRET_KEY=wriveted-api-secret-key:latest,
         SENDGRID_API_KEY=sendgrid-api-key:latest,
@@ -125,7 +125,7 @@ steps:
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=nonprod-api-internal
       - >-
-        --set-secrets=
+        --update-secrets=
         POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,
         SECRET_KEY=wriveted-api-secret-key:latest,
         SENDGRID_API_KEY=sendgrid-api-key:latest,
@@ -214,7 +214,7 @@ steps:
         SCHOOL_ADMIN_URL=https://admin.hueybooks.com,
         OTEL_SERVICE_NAME=wriveted-api
       - >-
-        --set-secrets=
+        --update-secrets=
         POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,
         SECRET_KEY=wriveted-api-secret-key:latest,
         SENDGRID_API_KEY=sendgrid-api-key:latest,
@@ -265,7 +265,7 @@ steps:
         SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
         OTEL_SERVICE_NAME=wriveted-api-internal
       - >-
-        --set-secrets=
+        --update-secrets=
         POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,
         SECRET_KEY=wriveted-api-secret-key:latest,
         SENDGRID_API_KEY=sendgrid-api-key:latest,
