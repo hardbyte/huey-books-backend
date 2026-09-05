@@ -20,6 +20,7 @@ def test_teacher_review_authority_and_provenance(
         max_age=5,
         recommend_status=RecommendStatus.BAD_CONTROVERSIAL,
         recommend_status_origin=LabelOrigin.HUMAN,
+        info={"private_audit_fixture": "must-not-enter-external-prompt"},
     )
     session.add(labels)
     session.commit()
@@ -42,6 +43,7 @@ def test_teacher_review_authority_and_provenance(
     prompt = client.get(path + "/labelling-prompt", headers=headers)
     assert prompt.status_code == 200, prompt.text
     assert "teacher-review-v1" in prompt.json()["system_prompt"]
+    assert "must-not-enter-external-prompt" not in prompt.json()["user_prompt"]
     proposal = {
         "hue_primary_key": "hue04_joyful_charming",
         "min_age": 3,
