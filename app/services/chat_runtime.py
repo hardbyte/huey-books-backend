@@ -1733,7 +1733,26 @@ class ChatRuntime:
 
             # If the entry node leads into a question, process it and advance position
             next_node = result.get("next_node")
-            if next_node and isinstance(next_node, FlowNode):
+            question_result = None
+            if result.get("type") == "question":
+                question_result = result
+            elif isinstance(next_node, dict) and next_node.get("type") == "question":
+                question_result = next_node
+            if question_result:
+                session = await self._refresh_session(db, session)
+                await chat_repo.update_session_state(
+                    db,
+                    session_id=session.id,
+                    state_updates={
+                        "system": {
+                            "_current_options": question_result.get("options", [])
+                        }
+                    },
+                    current_node_id=question_result.get("node_id", entry_node.node_id),
+                    current_flow_id=session.current_flow_id or entry_node.flow_id,
+                    expected_revision=session.revision,
+                )
+            elif next_node and isinstance(next_node, FlowNode):
                 if next_node.node_type == NodeType.QUESTION:
                     _, options, session = await self._resolve_question_node(
                         db, next_node, session
