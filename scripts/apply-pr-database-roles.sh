@@ -6,13 +6,17 @@ if [[ ! "${POSTGRESQL_DATABASE:-}" =~ ^wriveted_pr_[0-9]+$ ]]; then
   exit 1
 fi
 
-python - <<'PY'
+DATABASE_URL="$(python - <<'PY'
 import os
 from sqlalchemy.engine import make_url
 
-if make_url(os.environ["SQLALCHEMY_DATABASE_URI"]).database != os.environ["POSTGRESQL_DATABASE"]:
+url = make_url(os.environ["SQLALCHEMY_DATABASE_URI"])
+if url.database != os.environ["POSTGRESQL_DATABASE"]:
     raise SystemExit("Role setup connection does not target the PR database")
+print(url.set(drivername="postgresql", host=url.host or "localhost").render_as_string(hide_password=False))
 PY
+)"
+export DATABASE_URL
 
 pgroles_binary="${PGROLES_BINARY:-}"
 if [[ -z "${pgroles_binary}" ]]; then
@@ -28,5 +32,4 @@ if [[ -z "${pgroles_binary}" ]]; then
   pgroles_binary="${artifact_dir}/pgroles"
 fi
 
-export DATABASE_URL="${SQLALCHEMY_DATABASE_URI/postgresql+psycopg2:/postgresql:}"
 "${pgroles_binary}" apply --file pgroles.yaml

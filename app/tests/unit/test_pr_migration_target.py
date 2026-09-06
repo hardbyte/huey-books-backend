@@ -56,3 +56,26 @@ def test_preview_roles_reject_non_preview_database(database):
     )
     assert result.returncode == 1
     assert "A PR database is required" in result.stderr
+
+
+def test_preview_roles_normalize_socket_connection_url(tmp_path):
+    script = Path(__file__).resolve().parents[3] / "scripts/apply-pr-database-roles.sh"
+    pgroles = tmp_path / "pgroles"
+    pgroles.write_text('#!/bin/sh\nprintf "%s" "$DATABASE_URL"\n')
+    pgroles.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "POSTGRESQL_DATABASE": "wriveted_pr_746",
+            "SQLALCHEMY_DATABASE_URI": "postgresql+psycopg2://postgres:test@/wriveted_pr_746?host=/cloudsql/project:region:instance",
+            "PGROLES_BINARY": str(pgroles),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "postgresql://postgres:test@localhost/wriveted_pr_746"
+        "?host=%2Fcloudsql%2Fproject%3Aregion%3Ainstance"
+    )
