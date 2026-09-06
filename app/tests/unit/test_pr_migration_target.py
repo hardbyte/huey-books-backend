@@ -2,6 +2,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def test_pr_migrations_use_the_pr_database(tmp_path):
     script = Path(__file__).resolve().parents[3] / "scripts/run-pr-migrations.sh"
@@ -18,6 +20,8 @@ def test_pr_migrations_use_the_pr_database(tmp_path):
         '"postgresql+psycopg2://postgres:test@/wriveted_pr_746?host=/cloudsql/test:region:instance" ]\n'
     )
     migrations.chmod(0o755)
+    role_setup = scripts / "apply-pr-database-roles.sh"
+    role_setup.write_text(migrations.read_text())
     result = subprocess.run(
         ["bash", str(script)],
         cwd=tmp_path,
@@ -39,3 +43,16 @@ def test_pr_migrations_use_the_pr_database(tmp_path):
     assert result.returncode == 0, (
         "Migration command did not receive the PR database URI"
     )
+
+
+@pytest.mark.parametrize("database", ["postgres", "wriveted", "", "wriveted_pr_invalid"])
+def test_preview_roles_reject_non_preview_database(database):
+    script = Path(__file__).resolve().parents[3] / "scripts/apply-pr-database-roles.sh"
+    result = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "POSTGRESQL_DATABASE": database},
+    )
+    assert result.returncode == 1
+    assert "A PR database is required" in result.stderr

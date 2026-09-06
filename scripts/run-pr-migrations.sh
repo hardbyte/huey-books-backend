@@ -62,3 +62,4 @@ if [[ "${SKIP_MIGRATIONS:-false}" == "true" ]]; then
 fi
 
 scripts/run-migrations.sh
+bash scripts/apply-pr-database-roles.sh
