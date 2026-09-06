@@ -50,6 +50,19 @@ update_collections_function = PGFunction(
     """,
 )
 
+refresh_search_index = PGFunction(
+    schema="public",
+    signature="refresh_search_index()",
+    definition="""returns void LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path = pg_catalog, pg_temp
+      AS $function$
+        BEGIN
+          REFRESH MATERIALIZED VIEW public.search_view_v1;
+        END;
+      $function$
+    """,
+)
+
 refresh_search_view_v1_function = PGFunction(
     schema="public",
     signature="refresh_search_view_v1_function()",

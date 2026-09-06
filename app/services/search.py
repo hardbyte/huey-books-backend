@@ -154,8 +154,7 @@ async def book_search(
 
 async def update_search_view_v1(session: AsyncSession):
     logger.info("Refreshing search view v1")
-    # the function is a trigger function. So we just manually refresh the view for now
-    stmt = text("REFRESH MATERIALIZED VIEW search_view_v1")
+    stmt = text("SELECT public.refresh_search_index()")
     await session.execute(stmt)
     await session.commit()
     logger.info("Refreshed search view v1")
