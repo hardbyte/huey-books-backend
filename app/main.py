@@ -71,8 +71,6 @@ app = FastAPI(
     # version=metadata.version("wriveted-api"),
 )
 
-init_tracing(app, settings)
-
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
@@ -119,6 +117,8 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_headers=["*"],
         expose_headers=["X-Request-ID"],
     )
+
+init_tracing(app, settings)
 
 
 # @app.middleware("http")
