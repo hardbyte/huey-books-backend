@@ -149,12 +149,12 @@ def test_no_trace_fields_outside_request():
 
 @pytest.mark.asyncio
 async def test_request_summary_uses_route_template_not_secrets(monkeypatch):
-    from app.request_logging import RequestLoggingMiddleware
+    from app.middleware.request_logging import RequestLoggingMiddleware
 
     messages = []
     log = []
     monkeypatch.setattr(
-        "app.request_logging.logger.info", lambda event, **fields: log.append(fields)
+        "app.middleware.request_logging.logger.info", lambda event, **fields: log.append(fields)
     )
 
     async def app(scope, receive, send):
