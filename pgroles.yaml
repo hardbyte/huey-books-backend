@@ -62,6 +62,11 @@ roles:
     login: true
     comment: "Read-only access for debugging and analytics"
 
+grants:
+  - role: cloudrun
+    privileges: [EXECUTE]
+    on: { type: function, schema: public, name: "refresh_search_index()" }
+
 memberships:
   - role: public-app
     members:
