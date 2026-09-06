@@ -185,3 +185,16 @@ def test_context_responses_are_not_cacheable(view_as):
         headers={"Authorization": headers["Authorization"]},
     )
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_ordinary_responses_vary_before_view_as_starts(view_as):
+    client, actor, _, headers = view_as
+    response = client.get(
+        "/v1/auth/me", headers={"Authorization": headers["Authorization"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == str(actor.id)
+    assert {"x-view-as", "authorization"} <= {
+        header.strip().lower() for header in response.headers.get("vary", "").split(",")
+    }
+    assert response.headers["cache-control"] == "no-store"

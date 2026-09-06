@@ -56,10 +56,11 @@ def enforce_view_as(
     request: Request, response: Response, db: Session = Depends(get_session)
 ):
     context = request.headers.get("X-View-As")
+    response.headers["Vary"] = "X-View-As, Authorization"
+    if context is not None or request.headers.get("Authorization"):
+        response.headers["Cache-Control"] = "no-store"
     if context is None:
         return
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Vary"] = "X-View-As, Authorization"
     try:
         claims = jwt.decode(
             context,
