@@ -20,7 +20,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
 from app.config import Settings
-from app.request_logging import RequestLoggingMiddleware
+from app.middleware.request_logging import RequestLoggingMiddleware
 
 
 class BoundedTraceClient(TraceServiceClient):
