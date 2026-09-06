@@ -6,12 +6,36 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import structlog
 from opentelemetry import trace
+from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
 from app import logging as app_logging
 from app.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def restore_logging_state():
+    configuration = structlog.get_config()
+    propagator = get_global_textmap()
+    loggers = [logging.getLogger()] + [
+        logger
+        for logger in logging.Logger.manager.loggerDict.values()
+        if isinstance(logger, logging.Logger)
+    ]
+    states = [
+        (logger, logger.handlers[:], logger.level, logger.disabled, logger.propagate)
+        for logger in loggers
+    ]
+    yield
+    structlog.configure(**configuration)
+    set_global_textmap(propagator)
+    for logger, handlers, level, disabled, propagate in states:
+        logger.handlers = handlers
+        logger.setLevel(level)
+        logger.disabled = disabled
+        logger.propagate = propagate
 
 
 def test_cloud_trace_rpc_has_a_deadline_and_no_retry(monkeypatch):
