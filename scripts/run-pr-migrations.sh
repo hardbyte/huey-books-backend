@@ -55,6 +55,7 @@ with engine.connect() as conn:
 PY
 
 export POSTGRESQL_DATABASE="${PR_DATABASE}"
+export SQLALCHEMY_DATABASE_URI="postgresql+psycopg2://${POSTGRESQL_USER}:${POSTGRESQL_PASSWORD}@/${PR_DATABASE}?host=${socket_path}/${project_id}:${location}:${instance_id}"
 if [[ "${SKIP_MIGRATIONS:-false}" == "true" ]]; then
   echo "Skipping migrations for ${PR_DATABASE}"
   exit 0
