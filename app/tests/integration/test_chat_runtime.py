@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 import pytest
@@ -193,6 +194,138 @@ def test_interact_returns_input_request_for_chained_question(
     assert payload["input_request"]["question"]["text"] == "How old are you?"
     assert payload["input_request"]["input_type"] == "text"
     assert payload["input_request"]["variable"] == "age"
+
+
+@pytest.mark.parametrize("enter_via_question", [False, True])
+@pytest.mark.parametrize("child_intro", [False, True])
+def test_terminal_book_feedback_returns_to_parent_question(
+    client, session, cleanup_flow, enter_via_question, child_intro
+):
+    created_flows, _ = cleanup_flow
+    books = [
+        {"isbn": "9780140328721", "title": "QA Book One"},
+        {"isbn": "9780142410318", "title": "QA Book Two"},
+    ]
+    child = _create_flow(
+        session,
+        name="Book feedback child",
+        entry_node_id="intro" if child_intro else "seed",
+        flow_data={},
+        nodes=[
+            {
+                "node_id": "intro",
+                "node_type": NodeType.MESSAGE,
+                "content": {"messages": [{"text": "Here are your books"}]},
+            },
+            {
+                "node_id": "seed",
+                "node_type": NodeType.ACTION,
+                "content": {
+                    "actions": [
+                        {
+                            "type": "set_variable",
+                            "variable": "temp.books",
+                            "value": books,
+                        }
+                    ]
+                },
+            },
+            {
+                "node_id": "books",
+                "node_type": NodeType.QUESTION,
+                "content": {
+                    "question": {"text": "Review these books"},
+                    "input_type": "book_feedback",
+                    "variable": "temp.feedback",
+                    "book_source": "temp.books",
+                },
+            },
+        ],
+        connections=[
+            {"source": "intro", "target": "seed"},
+            {"source": "seed", "target": "books"},
+        ],
+    )
+    created_flows.append(child.id)
+    parent = _create_flow(
+        session,
+        name="Feedback then joke parent",
+        entry_node_id="ready" if enter_via_question else "recommendations",
+        flow_data={},
+        nodes=[
+            {
+                "node_id": "ready",
+                "node_type": NodeType.QUESTION,
+                "content": {
+                    "question": {"text": "Ready?"},
+                    "input_type": "text",
+                    "variable": "temp.ready",
+                },
+            },
+            {
+                "node_id": "recommendations",
+                "node_type": NodeType.COMPOSITE,
+                "content": {"composite_flow_id": str(child.id)},
+            },
+            {
+                "node_id": "joke",
+                "node_type": NodeType.QUESTION,
+                "content": {
+                    "question": {"text": "Would you like a joke?"},
+                    "input_type": "choice",
+                    "variable": "temp.joke",
+                    "options": [{"label": "Yes please", "value": "yes"}],
+                },
+            },
+        ],
+        connections=[
+            {"source": "ready", "target": "recommendations"},
+            {"source": "recommendations", "target": "joke"},
+        ],
+    )
+    created_flows.append(parent.id)
+    started = client.post("/v1/chat/start", json={"flow_id": str(parent.id)})
+    assert started.status_code == 201
+    start = started.json()
+    if enter_via_question:
+        entered = client.post(
+            f"/v1/chat/sessions/{start['session_token']}/interact",
+            json={"input": "yes", "input_type": "text"},
+            headers={"X-CSRF-Token": start["csrf_token"]},
+        )
+        assert entered.status_code == 200
+        question = entered.json()["input_request"]
+    else:
+        question = (
+            start["next_node"]["next_node"] if child_intro else start["next_node"]
+        )
+    assert question["input_type"] == "book_feedback"
+    assert question["books"] == books
+    persisted = (
+        session.query(ConversationSession)
+        .filter_by(session_token=start["session_token"])
+        .one()
+    )
+    assert persisted.current_node_id == "books"
+    assert persisted.current_flow_id == child.id
+    response = client.post(
+        f"/v1/chat/sessions/{start['session_token']}/interact",
+        json={
+            "input": json.dumps({"liked": [], "disliked": [], "read": []}),
+            "input_type": "book_feedback",
+        },
+        headers={"X-CSRF-Token": start["csrf_token"]},
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["input_request"] is not None
+    assert result["input_request"]["question"]["text"] == "Would you like a joke?"
+    assert result["current_node_id"] == "joke"
+    assert result["session_ended"] is False
+    session.refresh(persisted)
+    assert persisted.current_node_id == "joke"
+    assert (persisted.current_flow_id or persisted.flow_id) == parent.id
+    assert persisted.info["flow_stack"] == []
 
 
 def test_trace_recording_failure_does_not_break_interaction(
