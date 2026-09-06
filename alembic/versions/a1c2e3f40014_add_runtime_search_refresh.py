@@ -5,6 +5,7 @@ Revises: a1c2e3f40013
 """
 
 from alembic_utils.pg_function import PGFunction
+from sqlalchemy import text
 
 from alembic import op
 
@@ -30,7 +31,14 @@ refresh_search_index = PGFunction(
 def upgrade() -> None:
     op.create_entity(refresh_search_index)
     op.execute("REVOKE ALL ON FUNCTION public.refresh_search_index() FROM PUBLIC")
-    op.execute("GRANT EXECUTE ON FUNCTION public.refresh_search_index() TO cloudrun")
+    if (
+        op.get_bind()
+        .execute(text("SELECT 1 FROM pg_roles WHERE rolname = 'cloudrun'"))
+        .scalar()
+    ):
+        op.execute(
+            "GRANT EXECUTE ON FUNCTION public.refresh_search_index() TO cloudrun"
+        )
 
 
 def downgrade() -> None:
