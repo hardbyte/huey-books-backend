@@ -1,6 +1,6 @@
 import textwrap
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from starlette import status
@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse, RedirectResponse
 from structlog import get_logger
 
 from app.api.analytics import router as analytics_router
+from app.api.dependencies.view_as import enforce_view_as
 from app.api.external_api_router import api_router
 from app.api.oauth import well_known_router as oauth_well_known_router
 from app.config import get_settings
@@ -60,6 +61,7 @@ logger = get_logger()
 logger.info("Starting Wriveted API")
 
 app = FastAPI(
+    dependencies=[Depends(enforce_view_as)],
     title="Wriveted API",
     description=api_docs,
     docs_url="/v1/docs",

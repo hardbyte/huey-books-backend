@@ -9,8 +9,8 @@ from app.schemas.labelset import LabelSetBasic, LabelSetCreateIn, LabelSetDetail
 
 
 class WorkInfo(BaseModel):
-    genres: list[Genre]
-    other: dict
+    genres: list[Genre] = []
+    other: dict = {}
 
     @field_validator("genres", mode="before")
     @classmethod

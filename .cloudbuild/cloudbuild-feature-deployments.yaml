@@ -75,6 +75,7 @@ steps:
       - execute
       - wriveted-api-pr-migrate
       - "--region=$_DEPLOY_REGION"
+      - "--wait"
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
     args:
       - run
