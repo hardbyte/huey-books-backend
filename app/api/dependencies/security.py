@@ -96,6 +96,7 @@ async def get_optional_token_data(
 def get_user_from_valid_token(
     db: Session = Depends(get_session),
     token_data: TokenPayload = Depends(get_valid_token_data),
+    request: Request = None,
 ) -> Optional[User]:
     """Get user from valid token if token is for user account, None if service account.
 
@@ -112,7 +113,7 @@ def get_user_from_valid_token(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
-        return user
+        return getattr(request.state, "view_as_user", user) if request else user
 
     return None
 
@@ -135,6 +136,7 @@ def get_optional_service_account(
 def get_optional_authenticated_user(
     db: Session = Depends(get_session),
     token_data: Optional[TokenPayload] = Depends(get_optional_token_data),
+    request: Request = None,
 ) -> Optional[User]:
     """Get user from token if present and valid, otherwise return None. Truly optional authentication.
 
@@ -157,7 +159,7 @@ def get_optional_authenticated_user(
         if not user:
             logger.debug("User not found for token")
             return None
-        return user
+        return getattr(request.state, "view_as_user", user) if request else user
 
     return None
 

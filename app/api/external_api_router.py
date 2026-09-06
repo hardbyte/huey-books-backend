@@ -35,12 +35,14 @@ from app.api.service_accounts import router as service_account_router
 from app.api.supporters import router as supporter_router
 from app.api.users import router as user_router
 from app.api.version import router as version_router
+from app.api.view_as import router as view_as_router
 from app.api.works import router as work_router
 
 api_router = APIRouter()
 
 api_router.include_router(analytics_router, prefix="/cms")
 api_router.include_router(auth_router)
+api_router.include_router(view_as_router)
 api_router.include_router(user_router)
 api_router.include_router(author_router)
 api_router.include_router(booklist_router)
