@@ -1,9 +1,13 @@
+import asyncio
 import logging
 import logging.config
+from contextlib import asynccontextmanager
+from functools import partial
 from typing import List
 
 import structlog
 import uvicorn
+from google.cloud.trace_v2 import TraceServiceClient
 from opentelemetry import trace
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
@@ -13,9 +17,27 @@ from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.cloud_trace_propagator import CloudTraceFormatPropagator
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
 from app.config import Settings
+from app.request_logging import RequestLoggingMiddleware
+
+
+class BoundedTraceClient(TraceServiceClient):
+    def batch_write_spans(self, request=None, *, retry=None, timeout=2.0, metadata=()):
+        return super().batch_write_spans(
+            request=request, retry=retry, timeout=timeout, metadata=metadata
+        )
+
+
+def create_span_processor(exporter: SpanExporter) -> BatchSpanProcessor:
+    return BatchSpanProcessor(
+        exporter,
+        max_queue_size=1024,
+        max_export_batch_size=512,
+        schedule_delay_millis=200,
+        export_timeout_millis=5000,
+    )
 
 
 def init_tracing(app, settings: Settings):
@@ -24,36 +46,44 @@ def init_tracing(app, settings: Settings):
     if settings.ENABLE_OTEL_GOOGLE_EXPORTER:
         cloud_trace_exporter = CloudTraceSpanExporter(
             project_id=settings.GCP_PROJECT_ID,
+            client=BoundedTraceClient(),
         )
-        trace.get_tracer_provider().add_span_processor(
-            SimpleSpanProcessor(cloud_trace_exporter)
-        )
+        provider = trace.get_tracer_provider()
+        provider.add_span_processor(create_span_processor(cloud_trace_exporter))
+        original_lifespan = app.router.lifespan_context
+
+        @asynccontextmanager
+        async def tracing_lifespan(application):
+            try:
+                async with original_lifespan(application) as state:
+                    yield state
+            finally:
+                await asyncio.to_thread(provider.shutdown)
+
+        app.router.lifespan_context = tracing_lifespan
         # Set the X-Cloud-Trace-Context header
         set_global_textmap(CloudTraceFormatPropagator())
 
     HTTPXClientInstrumentor().instrument()
+    app.add_middleware(RequestLoggingMiddleware)
     FastAPIInstrumentor().instrument_app(app)
 
     Psycopg2Instrumentor().instrument()
     AsyncPGInstrumentor().instrument()
 
 
-def add_open_telemetry_spans(_, __, event_dict):
-    span = trace.get_current_span()
-    if not span.is_recording():
-        event_dict["span"] = None
+def add_open_telemetry_spans(_, method_name, event_dict, *, project_id: str):
+    event_dict["severity"] = {"warn": "WARNING", "exception": "ERROR"}.get(
+        method_name, method_name.upper()
+    )
+    ctx = trace.get_current_span().get_span_context()
+    if not ctx.is_valid:
         return event_dict
-    event_dict["trace_sampled"] = span.is_recording()
-
-    ctx = span.get_span_context()
-    parent = getattr(span, "parent", None)
-
-    event_dict["span"] = {
-        "span_id": hex(ctx.span_id),
-        "trace_id": hex(ctx.trace_id),
-        "parent_span_id": None if not parent else hex(parent.span_id),
-    }
-
+    event_dict["logging.googleapis.com/trace"] = (
+        f"projects/{project_id}/traces/{ctx.trace_id:032x}"
+    )
+    event_dict["logging.googleapis.com/spanId"] = f"{ctx.span_id:016x}"
+    event_dict["logging.googleapis.com/trace_sampled"] = bool(ctx.trace_flags.sampled)
     return event_dict
 
 
@@ -67,7 +97,7 @@ def init_logging(settings: Settings):
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
-        # add_open_telemetry_spans,
+        partial(add_open_telemetry_spans, project_id=settings.GCP_PROJECT_ID),
         # Don't need a timestamp as cloudrun already adds one
         # structlog.processors.TimeStamper(fmt='iso'),
         structlog.processors.StackInfoRenderer(),
