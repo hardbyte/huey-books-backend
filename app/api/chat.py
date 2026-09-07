@@ -69,24 +69,31 @@ async def _resolve_school_for_context(
     if school_id is not None:
         return await session.get(School, school_id)
 
-    ctx = (initial_state or {}).get("context", {}) or {}
+    ctx = (initial_state or {}).get("context", {})
+    if not isinstance(ctx, dict):
+        raise HTTPException(status_code=422, detail="context must be an object")
     swid = ctx.get("school_wriveted_id")
-    if swid:
+    if swid is not None and swid != "":
+        try:
+            school_uuid = UUID(str(swid))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid school identifier")
         result = await session.execute(
-            select(School).where(School.wriveted_identifier == swid)
+            select(School).where(School.wriveted_identifier == school_uuid)
         )
-        return result.scalar_one_or_none()
+        school = result.scalar_one_or_none()
+        if school is None:
+            raise HTTPException(status_code=404, detail="School not found")
+        return school
     return None
 
 
 async def _resolve_campaign_for_start(
     session: DBSessionDep,
-    current_user: Optional[User],
-    initial_state: Optional[dict],
+    school: Optional[School],
 ) -> Optional[Campaign]:
     """Best-effort campaign resolution for a starting session. Never raises."""
     try:
-        school = await _resolve_school_for_context(session, current_user, initial_state)
         region_state = None
         if school and isinstance(school.info, dict):
             location = school.info.get("location")
@@ -147,10 +154,18 @@ async def start_conversation(
         effective_flow_id = session_data.flow_id
         resolved_campaign: Optional[Campaign] = None
         initial_state = dict(session_data.initial_state or {})
+        context = initial_state.get("context", {})
+        if not isinstance(context, dict):
+            raise HTTPException(status_code=422, detail="context must be an object")
+        school = await _resolve_school_for_context(session, current_user, initial_state)
+        if school is not None:
+            initial_state["context"] = {
+                **context,
+                "school_wriveted_id": str(school.wriveted_identifier),
+                "school_name": school.name,
+            }
         if effective_flow_id is None:
-            resolved_campaign = await _resolve_campaign_for_start(
-                session, current_user, initial_state
-            )
+            resolved_campaign = await _resolve_campaign_for_start(session, school)
             if resolved_campaign and resolved_campaign.flow_id:
                 effective_flow_id = resolved_campaign.flow_id
 
@@ -175,39 +190,8 @@ async def start_conversation(
             user_id=user_id_for_session,
             session_token=session_token,
             initial_state=initial_state,
+            school_id=school.wriveted_identifier if school is not None else None,
         )
-
-        # Resolve school name from school_wriveted_id if not already set
-        session_state = conversation_session.state or {}
-        ctx = session_state.get("context", {})
-        school_wriveted_id = ctx.get("school_wriveted_id")
-        if school_wriveted_id and not ctx.get("school_name"):
-            try:
-                from app.repositories.school_repository import school_repository
-
-                school_obj = await school_repository.aget_by_wriveted_id_or_404(
-                    db=session, wriveted_id=school_wriveted_id
-                )
-                ctx["school_name"] = school_obj.name
-                session_state["context"] = ctx
-                await chat_repo.update_session_state(
-                    session,
-                    session_id=conversation_session.id,
-                    state_updates=session_state,
-                    expected_revision=conversation_session.revision,
-                )
-                # Refresh session to pick up updated state
-                refreshed = await chat_repo.get_session_by_id(
-                    session, conversation_session.id
-                )
-                if refreshed:
-                    conversation_session = refreshed
-            except Exception as e:
-                logger.warning(
-                    "Could not resolve school name",
-                    school_wriveted_id=school_wriveted_id,
-                    error=str(e),
-                )
 
         # Get initial node
         initial_node = await chat_runtime.get_initial_node(

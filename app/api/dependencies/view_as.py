@@ -18,6 +18,7 @@ VIEW_AS_ROLES = {UserAccountType.EDUCATOR, UserAccountType.SCHOOL_ADMIN}
 READ_ROUTES = {
     "/auth/me",
     "/school/{wriveted_identifier}",
+    "/school/{school_uuid}/insights",
     "/school/{wriveted_identifier}/staff",
     "/collection/{collection_id}",
     "/collection/{collection_id}/items",

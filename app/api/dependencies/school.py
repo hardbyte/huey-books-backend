@@ -30,6 +30,15 @@ async def aget_school_from_wriveted_id(
     )
 
 
+async def aget_school_from_uuid(
+    session: DBSessionDep,
+    school_uuid: uuid.UUID = Path(..., description="Public school UUID"),
+):
+    return await school_repository.aget_by_wriveted_id_or_404(
+        db=session, wriveted_id=school_uuid
+    )
+
+
 def get_optional_school_from_wriveted_id_query(
     wriveted_identifier: uuid.UUID = Query(
         None, description="UUID representing a unique school in the Wriveted database"

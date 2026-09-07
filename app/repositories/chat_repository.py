@@ -53,6 +53,7 @@ class ChatRepository:
         *,
         flow_id: UUID,
         user_id: Optional[UUID] = None,
+        school_id: Optional[UUID] = None,
         session_token: str,
         initial_state: Optional[Dict[str, Any]] = None,
         meta_data: Optional[Dict[str, Any]] = None,
@@ -76,9 +77,10 @@ class ChatRepository:
         session = ConversationSession(
             flow_id=flow_id,
             user_id=user_id,
+            school_id=school_id,
             session_token=session_token,
             state=state,
-            info=meta_data or {},
+            info={**(meta_data or {}), "school_attribution_version": 1},
             status=SessionStatus.ACTIVE,
             revision=1,
             state_hash=state_hash,
@@ -216,6 +218,24 @@ class ChatRepository:
         await db.refresh(history_entry)
 
         return history_entry
+
+    async def get_offered_books(
+        self, db: AsyncSession, *, session_id: UUID, node_id: str
+    ) -> object:
+        result = await db.scalars(
+            select(ConversationHistory.content)
+            .where(
+                ConversationHistory.session_id == session_id,
+                ConversationHistory.node_id == node_id,
+                ConversationHistory.interaction_type == InteractionType.MESSAGE,
+            )
+            .order_by(
+                ConversationHistory.created_at.desc(), ConversationHistory.id.desc()
+            )
+            .limit(1)
+        )
+        content = result.first()
+        return content.get("offered_isbns") if isinstance(content, dict) else None
 
     async def get_session_history(
         self, db: AsyncSession, *, session_id: UUID, skip: int = 0, limit: int = 100

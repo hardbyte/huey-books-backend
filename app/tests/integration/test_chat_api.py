@@ -261,6 +261,60 @@ def test_start_conversation_with_invalid_flow(client):
     assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
+def test_start_conversation_pins_school(
+    client, test_flow_with_nodes, test_school, session
+):
+    school_id = test_school.wriveted_identifier
+    response = client.post(
+        "v1/chat/start",
+        json={
+            "flow_id": test_flow_with_nodes["flow_id"],
+            "initial_state": {
+                "context": {
+                    "school_wriveted_id": str(school_id),
+                    "school_name": "Forged",
+                }
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    session_id = response.json()["session_id"]
+    persisted = session.execute(
+        text("SELECT school_id, state FROM conversation_sessions WHERE id = :id"),
+        {"id": session_id},
+    ).one()
+    assert persisted.school_id == school_id
+    assert persisted.state["context"]["school_name"] == test_school.name
+    session.execute(
+        text("UPDATE conversation_sessions SET state = '{}'::jsonb WHERE id = :id"),
+        {"id": session_id},
+    )
+    session.commit()
+    assert (
+        session.execute(
+            text("SELECT school_id FROM conversation_sessions WHERE id = :id"),
+            {"id": session_id},
+        ).scalar_one()
+        == school_id
+    )
+
+
+@pytest.mark.parametrize(
+    "identifier, expected", [("x" * 36, 422), (str(uuid.uuid4()), 404)]
+)
+def test_start_conversation_rejects_invalid_school(
+    client, test_flow_with_nodes, identifier, expected
+):
+    response = client.post(
+        "v1/chat/start",
+        json={
+            "flow_id": test_flow_with_nodes["flow_id"],
+            "initial_state": {"context": {"school_wriveted_id": identifier}},
+        },
+    )
+    assert response.status_code == expected, response.text
+
+
 def test_get_session_state(client, test_flow_with_nodes):
     """Test retrieving current session state."""
     # Start session first

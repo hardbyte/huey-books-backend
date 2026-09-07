@@ -612,6 +612,14 @@ class FlowConnection(Base):
 class ConversationSession(Base):
     __tablename__ = "conversation_sessions"  # type: ignore[assignment]
 
+    __table_args__ = (
+        Index(
+            "ix_conversation_sessions_school_id_started",
+            "school_id",
+            "started_at",
+        ),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         default=uuid.uuid4,
@@ -623,6 +631,13 @@ class ConversationSession(Base):
         ForeignKey("users.id", name="fk_session_user", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+
+    school_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey(
+            "schools.wriveted_identifier", name="fk_session_school", ondelete="SET NULL"
+        ),
+        nullable=True,
     )
 
     flow_id: Mapped[uuid.UUID] = mapped_column(
