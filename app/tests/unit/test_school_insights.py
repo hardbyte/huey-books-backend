@@ -20,6 +20,24 @@ from app.services.school_insights import summarize
 from app.services.security import create_access_token
 
 
+@pytest.mark.asyncio
+async def test_snapshot_reuses_catalogue_relations():
+    from app.repositories.school_insights import read_snapshot
+
+    result = Mock()
+    result.mappings.return_value.one.return_value = {
+        "engagement": [],
+        "collection": {},
+        "interests": [],
+    }
+    db = AsyncMock()
+    db.execute.return_value = result
+    await read_snapshot(db, {})
+    query = str(db.execute.await_args.args[0])
+    assert query.count("JOIN editions") == 1
+    assert query.count("FROM labelsets") == 1
+
+
 def row(sessions=10, reached=5, feedback=0, **values):
     return {
         "week": datetime(2026, 8, 3).date(),

@@ -12,18 +12,20 @@ WHERE school_id = CAST(:school_uuid AS uuid)
   AND started_at >= :start AND started_at < :end
 """
 
-HOLDINGS = """
-SELECT DISTINCT e.work_id
+CATALOGUE = """
+catalogue_items AS MATERIALIZED (
+SELECT e.work_id
 FROM collections c
 JOIN collection_items ci ON ci.collection_id = c.id
-JOIN editions e ON e.isbn = ci.edition_isbn
-WHERE c.school_id = CAST(:school_uuid AS uuid) AND e.work_id IS NOT NULL
-"""
-
-LATEST_LABELS = f"""
+LEFT JOIN editions e ON e.isbn = ci.edition_isbn
+WHERE c.school_id = CAST(:school_uuid AS uuid)
+), held AS MATERIALIZED (
+SELECT DISTINCT work_id FROM catalogue_items WHERE work_id IS NOT NULL
+), latest AS MATERIALIZED (
 SELECT DISTINCT ON (ls.work_id) ls.id, ls.work_id, ls.checked, ls.min_age, ls.max_age
-FROM labelsets ls JOIN ({HOLDINGS}) held ON held.work_id = ls.work_id
+FROM labelsets ls JOIN held ON held.work_id = ls.work_id
 ORDER BY ls.work_id, ls.id DESC
+)
 """
 
 
@@ -70,9 +72,8 @@ def engagement_query() -> str:
         """
 
 
-def collection_query() -> str:
-    return f"""
-        WITH held AS ({HOLDINGS}), latest AS ({LATEST_LABELS})
+def collection_select() -> str:
+    return """
         SELECT count(*) AS works,
           count(*) FILTER (WHERE
             EXISTS (SELECT 1 FROM labelset_hue_association h WHERE h.labelset_id = l.id)
@@ -80,17 +81,14 @@ def collection_query() -> str:
           ) AS labelled,
           count(*) FILTER (WHERE l.checked IS NOT TRUE) AS awaiting_review,
           count(*) FILTER (WHERE l.min_age IS NULL OR l.max_age IS NULL) AS missing_age,
-          (SELECT count(*) FROM collections c
-           JOIN collection_items ci ON ci.collection_id = c.id
-           LEFT JOIN editions e ON e.isbn = ci.edition_isbn
-           WHERE c.school_id = CAST(:school_uuid AS uuid) AND e.work_id IS NULL) AS unmatched_items
+          (SELECT count(*) FROM catalogue_items WHERE work_id IS NULL) AS unmatched_items
         FROM held LEFT JOIN latest l ON l.work_id = held.work_id
         """
 
 
-def interests_query() -> str:
+def interests_select() -> str:
     return f"""
-        WITH cohort AS ({COHORT}), latest AS ({LATEST_LABELS}), interests AS (
+        WITH cohort AS ({COHORT}), interests AS (
           SELECT h.id, h.name, count(DISTINCT s.id) AS sessions
           FROM cohort s
           CROSS JOIN LATERAL jsonb_array_elements_text(
@@ -109,6 +107,18 @@ def interests_query() -> str:
         GROUP BY i.id, i.name, i.sessions
         ORDER BY labelled_works, i.sessions DESC, i.name LIMIT 8
         """
+
+
+def collection_query() -> str:
+    return f"WITH {CATALOGUE} {collection_select()}"
+
+
+def interests_query() -> str:
+    return f"""
+        WITH {CATALOGUE}, interests AS ({interests_select()})
+        SELECT name, sessions, labelled_works FROM interests
+        ORDER BY labelled_works, sessions DESC, name
+    """
 
 
 async def read_engagement(db: AsyncSession, parameters: dict) -> list[dict]:
@@ -136,9 +146,9 @@ async def read_snapshot(db: AsyncSession, parameters: dict) -> dict:
     )
     result = await db.execute(
         text(f"""
-        WITH engagement AS ({engagement_query()}),
-             collection AS ({collection_query()}),
-             interests AS ({interests_query()})
+        WITH {CATALOGUE}, engagement AS ({engagement_query()}),
+             collection AS ({collection_select()}),
+             interests AS ({interests_select()})
         SELECT coalesce((SELECT jsonb_agg(e ORDER BY e.week) FROM engagement e), '[]'::jsonb) AS engagement,
                (SELECT to_jsonb(c) FROM collection c) AS collection,
                coalesce((SELECT jsonb_agg(i ORDER BY i.labelled_works, i.sessions DESC, i.name) FROM interests i), '[]'::jsonb) AS interests
