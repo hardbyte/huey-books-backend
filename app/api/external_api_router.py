@@ -28,6 +28,7 @@ from app.api.oauth import token_router as oauth_token_router
 from app.api.onboarding import router as onboarding_router
 from app.api.recommendations import router as recommendations_router
 from app.api.reviews import router as reviews_router
+from app.api.school_insights import router as school_insights_router
 from app.api.schools import public_router as school_router_public
 from app.api.schools import router as school_router
 from app.api.search import router as search_router
@@ -67,6 +68,7 @@ api_router.include_router(events_router)
 api_router.include_router(hydration_router)
 api_router.include_router(illustrator_router)
 api_router.include_router(kpis_router)
+api_router.include_router(school_insights_router)
 api_router.include_router(labelset_router)
 api_router.include_router(invitations_router)
 api_router.include_router(onboarding_router)

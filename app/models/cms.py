@@ -612,6 +612,17 @@ class FlowConnection(Base):
 class ConversationSession(Base):
     __tablename__ = "conversation_sessions"  # type: ignore[assignment]
 
+    __table_args__ = (
+        Index(
+            "ix_conversation_sessions_school_started",
+            text("(state #>> '{context,school_wriveted_id}')"),
+            "started_at",
+            postgresql_where=text(
+                "length(state #>> '{context,school_wriveted_id}') = 36"
+            ),
+        ),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         default=uuid.uuid4,

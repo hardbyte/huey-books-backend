@@ -187,6 +187,7 @@ class School(Base):
         return [
             (Allow, "role:admin", All),
             (Allow, f"schooladmin:{self.id}", All),
+            (Allow, f"educator:{self.id}", "insights"),
             (Allow, "role:lms", "batch"),
             (Allow, "role:lms", "update"),
             (Allow, "role:lms", "read"),
