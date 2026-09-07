@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query, Response
+from sqlalchemy.exc import DBAPIError
 
 from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.school import aget_school_from_wriveted_id
@@ -20,4 +21,11 @@ async def school_insights(
     if weeks not in (4, 12, 26):
         raise HTTPException(422, "Choose 4, 12 or 26 complete weeks")
     response.headers["Cache-Control"] = "private, no-store"
-    return await get_school_insights(session, school, weeks)
+    try:
+        return await get_school_insights(session, school, weeks)
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "57014":
+            raise HTTPException(
+                503, "Insights took too long. Please try again later."
+            ) from exc
+        raise

@@ -36,9 +36,13 @@ def summarize(
     hide_sessions = small(sessions)
     hide_reached = hide_sessions or small(reached) or small(sessions - reached)
     hide_feedback = hide_reached or small(feedback) or small(reached - feedback)
-    hide_categories = hide_feedback or any(
-        small(totals[key])
-        for key in ("liked_sessions", "disliked_sessions", "read_sessions")
+    hide_categories = (
+        hide_feedback
+        or any(row.get("unverified_feedback", 0) for row in rows)
+        or any(
+            small(totals[key])
+            for key in ("liked_sessions", "disliked_sessions", "read_sessions")
+        )
     )
     engagement = Engagement(
         sessions=None if hide_sessions else sessions,
@@ -74,8 +78,8 @@ async def get_school_insights(
     )
     start = end - timedelta(weeks=weeks)
     parameters = repository.query_parameters(school.wriveted_identifier, start, end)
-    rows = await repository.read_engagement(db, parameters)
-    engagement, trends = summarize(rows, start, weeks)
+    snapshot = await repository.read_snapshot(db, parameters)
+    engagement, trends = summarize(snapshot["engagement"], start, weeks)
     return SchoolInsights(
         school_id=school.wriveted_identifier,
         school_name=school.name,
@@ -83,7 +87,7 @@ async def get_school_insights(
         end_date=end.date(),
         generated_at=now,
         engagement=engagement,
-        collection=await repository.read_collection(db, school.wriveted_identifier),
+        collection=snapshot["collection"],
         trends=trends,
-        interests=await repository.read_interests(db, parameters),
+        interests=snapshot["interests"],
     )

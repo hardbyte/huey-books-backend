@@ -9,6 +9,7 @@ from app.repositories.school_insights import (
     read_collection,
     read_engagement,
     read_interests,
+    read_snapshot,
 )
 
 
@@ -34,8 +35,8 @@ async def test_school_insights_http_contract(
 async def test_school_aggregate_queries(async_session):
     # Temporary tables shadow production schema within this test transaction.
     definitions = {
-        "conversation_sessions": "id uuid, started_at timestamp, state jsonb",
-        "conversation_history": "session_id uuid, interaction_type text, content jsonb, created_at timestamp",
+        "conversation_sessions": "id uuid, started_at timestamp, state jsonb, school_id uuid",
+        "conversation_history": "session_id uuid, interaction_type text, content jsonb, created_at timestamp, id uuid DEFAULT gen_random_uuid()",
         "collections": "id uuid, school_id uuid",
         "collection_items": "collection_id uuid, edition_isbn text",
         "editions": "isbn text, work_id int",
@@ -63,15 +64,20 @@ async def test_school_aggregate_queries(async_session):
         }
         await async_session.execute(
             text(
-                "INSERT INTO conversation_sessions VALUES (:id, :started, CAST(:state AS jsonb))"
+                "INSERT INTO conversation_sessions VALUES (:id, :started, CAST(:state AS jsonb), :school)"
             ),
-            {"id": session_id, "started": start, "state": json.dumps(state)},
+            {
+                "id": session_id,
+                "started": start,
+                "state": json.dumps(state),
+                "school": school if index < 10 else other,
+            },
         )
         if index < 5 or index >= 10:
             for interaction in ("MESSAGE", "MESSAGE", "INPUT"):
                 await async_session.execute(
                     text(
-                        'INSERT INTO conversation_history VALUES (:id, :kind, \'{"input_type":"book_feedback"}\', :created)'
+                        'INSERT INTO conversation_history (session_id, interaction_type, content, created_at) VALUES (:id, :kind, \'{"input_type":"book_feedback", "validated_feedback":{"liked":["9780140328721"],"disliked":[],"read":[]}}\', :created)'
                     ),
                     {
                         "id": session_id,
@@ -81,9 +87,12 @@ async def test_school_aggregate_queries(async_session):
                 )
     # Future and malformed/unattributed sessions must not enter the cohort.
     await async_session.execute(
-        text("INSERT INTO conversation_sessions VALUES (:id, :started, :state)"),
+        text(
+            "INSERT INTO conversation_sessions VALUES (:id, :started, :state, :school)"
+        ),
         {
             "id": uuid4(),
+            "school": school,
             "started": end,
             "state": json.dumps({"context": {"school_wriveted_id": str(school)}}),
         },
@@ -95,6 +104,7 @@ async def test_school_aggregate_queries(async_session):
     assert rows[0]["reached"] == rows[0]["feedback"] == 5
     assert rows[0]["liked"] == rows[0]["liked_sessions"] == 5
     assert rows[0]["disliked"] == rows[0]["already_read"] == 0
+    assert rows[0]["unverified_feedback"] == 0
     assert (
         await read_engagement(async_session, query_parameters(uuid4(), start, end))
         == []
@@ -142,6 +152,25 @@ async def test_school_aggregate_queries(async_session):
     assert await read_interests(async_session, parameters) == [
         {"name": "Funny", "sessions": 10, "labelled_works": 1}
     ]
+    snapshot = await read_snapshot(async_session, parameters)
+    assert snapshot["engagement"] == rows
+    assert snapshot["collection"] == await read_collection(async_session, school)
+    assert snapshot["interests"] == await read_interests(async_session, parameters)
     assert (
         await read_interests(async_session, query_parameters(other, start, end)) == []
     )
+
+    await async_session.execute(
+        text(
+            "UPDATE conversation_sessions SET state = '{}'::jsonb WHERE id = (SELECT id FROM conversation_sessions WHERE school_id = :school LIMIT 1)"
+        ),
+        {"school": school},
+    )
+    assert await read_interests(async_session, parameters) == []
+    assert (await read_engagement(async_session, parameters))[0]["sessions"] == 10
+    await async_session.execute(
+        text("UPDATE conversation_history SET content = content - 'validated_feedback'")
+    )
+    assert (await read_engagement(async_session, parameters))[0][
+        "unverified_feedback"
+    ] == 5

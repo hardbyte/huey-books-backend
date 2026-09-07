@@ -22,6 +22,7 @@ from app.models.cms import (
 )
 from app.repositories.chat_repository import chat_repo
 from app.repositories.cms_repository import CMSRepositoryImpl
+from app.services.book_feedback import book_identifier, normalize_feedback
 from app.services.execution_trace import execution_trace_service
 from app.services.variable_resolver import create_session_resolver
 
@@ -371,6 +372,23 @@ class QuestionNodeProcessor(NodeProcessor):
                 else:
                     question_message = {"text": cms_question_text}
 
+        offered_isbns = None
+        if node_content.get("input_type") == "book_feedback":
+            source = node_content.get("book_source")
+            books = (
+                self.runtime.substitute_object(f"{{{{{source}}}}}", session_state)
+                if source
+                else None
+            )
+            if isinstance(books, list) and all(book_identifier(book) for book in books):
+                offered_isbns = sorted(
+                    {
+                        identifier
+                        for book in books
+                        if (identifier := book_identifier(book))
+                    }
+                )
+
         # Record question in history
         await chat_repo.add_interaction_history(
             db,
@@ -381,6 +399,7 @@ class QuestionNodeProcessor(NodeProcessor):
                 "question": question_message,
                 "content_id": content_id,
                 "input_type": node_content.get("input_type", "text"),
+                "offered_isbns": offered_isbns,
                 "timestamp": datetime.utcnow().isoformat(),
             },
         )
@@ -715,6 +734,13 @@ class QuestionNodeProcessor(NodeProcessor):
             # Update the session reference to the new one
             session = updated_session
 
+        validated_feedback = None
+        if input_type == "book_feedback":
+            offered = await chat_repo.get_offered_books(
+                db, session_id=session.id, node_id=node.node_id
+            )
+            validated_feedback = normalize_feedback(user_input, offered)
+
         # Record user input in history
         await chat_repo.add_interaction_history(
             db,
@@ -723,6 +749,7 @@ class QuestionNodeProcessor(NodeProcessor):
             interaction_type=InteractionType.INPUT,
             content={
                 "input": user_input,
+                "validated_feedback": validated_feedback,
                 "input_type": input_type,
                 "variable": variable_name,
                 "timestamp": datetime.utcnow().isoformat(),
@@ -974,6 +1001,7 @@ class ChatRuntime:
         user_id: Optional[UUID] = None,
         session_token: Optional[str] = None,
         initial_state: Optional[Dict[str, Any]] = None,
+        school_id: Optional[UUID] = None,
     ) -> ConversationSession:
         """Start a new conversation session."""
         # Get flow definition
@@ -997,6 +1025,7 @@ class ChatRuntime:
             db,
             flow_id=flow_id,
             user_id=user_id,
+            school_id=school_id,
             session_token=session_token,
             initial_state=initial_state,
             flow_version=flow.version,

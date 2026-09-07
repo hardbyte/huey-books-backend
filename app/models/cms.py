@@ -614,12 +614,9 @@ class ConversationSession(Base):
 
     __table_args__ = (
         Index(
-            "ix_conversation_sessions_school_started",
-            text("(state #>> '{context,school_wriveted_id}')"),
+            "ix_conversation_sessions_school_id_started",
+            "school_id",
             "started_at",
-            postgresql_where=text(
-                "length(state #>> '{context,school_wriveted_id}') = 36"
-            ),
         ),
     )
 
@@ -634,6 +631,13 @@ class ConversationSession(Base):
         ForeignKey("users.id", name="fk_session_user", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+
+    school_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey(
+            "schools.wriveted_identifier", name="fk_session_school", ondelete="SET NULL"
+        ),
+        nullable=True,
     )
 
     flow_id: Mapped[uuid.UUID] = mapped_column(

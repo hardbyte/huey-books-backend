@@ -18,12 +18,12 @@ Prefer partition replacement/upserts in aggregate tables over assuming materiali
 
 ## Define the numbers before moving them
 
-The implementation sources are [school insight queries](../app/repositories/school_insights.py) and [session/history models](../app/models/cms.py). School attribution currently comes from `state.context.school_wriveted_id`; recommendation milestones come from `conversation_history` entries with `input_type = book_feedback`; feedback and hue selections use current session state. Consequently:
+The implementation sources are [school insight queries](../app/repositories/school_insights.py) and [session/history models](../app/models/cms.py). School attribution is a typed session foreign key, resolved at creation; legacy rows are inferred only from matching school links. Recommendation milestones and validated feedback come from `conversation_history`; hue selections still use current session state. Consequently:
 
 - Count **sessions**, not unique students. Anonymous sessions do not establish identity or attendance.
 - Distinguish “reached recommendations”, “submitted feedback” and any actual journey-completion event. A feedback milestone does not prove the child browsed every book.
 - “Looks good” is expressed interest, not a loan, completed read or learning outcome. “Already read” is self-reported.
-- Current feedback/hue state is mutable. Historical cohort figures can change after a session resumes; extraction cannot reconstruct previously overwritten choices.
+- Hue state is mutable, and latest-submission feedback figures can change after a session resumes. New submissions retain validated choices in history; legacy choices without recorded offered books are not reconstructed or treated as zero.
 - Collection coverage is a current snapshot, not historical availability. Distinct works, catalogue items and copies are different units. An unchecked label is not automatically a missing label.
 - Keep latency and system errors on the staff dashboard. Regional usage should use explicitly defined school location, not infer children's locations from IP addresses.
 

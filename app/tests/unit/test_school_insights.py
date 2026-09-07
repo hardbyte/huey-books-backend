@@ -43,6 +43,16 @@ def test_empty_is_zero_not_suppressed():
     assert all(point["sessions"] == 0 for point in trends)
 
 
+def test_unverified_feedback_withholds_choices_not_submission_count():
+    summary, _ = summarize(
+        [row(10, 10, 10, unverified_feedback=1)], datetime(2026, 8, 3), 4
+    )
+    assert summary.feedback_sessions == 10
+    assert summary.liked is None
+    assert summary.disliked is None
+    assert summary.already_read is None
+
+
 @pytest.mark.parametrize("count", [1, 2, 3, 4])
 def test_small_cohort_hidden(count):
     summary, trends = summarize([row(count, 0)], datetime(2026, 8, 3), 4)
