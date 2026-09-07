@@ -6,6 +6,7 @@ from sqlalchemy import (
     Computed,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     func,
@@ -32,6 +33,9 @@ if TYPE_CHECKING:
 
 class Edition(Base):
     __tablename__ = "editions"  # type: ignore[assignment]
+    __table_args__ = (
+        Index("ix_editions_isbn_work_id", "isbn", postgresql_include=["work_id"]),
+    )
 
     id: Mapped[intpk] = mapped_column(Integer, primary_key=True, autoincrement=True)
 

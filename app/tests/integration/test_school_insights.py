@@ -14,6 +14,14 @@ from app.repositories.school_insights import (
 
 
 @pytest.mark.asyncio
+async def test_catalogue_lookup_has_covering_index(async_session):
+    definition = await async_session.scalar(
+        text("SELECT pg_get_indexdef('ix_editions_isbn_work_id'::regclass)")
+    )
+    assert "USING btree (isbn) INCLUDE (work_id)" in definition
+
+
+@pytest.mark.asyncio
 async def test_school_insights_http_contract(
     async_client,
     test_school,
