@@ -7,7 +7,7 @@ from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, func,
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.ext.mutable import MutableDict
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from app.db import Base
 from app.models.service_account_school_association import (
@@ -59,6 +59,8 @@ class School(Base):
         unique=True,
         nullable=False,
     )
+
+    school_uuid: Mapped[uuid.UUID] = synonym("wriveted_identifier")
 
     __table_args__ = (
         # Composite INDEX combining country code and country specific IDs e.g. (AUS, ACARA ID)

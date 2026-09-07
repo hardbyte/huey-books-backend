@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
@@ -8,13 +8,14 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.dependencies.async_db_dep import get_async_session
-from app.api.dependencies.school import aget_school_from_wriveted_id
+from app.api.dependencies.school import aget_school_from_uuid
 from app.api.dependencies.security import get_active_principals
 from app.api.dependencies.view_as import create_view_as_context, enforce_view_as
 from app.api.school_insights import router
 from app.db.session import get_session
 from app.models.school import School
 from app.models.user import UserAccountType
+from app.services import school_insights as insights_service
 from app.services.school_insights import summarize
 from app.services.security import create_access_token
 
@@ -36,7 +37,10 @@ def row(sessions=10, reached=5, feedback=0, **values):
 
 
 def test_empty_is_zero_not_suppressed():
-    summary, trends = summarize([], datetime(2026, 8, 3), 4)
+    summary, trends, availability = summarize([], datetime(2026, 8, 3), 4)
+    assert availability.sessions == "available"
+    assert availability.recommendation_rate == "no_sessions"
+    assert availability.trends == "available"
     assert summary.sessions == 0
     assert summary.recommendation_rate is None
     assert len(trends) == 4
@@ -44,39 +48,95 @@ def test_empty_is_zero_not_suppressed():
 
 
 def test_unverified_feedback_withholds_choices_not_submission_count():
-    summary, _ = summarize(
+    summary, _, availability = summarize(
         [row(10, 10, 10, unverified_feedback=1)], datetime(2026, 8, 3), 4
     )
     assert summary.feedback_sessions == 10
     assert summary.liked is None
     assert summary.disliked is None
     assert summary.already_read is None
+    assert availability.feedback_choices == "unverified_history"
 
 
 @pytest.mark.parametrize("count", [1, 2, 3, 4])
 def test_small_cohort_hidden(count):
-    summary, trends = summarize([row(count, 0)], datetime(2026, 8, 3), 4)
+    summary, trends, availability = summarize([row(count, 0)], datetime(2026, 8, 3), 4)
+    assert availability.sessions == "privacy_suppressed"
+    assert availability.trends == "privacy_suppressed"
     assert all(value is None for value in summary.model_dump().values())
     assert trends == []
 
 
 def test_complementary_suppression_and_no_trend_differencing():
-    summary, _ = summarize([row(10, 9)], datetime(2026, 8, 3), 4)
+    summary, _, availability = summarize([row(10, 9)], datetime(2026, 8, 3), 4)
+    assert availability.reached_recommendations == "privacy_suppressed"
     assert summary.sessions == 10
     assert summary.reached_recommendations is None
     assert summary.recommendation_rate is None
-    _, trends = summarize([row(10), row(1, 0)], datetime(2026, 8, 3), 4)
+    _, trends, _ = summarize([row(10), row(1, 0)], datetime(2026, 8, 3), 4)
     assert trends == []
 
 
 def test_feedback_categories_hidden_together():
-    summary, _ = summarize(
+    summary, _, availability = summarize(
         [row(10, 10, 10, liked=1, liked_sessions=1, disliked=15, disliked_sessions=9)],
         datetime(2026, 8, 3),
         4,
     )
     assert summary.feedback_sessions == 10
     assert summary.liked is summary.disliked is summary.already_read is None
+    assert availability.feedback_choices == "privacy_suppressed"
+
+
+def test_privacy_reason_does_not_disclose_unverified_history_in_small_groups():
+    _, _, availability = summarize(
+        [row(4, 4, 4, unverified_feedback=1)], datetime(2026, 8, 3), 4
+    )
+    assert availability.feedback_choices == "privacy_suppressed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("weeks", [4, 12, 26])
+@pytest.mark.parametrize(
+    "now", ["2026-09-06T23:59:59+00:00", "2026-09-07T00:00:00+00:00"]
+)
+async def test_complete_utc_week_boundaries(monkeypatch, weeks, now):
+    instant = datetime.fromisoformat(now)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz == timezone.utc
+            return instant
+
+    snapshot = AsyncMock(
+        return_value={
+            "engagement": [],
+            "collection": {
+                key: 0
+                for key in (
+                    "works",
+                    "labelled",
+                    "awaiting_review",
+                    "missing_age",
+                    "unmatched_items",
+                )
+            },
+            "interests": [],
+        }
+    )
+    monkeypatch.setattr(insights_service, "datetime", Clock)
+    monkeypatch.setattr(insights_service.repository, "read_snapshot", snapshot)
+    school = School(school_uuid=uuid4(), name="Test school")
+    report = await insights_service.get_school_insights(Mock(), school, weeks)
+    expected_end = (
+        datetime(2026, 8, 31) if instant.weekday() == 6 else datetime(2026, 9, 7)
+    )
+    assert report.end_date == expected_end.date()
+    assert report.start_date == (expected_end - timedelta(weeks=weeks)).date()
+    assert report.generated_at == instant
+    assert len(report.trends) == weeks
+    assert snapshot.call_args.args[1]["end"] == expected_end
 
 
 @pytest.fixture
@@ -84,16 +144,17 @@ def endpoint(monkeypatch):
     school = School(id=42, wriveted_identifier=uuid4(), name="Test school")
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[aget_school_from_wriveted_id] = lambda: school
+    app.dependency_overrides[aget_school_from_uuid] = lambda: school
     app.dependency_overrides[get_async_session] = lambda: Mock()
     service = AsyncMock(
         return_value={
-            "school_id": school.wriveted_identifier,
+            "school_uuid": school.school_uuid,
             "school_name": school.name,
             "start_date": "2026-08-03",
             "end_date": "2026-08-31",
             "generated_at": "2026-08-31T00:00:00Z",
             "engagement": summarize([], datetime(2026, 8, 3), 4)[0],
+            "availability": summarize([], datetime(2026, 8, 3), 4)[2],
             "collection": {
                 "works": 0,
                 "labelled": 0,
@@ -121,7 +182,59 @@ def test_authorized_roles(endpoint, principal):
     response = client.get(path)
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "private, no-store"
+    assert response.json()["school_uuid"] == response.json()["school_id"]
     service.assert_awaited_once()
+
+
+def test_identifier_contract_in_openapi(endpoint):
+    app, _, _, _ = endpoint
+    schema = app.openapi()
+    operation = schema["paths"]["/school/{school_uuid}/insights"]["get"]
+    assert any(
+        parameter["name"] == "school_uuid" for parameter in operation["parameters"]
+    )
+    response_schema = schema["components"]["schemas"]["SchoolInsights"]
+    assert response_schema["properties"]["school_id"]["deprecated"] is True
+    assert "school_uuid" in response_schema["required"]
+    assert schema["components"]["schemas"]["InsightsWeeks"]["enum"] == [4, 12, 26]
+
+
+def test_report_semantics_are_explicit(endpoint):
+    app, client, path, _ = endpoint
+    app.dependency_overrides[get_active_principals] = lambda: ["role:admin"]
+    response = client.get(path)
+    assert response.status_code == 200, response.text
+    assert response.json()["semantics"] == {
+        "timezone": "UTC",
+        "end_date_exclusive": True,
+        "activity_basis": "session_started_at",
+        "outcomes_basis": "latest_available",
+        "feedback_basis": "latest_recorded_submission",
+        "interests_basis": "current_session_state",
+        "collection_basis": "current_snapshot",
+        "feedback_unit": "isbn_choices_per_session",
+    }
+    assert response.json()["availability"]["interests"] == "privacy_filtered"
+
+
+def test_neutral_model_alias_uses_same_identifier():
+    school = School(school_uuid=uuid4())
+    assert school.school_uuid == school.wriveted_identifier
+    school.wriveted_identifier = uuid4()
+    assert school.school_uuid == school.wriveted_identifier
+    assert "school_uuid" not in School.__table__.columns
+    assert "wriveted_identifier" in School.__table__.columns
+
+
+def test_legacy_response_input_is_normalized(endpoint):
+    app, client, path, service = endpoint
+    app.dependency_overrides[get_active_principals] = lambda: ["role:admin"]
+    legacy_uuid = service.return_value.pop("school_uuid")
+    service.return_value["school_id"] = legacy_uuid
+    response = client.get(path)
+    assert response.status_code == 200, response.text
+    assert response.json()["school_uuid"] == str(legacy_uuid)
+    assert response.json()["school_id"] == str(legacy_uuid)
 
 
 @pytest.mark.parametrize(
@@ -162,7 +275,7 @@ def test_invalid_periods(endpoint, weeks):
 
 def test_view_as_uses_target_school_not_staff_authority(monkeypatch, endpoint):
     _, _, path, service = endpoint
-    from app.api.dependencies.school import aget_school_from_wriveted_id
+    from app.api.dependencies.school import aget_school_from_uuid
 
     actor = SimpleNamespace(id=uuid4(), type=UserAccountType.WRIVETED, is_active=True)
     target = SimpleNamespace(
@@ -180,7 +293,7 @@ def test_view_as_uses_target_school_not_staff_authority(monkeypatch, endpoint):
     app.dependency_overrides[get_session] = lambda: Mock()
     app.dependency_overrides[get_async_session] = lambda: Mock()
     school = School(id=42, name="Target", wriveted_identifier=uuid4())
-    app.dependency_overrides[aget_school_from_wriveted_id] = lambda: school
+    app.dependency_overrides[aget_school_from_uuid] = lambda: school
     headers = {
         "Authorization": f"Bearer {create_access_token(f'Wriveted:User-Account:{actor.id}')}",
         "X-View-As": create_view_as_context(actor, target)["context"],

@@ -4,9 +4,11 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.school_insights import PRIVACY_THRESHOLD
+
 COHORT = """
 SELECT id, started_at, state FROM conversation_sessions
-WHERE school_id = CAST(:school_id AS uuid)
+WHERE school_id = CAST(:school_uuid AS uuid)
   AND started_at >= :start AND started_at < :end
 """
 
@@ -15,7 +17,7 @@ SELECT DISTINCT e.work_id
 FROM collections c
 JOIN collection_items ci ON ci.collection_id = c.id
 JOIN editions e ON e.isbn = ci.edition_isbn
-WHERE c.school_id = CAST(:school_id AS uuid) AND e.work_id IS NOT NULL
+WHERE c.school_id = CAST(:school_uuid AS uuid) AND e.work_id IS NOT NULL
 """
 
 LATEST_LABELS = f"""
@@ -81,7 +83,7 @@ def collection_query() -> str:
           (SELECT count(*) FROM collections c
            JOIN collection_items ci ON ci.collection_id = c.id
            LEFT JOIN editions e ON e.isbn = ci.edition_isbn
-           WHERE c.school_id = CAST(:school_id AS uuid) AND e.work_id IS NULL) AS unmatched_items
+           WHERE c.school_id = CAST(:school_uuid AS uuid) AND e.work_id IS NULL) AS unmatched_items
         FROM held LEFT JOIN latest l ON l.work_id = held.work_id
         """
 
@@ -96,9 +98,9 @@ def interests_query() -> str:
             THEN s.state #> '{{user,hue_keys}}' ELSE '[]'::jsonb END
           ) selected(key)
           JOIN hues h ON h.key = selected.key
-          GROUP BY h.id, h.name HAVING count(DISTINCT s.id) >= 5
+          GROUP BY h.id, h.name HAVING count(DISTINCT s.id) >= :privacy_threshold
             AND ((SELECT count(*) FROM cohort) - count(DISTINCT s.id) = 0
-              OR (SELECT count(*) FROM cohort) - count(DISTINCT s.id) >= 5)
+              OR (SELECT count(*) FROM cohort) - count(DISTINCT s.id) >= :privacy_threshold)
         )
         SELECT i.name, i.sessions, count(DISTINCT l.work_id) AS labelled_works
         FROM interests i
@@ -114,8 +116,10 @@ async def read_engagement(db: AsyncSession, parameters: dict) -> list[dict]:
     return [dict(row) for row in result.mappings()]
 
 
-async def read_collection(db: AsyncSession, school_id: UUID) -> dict:
-    result = await db.execute(text(collection_query()), {"school_id": str(school_id)})
+async def read_collection(db: AsyncSession, school_uuid: UUID) -> dict:
+    result = await db.execute(
+        text(collection_query()), {"school_uuid": str(school_uuid)}
+    )
     return dict(result.mappings().one())
 
 
@@ -147,5 +151,10 @@ async def read_snapshot(db: AsyncSession, parameters: dict) -> dict:
     return snapshot
 
 
-def query_parameters(school_id: UUID, start: datetime, end: datetime) -> dict:
-    return {"school_id": str(school_id), "start": start, "end": end}
+def query_parameters(school_uuid: UUID, start: datetime, end: datetime) -> dict:
+    return {
+        "school_uuid": str(school_uuid),
+        "start": start,
+        "end": end,
+        "privacy_threshold": PRIVACY_THRESHOLD,
+    }

@@ -24,6 +24,9 @@ async def test_school_insights_http_contract(
     response = await async_client.get(path, headers=test_schooladmin_account_headers)
     assert response.status_code == 200, response.text
     assert response.json()["school_id"] == str(test_school.wriveted_identifier)
+    assert response.json()["school_uuid"] == str(test_school.school_uuid)
+    assert response.json()["semantics"]["activity_basis"] == "session_started_at"
+    assert response.json()["availability"]["interests"] == "privacy_filtered"
     assert response.headers["cache-control"] == "private, no-store"
     assert (await async_client.get(path)).status_code in (401, 403)
     assert (
@@ -170,6 +173,27 @@ async def test_school_aggregate_queries(async_session):
     )
     assert await read_interests(async_session, parameters) == []
     assert (await read_engagement(async_session, parameters))[0]["sessions"] == 10
+    # Later feedback changes the start cohort, not the week the answer arrived.
+    await async_session.execute(
+        text("UPDATE conversation_history SET created_at = :later"),
+        {"later": end + timedelta(days=1)},
+    )
+    assert (await read_engagement(async_session, parameters))[0]["feedback"] == 5
+    await async_session.execute(
+        text(
+            "UPDATE conversation_sessions SET started_at = :before WHERE school_id = :school AND id IN (SELECT session_id FROM conversation_history)"
+        ),
+        {"before": start - timedelta(seconds=1), "school": school},
+    )
+    outside = await read_engagement(async_session, parameters)
+    assert outside[0]["sessions"] == 5
+    assert outside[0]["feedback"] == 0
+    await async_session.execute(
+        text(
+            "UPDATE conversation_sessions SET started_at = :start WHERE school_id = :school AND started_at = :before"
+        ),
+        {"start": start, "before": start - timedelta(seconds=1), "school": school},
+    )
     await async_session.execute(
         text("UPDATE conversation_history SET content = content - 'validated_feedback'")
     )

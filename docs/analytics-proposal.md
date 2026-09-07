@@ -4,6 +4,8 @@ Proposal for review, 7 September 2026. No infrastructure changes are included.
 
 ## Recommendation
 
+The bounded operational dashboard is approved independently of durable analytics. Existing flow deletion cascades into sessions and history, so live reports can lose historical activity; they are not a retained audit ledger. This feature does not change those deletion rules or introduce retained copies. Before any durable store, separately decide retention duration, deletion/correction propagation, metric versioning, ownership and budget. See [the boundary decision](adr/0001-operational-insights-boundary.md).
+
 Keep the first school Insights page on bounded, school-scoped PostgreSQL queries. Measure its cost before introducing a pipeline. If dashboard reads become material, move engagement metrics to **daily PostgreSQL aggregate tables**, retaining the same educator API. A **scheduled DuckDB job over private Parquet** is a good later option for longer-history analysis and repeated exploratory queries, not a prerequisite for this page. Avoid an always-on analytics service or warehouse.
 
 This is an architectural recommendation, not a measured cost comparison. The existing small Cloud SQL instance also serves student chats: protecting its latency matters more than reducing dashboard latency alone.
