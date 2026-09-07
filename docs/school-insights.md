@@ -22,7 +22,9 @@ No sessions, identifiers, conversation text or raw feedback objects leave this e
 
 ## Operations
 
-One aggregate SQL statement gives all dashboard sections the same database snapshot on the request's existing connection. A transaction-local two-second statement timeout bounds database work; timeouts return a retryable 503. No per-session application fetches or new service.
+One aggregate SQL statement gives all dashboard sections the same database snapshot on the request's existing connection. A transaction-local two-second statement timeout bounds database work; timeouts return a retryable 503. JIT is disabled for this transaction only: compilation dominated the short dashboard query in local EXPLAIN measurements. No per-session application fetches or new service. See [PostgreSQL's JIT guidance](https://www.postgresql.org/docs/current/jit-decision.html).
+
+Local synthetic check: 20,000 sessions and 40,000 history records across 26 weeks, without holdings/interests. Request-local JIT off reduced warm sequential elapsed time from about 715–722 ms to 76–77 ms; four concurrent requests sharing two connections completed in 77–189 ms (previously 742–1,561 ms). This is not a Cloud SQL or representative collection benchmark and does not replace the staging release gate.
 
 Migration `e927ad418b62` follows the already-applied staging migration `d813cf906e21`: short DDL statements, restartable 1,000-row backfill batches and a concurrent typed school/date index. Historical JSON is compared to trusted UUID text, never cast. Apply the backend migration before enabling the frontend. The Firebase static export rewrite includes the new `/school/{id}/insights/` route.
 

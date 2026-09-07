@@ -125,7 +125,11 @@ async def read_interests(db: AsyncSession, parameters: dict) -> list[dict]:
 
 
 async def read_snapshot(db: AsyncSession, parameters: dict) -> dict:
-    await db.execute(text("SET LOCAL statement_timeout = '2s'"))
+    await db.execute(
+        text(
+            "SELECT set_config('statement_timeout', '2s', true), set_config('jit', 'off', true)"
+        )
+    )
     result = await db.execute(
         text(f"""
         WITH engagement AS ({engagement_query()}),

@@ -153,6 +153,8 @@ async def test_school_aggregate_queries(async_session):
         {"name": "Funny", "sessions": 10, "labelled_works": 1}
     ]
     snapshot = await read_snapshot(async_session, parameters)
+    assert await async_session.scalar(text("SHOW jit")) == "off"
+    assert await async_session.scalar(text("SHOW statement_timeout")) == "2s"
     assert snapshot["engagement"] == rows
     assert snapshot["collection"] == await read_collection(async_session, school)
     assert snapshot["interests"] == await read_interests(async_session, parameters)
