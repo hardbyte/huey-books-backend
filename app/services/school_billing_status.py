@@ -89,8 +89,10 @@ async def resolve_school_billing_status(
     has_billing_account = (
         await session.get(SchoolBillingAccount, school.wriveted_identifier) is not None
     )
-    price_id = select_school_price_id(school)
-    offer = _build_offer(price_id, await get_price_info(price_id))
+    offer = None
+    if get_settings().STRIPE_SCHOOL_PRICE_IDS:
+        price_id = select_school_price_id(school)
+        offer = _build_offer(price_id, await get_price_info(price_id))
     return _build_school_billing_status(
         school, latest_attempt, subscriptions, has_billing_account, offer
     )
@@ -119,8 +121,10 @@ def resolve_school_billing_status_sync(
     has_billing_account = (
         session.get(SchoolBillingAccount, school.wriveted_identifier) is not None
     )
-    price_id = select_school_price_id(school)
-    offer = _build_offer(price_id, get_price_info_sync(price_id))
+    offer = None
+    if get_settings().STRIPE_SCHOOL_PRICE_IDS:
+        price_id = select_school_price_id(school)
+        offer = _build_offer(price_id, get_price_info_sync(price_id))
     return _build_school_billing_status(
         school, latest_attempt, subscriptions, has_billing_account, offer
     )
@@ -131,7 +135,7 @@ def _build_school_billing_status(
     latest_attempt: SchoolBillingAttempt | None,
     subscriptions: list[Subscription],
     has_billing_account: bool,
-    offer: SchoolBillingOffer,
+    offer: SchoolBillingOffer | None,
 ) -> SchoolBillingStatus:
     now = datetime.utcnow()
     entitlement, paid_subscription = _resolve_entitlement(subscriptions, now)
@@ -189,7 +193,8 @@ def _build_school_billing_status(
         )
     )
     can_start = (
-        paid_subscription is None
+        offer is not None
+        and paid_subscription is None
         and not has_open_attempt
         and not has_legacy_blocking_obligation
     )
@@ -205,6 +210,8 @@ def _build_school_billing_status(
         blocking_reason = "attempt_in_progress"
     elif has_legacy_blocking_obligation:
         blocking_reason = "legacy_obligation"
+    elif offer is None:
+        blocking_reason = "billing_not_configured"
     else:
         blocking_reason = None
     settings = get_settings()

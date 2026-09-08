@@ -53,7 +53,7 @@ class SchoolBillingStatus(BaseModel):
     paid_subscription: PaidSchoolSubscription | None = None
     capabilities: SchoolBillingCapabilities
     invoice_first: bool
-    offer: SchoolBillingOffer
+    offer: SchoolBillingOffer | None
 
 
 class SchoolBillingStartResult(BaseModel):
