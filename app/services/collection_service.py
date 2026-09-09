@@ -84,13 +84,16 @@ class CollectionService:
         data: CollectionCreateIn,
         ignore_conflicts: bool,
     ) -> Collection:
+        collection_repository.lock_collection(session, existing)
         if data.school_id != existing.school_id or data.user_id != existing.user_id:
             raise CollectionOwnerChangeError("A collection's owner cannot be changed.")
-        crud.collection.delete_all_items(db=session, db_obj=existing, commit=False)
+        collection_repository.delete_all_items(
+            db=session, db_obj=existing, commit=False
+        )
         existing.name = data.name
         existing.info = data.info
         for item in data.items or []:
-            crud.collection.add_item_to_collection(
+            collection_repository.add_item_to_collection(
                 db=session,
                 collection_orm_object=existing,
                 item=item,

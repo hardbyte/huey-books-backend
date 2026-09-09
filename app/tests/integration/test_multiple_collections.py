@@ -1,8 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app.models.collection import Collection
 from app.models.collection_item import CollectionItem
@@ -16,6 +19,72 @@ from app.services.collection_errors import (
 )
 from app.services.collection_service import CollectionService
 from app.services.editions import generate_random_valid_isbn13
+
+
+def test_concurrent_replacements_do_not_mix_holdings(
+    session, test_school, test_unhydrated_editions, monkeypatch
+):
+    collection = collection_repository.create(
+        session, CollectionCreateIn(name="Default", school_id=test_school.school_uuid)
+    )
+    collection_id, school_id = collection.id, test_school.school_uuid
+    first_isbn, second_isbn = [edition.isbn for edition in test_unhydrated_editions[:2]]
+    session.commit()
+    engine = session.get_bind()
+    first_deleted, second_started, second_deleted, release_first = (
+        Event() for _ in range(4)
+    )
+    delete_items = collection_repository.delete_all_items
+
+    def coordinated_delete(db, db_obj, commit=True):
+        result = delete_items(db, db_obj, commit=commit)
+        if db.info["replacement"] == "first":
+            first_deleted.set()
+            assert release_first.wait(timeout=10)
+        else:
+            second_deleted.set()
+        return result
+
+    monkeypatch.setattr(collection_repository, "delete_all_items", coordinated_delete)
+
+    def replace(name, isbn):
+        with Session(engine) as writer:
+            writer.info["replacement"] = name
+            existing = writer.get(Collection, collection_id)
+            if name == "second":
+                second_started.set()
+            CollectionService().replace_collection(
+                writer,
+                existing=existing,
+                data=CollectionCreateIn(
+                    name=name,
+                    school_id=school_id,
+                    items=[CollectionItemCreateIn(edition_isbn=isbn)],
+                ),
+                ignore_conflicts=False,
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(replace, "first", first_isbn)
+        try:
+            assert first_deleted.wait(timeout=10)
+            second = workers.submit(replace, "second", second_isbn)
+            assert second_started.wait(timeout=10)
+            assert not second_deleted.wait(timeout=0.5)
+        finally:
+            release_first.set()
+        first.result(timeout=10)
+        second.result(timeout=10)
+
+    session.refresh(collection)
+    assert collection.name == "second"
+    assert list(
+        session.scalars(
+            select(CollectionItem.edition_isbn).where(
+                CollectionItem.collection_id == collection_id
+            )
+        )
+    ) == [second_isbn]
 
 
 def test_default_collection_lookup_preserves_additional_collection(
@@ -264,6 +333,12 @@ def test_repository_collection_delete_does_not_commit(session, test_school):
         collection_repository.lock_library(session, test_school.school_uuid)
         assert not collection_repository.has_other_collections(session, default)
         collection_repository.delete_by_id(session, identifier)
-        assert session.scalar(select(Collection.id).where(Collection.id == identifier)) is None
+        assert (
+            session.scalar(select(Collection.id).where(Collection.id == identifier))
+            is None
+        )
         savepoint.rollback()
-    assert session.scalar(select(Collection.id).where(Collection.id == identifier)) == identifier
+    assert (
+        session.scalar(select(Collection.id).where(Collection.id == identifier))
+        == identifier
+    )

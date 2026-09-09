@@ -50,6 +50,10 @@ class CollectionRepository(ABC):
         pass
 
     @abstractmethod
+    def lock_collection(self, db: Session, collection: Collection) -> None:
+        pass
+
+    @abstractmethod
     def has_other_collections(self, db: Session, collection: Collection) -> bool:
         pass
 
@@ -193,6 +197,9 @@ class CollectionRepositoryImpl(CollectionRepository):
             .with_for_update()
         )
 
+    def lock_collection(self, db: Session, collection: Collection) -> None:
+        db.refresh(collection, with_for_update=True)
+
     def has_other_collections(self, db: Session, collection: Collection) -> bool:
         return (
             db.scalar(
@@ -232,11 +239,7 @@ class CollectionRepositoryImpl(CollectionRepository):
     ) -> Collection:
         """Create a new collection with items."""
         if obj_in.school_id is not None:
-            db.scalar(
-                select(School.id)
-                .where(School.school_uuid == obj_in.school_id)
-                .with_for_update()
-            )
+            self.lock_library(db, obj_in.school_id)
         items = obj_in.items or []
         obj_in.items = []
 
@@ -278,11 +281,7 @@ class CollectionRepositoryImpl(CollectionRepository):
         if collection_data.user_id:
             q = select(Collection).where(Collection.user_id == collection_data.user_id)
         else:
-            db.scalar(
-                select(School.id)
-                .where(School.school_uuid == collection_data.school_id)
-                .with_for_update()
-            )
+            self.lock_library(db, collection_data.school_id)
             q = select(Collection).where(
                 Collection.school_id == collection_data.school_id,
                 Collection.is_default.is_(True),

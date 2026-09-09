@@ -6,10 +6,9 @@ physical library/education/billing cutovers in the [schema migration plan](organ
 ## Preconditions
 
 - Use PostgreSQL 18 for runtime and migration tests; identity defaults use `uuidv7()`.
-- Review historical replay repairs separately in PR #754. Existing revision IDs
-  are not rerun or restamped. Original source fixtures and PostgreSQL equivalence
-  tests protect successful data/constraint outcomes; transaction ownership moves
-  to Alembic rather than a migration-local ORM session.
+- Do not rerun, restamp or rewrite executed revisions. Historical source fixtures
+  and PostgreSQL equivalence tests protect successful data/constraint outcomes;
+  Alembic owns the migration transaction.
 - Inspect institutional collection counts/defaults. The initial organisation
   migration refuses multiple legacy collections. The rolling compatibility
   migration refuses multiple collections without a default rather than choosing
@@ -18,16 +17,20 @@ physical library/education/billing cutovers in the [schema migration plan](organ
 
 ## Expand, deploy, then enable
 
-1. Keep `MULTIPLE_COLLECTIONS_ENABLED=false` (the default). Apply migrations before
-   new code. Migration `0a6db7f4e561` installs a frozen snapshot of the declarative
+The schema/compatibility release does not expose additional-collection creation.
+The admission switch below belongs to the subsequent workspace API release; it
+must not be treated as a safeguard supplied by the schema alone.
+
+1. Apply migrations before compatible code. Migration `0a6db7f4e561` installs a frozen snapshot of the declarative
    function/trigger and removes the database's false default. Under a bounded
    table lock it repairs only sole institutional collections missing their default.
    Ambiguous libraries stop the migration. A lock timeout requires a safe retry,
    not removal of the locking safeguard.
-2. Deploy compatible public/internal APIs and background jobs, still with the
-   switch off. Existing single-collection reads, imports and replacement remain
-   available. First collection creation is allowed; additional collection
-   creation returns 409, including for platform staff.
+2. Deploy compatible public/internal APIs and background jobs. Existing
+   single-collection reads, imports and replacement remain available. When
+   deploying the workspace API, keep `MULTIPLE_COLLECTIONS_ENABLED=false`
+   (its default): first collection creation is allowed, while additional
+   collection creation returns 409, including for platform staff.
 3. Verify old API revisions have no traffic or active requests and old jobs/tasks
    cannot execute. Old readers assume a single inventory, so installing the
    trigger alone is not sufficient. Check legacy imports and new scoped reads

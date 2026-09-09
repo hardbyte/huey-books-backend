@@ -1,10 +1,41 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    String,
+    Table,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+
+organisation_billing_links = Table(
+    "organisation_billing_links",
+    Base.metadata,
+    Column(
+        "organisation_id",
+        Uuid,
+        ForeignKey("organisations.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "library_uuid",
+        Uuid,
+        ForeignKey("schools.wriveted_identifier", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    ),
+    Column("linked_by", Uuid, ForeignKey("users.id", ondelete="SET NULL"), index=True),
+    Column(
+        "created_at", DateTime(timezone=True), server_default=func.now(), nullable=False
+    ),
+)
 
 
 class Organisation(Base):
