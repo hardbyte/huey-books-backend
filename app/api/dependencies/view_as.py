@@ -16,6 +16,16 @@ logger = get_logger()
 VIEW_AS_AUDIENCE = "wriveted-view-as"
 VIEW_AS_ROLES = {UserAccountType.EDUCATOR, UserAccountType.SCHOOL_ADMIN}
 READ_ROUTES = {
+    "/organisations",
+    "/organisations/{organisation_uuid}",
+    "/organisations/{organisation_uuid}/members",
+    "/libraries",
+    "/libraries/{library_uuid}",
+    "/libraries/{library_uuid}/collections",
+    "/libraries/{library_uuid}/collections/{collection_uuid}/items",
+    "/libraries/{library_uuid}/members",
+    "/libraries/{library_uuid}/insights",
+    "/libraries/{library_uuid}/review-queue",
     "/auth/me",
     "/school/{wriveted_identifier}",
     "/school/{school_uuid}/insights",

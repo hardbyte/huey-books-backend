@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 
@@ -20,7 +20,7 @@ def test_view_as_uses_real_school_permissions(
     assert identity.json()["user"]["id"] == str(test_schooladmin_account.id)
     assert identity.json()["user"]["type"] == "school_admin"
 
-    queue = Mock(return_value=([], 0))
+    queue = AsyncMock(return_value=([], 0))
     monkeypatch.setattr("app.api.reviews.review_repository.get_review_queue", queue)
     response = client.get(f"/v1/review-queue?school_id={uuid4()}", headers=headers)
     assert response.status_code == 200, response.text

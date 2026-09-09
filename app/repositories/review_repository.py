@@ -7,6 +7,7 @@ from typing import Optional
 
 from sqlalchemy import String, case, cast, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from structlog import get_logger
 
@@ -159,9 +160,9 @@ class ReviewRepositoryImpl:
         )
         return db.execute(stmt).scalar_one_or_none()
 
-    def get_review_queue(
+    async def get_review_queue(
         self,
-        db: Session,
+        db: AsyncSession,
         status: str = "all",
         min_school_count: int = 0,
         skip: int = 0,
@@ -266,7 +267,7 @@ class ReviewRepositoryImpl:
 
         # Get total count before pagination
         count_stmt = select(func.count()).select_from(stmt.subquery())
-        total = db.execute(count_stmt).scalar_one()
+        total = (await db.execute(count_stmt)).scalar_one()
 
         # Order so reviewing effort lands where it matters most: books that
         # still need a human look (unchecked or AI-labelled) come first, then by
@@ -290,7 +291,7 @@ class ReviewRepositoryImpl:
         )
         stmt = stmt.offset(skip).limit(limit)
 
-        rows = db.execute(stmt).all()
+        rows = (await db.execute(stmt)).all()
 
         # Get hue_primary_key via the association table
         labelset_ids = [r.labelset_id for r in rows if r.labelset_id is not None]
@@ -304,7 +305,7 @@ class ReviewRepositoryImpl:
                     LabelSetHue.ordinal == Ordinal.PRIMARY,
                 )
             )
-            for hue_row in db.execute(hue_stmt).all():
+            for hue_row in (await db.execute(hue_stmt)).all():
                 hue_map[hue_row.labelset_id] = hue_row.key
 
         # One cover per work for the page's rows (bounded to ~limit works).
@@ -322,7 +323,7 @@ class ReviewRepositoryImpl:
                 )
                 .group_by(Edition.work_id)
             )
-            for cover_row in db.execute(cover_stmt).all():
+            for cover_row in (await db.execute(cover_stmt)).all():
                 cover_map[cover_row.work_id] = cover_row.cover_url
 
         items = []

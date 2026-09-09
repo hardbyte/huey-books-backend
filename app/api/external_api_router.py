@@ -23,9 +23,11 @@ from app.api.illustrators import router as illustrator_router
 from app.api.invitations import router as invitations_router
 from app.api.kpis import router as kpis_router
 from app.api.labelset import router as labelset_router
+from app.api.library_reading import router as library_reading_router
 from app.api.oauth import authorize_router as oauth_authorize_router
 from app.api.oauth import token_router as oauth_token_router
 from app.api.onboarding import router as onboarding_router
+from app.api.organisations import router as organisations_router
 from app.api.recommendations import router as recommendations_router
 from app.api.reviews import router as reviews_router
 from app.api.school_insights import router as school_insights_router
@@ -68,10 +70,12 @@ api_router.include_router(events_router)
 api_router.include_router(hydration_router)
 api_router.include_router(illustrator_router)
 api_router.include_router(kpis_router)
+api_router.include_router(library_reading_router)
 api_router.include_router(school_insights_router)
 api_router.include_router(labelset_router)
 api_router.include_router(invitations_router)
 api_router.include_router(onboarding_router)
+api_router.include_router(organisations_router)
 api_router.include_router(school_router)
 api_router.include_router(school_router_public)
 api_router.include_router(service_account_router)

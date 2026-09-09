@@ -230,9 +230,9 @@ def _build_school_billing_status(
     )
 
 
-def _resolve_entitlement(
+def select_paid_subscription(
     subscriptions: list[Subscription], now: datetime
-) -> tuple[SchoolBillingEntitlement, Subscription | None]:
+) -> Subscription | None:
     paid_subscriptions = [
         subscription
         for subscription in subscriptions
@@ -241,12 +241,17 @@ def _resolve_entitlement(
         and subscription.paid_at is not None
         and subscription.expiration > now
     ]
-    paid_subscription = max(
+    return max(
         paid_subscriptions,
         key=lambda subscription: subscription.expiration,
         default=None,
     )
 
+
+def _resolve_entitlement(
+    subscriptions: list[Subscription], now: datetime
+) -> tuple[SchoolBillingEntitlement, Subscription | None]:
+    paid_subscription = select_paid_subscription(subscriptions, now)
     live_grants = [
         subscription
         for subscription in subscriptions

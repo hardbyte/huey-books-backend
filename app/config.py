@@ -15,6 +15,7 @@ logger = get_logger()
 
 class Settings(BaseSettings):
     API_V1_STR: str = "/v1"
+    MULTIPLE_COLLECTIONS_ENABLED: bool = False
 
     FIREBASE_PROJECT_ID: str = "wriveted-api"
 
