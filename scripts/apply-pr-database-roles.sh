@@ -33,3 +33,4 @@ if [[ -z "${pgroles_binary}" ]]; then
 fi
 
 "${pgroles_binary}" apply --file pgroles.yaml
+python scripts/verify_database_roles.py

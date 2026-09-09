@@ -56,3 +56,5 @@ echo ""
   --file pgroles.yaml \
   --format sql \
   --no-exit-code
+
+DATABASE_URL="${DATABASE_URL}" python scripts/verify_database_roles.py

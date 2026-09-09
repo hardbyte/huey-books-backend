@@ -18,6 +18,8 @@ import asyncpg
 import pytest
 from sqlalchemy import text
 
+from app.config import get_settings
+
 
 @pytest.fixture(autouse=True)
 async def cleanup_cms_data(async_session):
@@ -94,7 +96,7 @@ async def notify_listener(reset_global_state):
     # Connect directly with asyncpg for LISTEN/NOTIFY using environment variables
     db_host = os.getenv("POSTGRESQL_SERVER", "localhost").rstrip("/")
     db_password = os.getenv("POSTGRESQL_PASSWORD", "password")
-    db_name = "postgres"
+    db_name = get_settings().POSTGRESQL_DATABASE
     db_port = 5432
 
     try:

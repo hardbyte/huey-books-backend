@@ -45,7 +45,9 @@ def test_pr_migrations_use_the_pr_database(tmp_path):
     )
 
 
-@pytest.mark.parametrize("database", ["postgres", "wriveted", "", "wriveted_pr_invalid"])
+@pytest.mark.parametrize(
+    "database", ["postgres", "wriveted", "", "wriveted_pr_invalid"]
+)
 def test_preview_roles_reject_non_preview_database(database):
     script = Path(__file__).resolve().parents[3] / "scripts/apply-pr-database-roles.sh"
     result = subprocess.run(
@@ -58,13 +60,22 @@ def test_preview_roles_reject_non_preview_database(database):
     assert "A PR database is required" in result.stderr
 
 
-def test_preview_roles_normalize_socket_connection_url(tmp_path):
+@pytest.mark.parametrize("verification_fails", [False, True])
+def test_preview_roles_normalize_socket_connection_url(tmp_path, verification_fails):
     script = Path(__file__).resolve().parents[3] / "scripts/apply-pr-database-roles.sh"
     pgroles = tmp_path / "pgroles"
     pgroles.write_text('#!/bin/sh\nprintf "%s" "$DATABASE_URL"\n')
     pgroles.chmod(0o755)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "verify_database_roles.py").write_text(
+        'raise RuntimeError("Missing runtime privilege")\n'
+        if verification_fails
+        else "pass\n"
+    )
     result = subprocess.run(
         ["bash", str(script)],
+        cwd=tmp_path,
         capture_output=True,
         text=True,
         env={
@@ -74,7 +85,9 @@ def test_preview_roles_normalize_socket_connection_url(tmp_path):
             "PGROLES_BINARY": str(pgroles),
         },
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == (1 if verification_fails else 0), result.stderr
+    if verification_fails:
+        assert "Missing runtime privilege" in result.stderr
     assert result.stdout == (
         "postgresql://postgres:test@localhost/wriveted_pr_746"
         "?host=%2Fcloudsql%2Fproject%3Aregion%3Ainstance"
