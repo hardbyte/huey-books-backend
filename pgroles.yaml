@@ -20,7 +20,12 @@ profiles:
         privileges: [USAGE]
       - on: { type: table, name: "*" }
         privileges: [SELECT, INSERT, UPDATE, DELETE]
-      - on: { type: materialized_view, name: "*" }
+      # pgroles 0.1.5 renders MV wildcards as ALL TABLES, revoking table DML.
+      - on: { type: materialized_view, name: recommendable_editions }
+        privileges: [SELECT]
+      - on: { type: materialized_view, name: work_collection_frequency }
+        privileges: [SELECT]
+      - on: { type: materialized_view, name: search_view_v1 }
         privileges: [SELECT]
       - on: { type: sequence, name: "*" }
         privileges: [USAGE, SELECT]
@@ -40,7 +45,11 @@ profiles:
         privileges: [USAGE]
       - on: { type: table, name: "*" }
         privileges: [SELECT]
-      - on: { type: materialized_view, name: "*" }
+      - on: { type: materialized_view, name: recommendable_editions }
+        privileges: [SELECT]
+      - on: { type: materialized_view, name: work_collection_frequency }
+        privileges: [SELECT]
+      - on: { type: materialized_view, name: search_view_v1 }
         privileges: [SELECT]
       - on: { type: sequence, name: "*" }
         privileges: [SELECT]

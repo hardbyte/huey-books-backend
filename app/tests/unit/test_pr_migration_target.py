@@ -63,8 +63,12 @@ def test_preview_roles_normalize_socket_connection_url(tmp_path):
     pgroles = tmp_path / "pgroles"
     pgroles.write_text('#!/bin/sh\nprintf "%s" "$DATABASE_URL"\n')
     pgroles.chmod(0o755)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "verify_database_roles.py").write_text("pass\n")
     result = subprocess.run(
         ["bash", str(script)],
+        cwd=tmp_path,
         capture_output=True,
         text=True,
         env={
