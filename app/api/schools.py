@@ -207,19 +207,17 @@ async def get_schools(
 
     logger.debug(f"Returning {len(schools)} schools")
 
-    # Sanitize results based on logged-in user's permissions
+    results = [SchoolSelectorOption.model_validate(school) for school in schools]
     if not has_details_permission:
-        for school in schools:
+        for school in results:
             school.state = None
-            school.active_subscription = None
+            school.subscription = None
 
     if not has_collection_permission:
-        for school in schools:
+        for school in results:
             school.collection = None
 
-    # Load the subscription data with
-
-    return schools
+    return results
 
 
 @router.get("/school/{wriveted_identifier}", response_model=SchoolDetail)
