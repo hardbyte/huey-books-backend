@@ -72,6 +72,13 @@ class LabelsetRepository(ABC):
         pass
 
     @abstractmethod
+    def get_for_review(
+        self, db: Session, work: Work
+    ) -> tuple[LabelSet, dict[str, Any]]:
+        """Acquire canonical labels and their snapshot for transactional confirmation."""
+        pass
+
+    @abstractmethod
     def patch(
         self,
         db: Session,
@@ -126,7 +133,17 @@ class LabelsetRepositoryImpl(LabelsetRepository):
 
     def get_or_create(self, db: Session, work: Work, commit: bool = True) -> LabelSet:
         """Get or create a labelset for a work."""
-        labelset = work.labelset
+        db.flush()
+        db.execute(
+            select(Work.id).where(Work.id == work.id).with_for_update()
+        ).scalar_one()
+        labelset = db.scalar(
+            select(LabelSet)
+            .where(LabelSet.work_id == work.id)
+            .order_by(LabelSet.id.desc())
+            .limit(1)
+            .execution_options(populate_existing=True)
+        )
 
         if not labelset:
             labelset = LabelSet(work=work)
@@ -138,6 +155,13 @@ class LabelsetRepositoryImpl(LabelsetRepository):
         db.flush()
         return labelset
 
+    def get_for_review(
+        self, db: Session, work: Work
+    ) -> tuple[LabelSet, dict[str, Any]]:
+        labelset = self.get_or_create(db, work, commit=False)
+        db.refresh(labelset, with_for_update=True)
+        return labelset, labelset.get_label_dict(db)
+
     def patch(
         self,
         db: Session,
@@ -146,6 +170,7 @@ class LabelsetRepositoryImpl(LabelsetRepository):
         commit: bool = True,
     ) -> LabelSet:
         """Patch a labelset with authority-based updates."""
+        db.refresh(labelset, with_for_update=True)
         updated = False
 
         # HUES

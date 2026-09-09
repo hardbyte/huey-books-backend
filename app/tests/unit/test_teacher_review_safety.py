@@ -1,31 +1,35 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
-from app.api.reviews import _promote_review_to_canonical
 from app.api.works import bulk_work_access_control_list
 from app.models.labelset import LabelOrigin
+from app.models.user import UserAccountType
 from app.repositories.labelset_repository import labelset_repository
 from app.repositories.review_repository import AI_ORIGINS
 from app.schemas.labelset import LabelSetCreateIn
 from app.schemas.review import LabelSetReviewIn
+from app.services.reviews import ReviewService
 
 
 def test_teacher_promotion_preserves_unchecked():
-    labelset = SimpleNamespace(checked=None)
-    with patch("app.api.reviews.labelset_repository.patch") as update:
-        _promote_review_to_canonical(
-            MagicMock(),
-            labelset,
-            LabelSetReviewIn(min_age=3, max_age=5),
-            SimpleNamespace(id=uuid4()),
-            origin=LabelOrigin.EDUCATOR,
-            mark_checked=False,
-        )
-    assert update.call_args.args[2].checked is None
+    labelsets = MagicMock()
+    labelsets.get_for_review.return_value = (
+        SimpleNamespace(id=1, checked=None, min_age=None, max_age=None),
+        {"reading_ability_keys": []},
+    )
+    session = MagicMock()
+    ReviewService(labelsets=labelsets, reviews=MagicMock()).submit(
+        session,
+        MagicMock(),
+        SimpleNamespace(id=uuid4(), type=UserAccountType.EDUCATOR),
+        LabelSetReviewIn(min_age=3, max_age=5),
+    )
+    assert labelsets.patch.call_args.args[2].checked is None
+    session.commit.assert_called_once()
 
 
 def test_educators_cannot_directly_modify_shared_catalogue():

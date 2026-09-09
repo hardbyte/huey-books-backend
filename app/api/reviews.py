@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Optional, Union
 from uuid import UUID
 
@@ -15,13 +14,10 @@ from app.api.dependencies.security import (
 )
 from app.db.session import get_session
 from app.models import School, ServiceAccount, User, Work
-from app.models.labelset import LabelOrigin, LabelSet
 from app.models.user import UserAccountType
 from app.permissions import Permission
-from app.repositories.labelset_repository import labelset_repository
 from app.repositories.review_repository import review_repository
 from app.repositories.work_repository import work_repository
-from app.schemas.labelset import LabelSetCreateIn
 from app.schemas.pagination import PaginatedResponse, Pagination
 from app.schemas.review import (
     LabelSetReviewDetail,
@@ -30,6 +26,12 @@ from app.schemas.review import (
     ReviewStats,
 )
 from app.services.recommendations import enqueue_debounced_mv_refresh
+from app.services.reviews import (
+    InvalidReviewError,
+    ReviewConflictError,
+    ReviewNotAllowedError,
+    ReviewService,
+)
 
 logger = get_logger()
 
@@ -101,113 +103,16 @@ def submit_review(
         logger.warning("Service accounts cannot submit reviews")
         raise HTTPException(status_code=403, detail="Only users can submit reviews")
 
-    labelset = labelset_repository.get_or_create(session, work, commit=True)
-    session.execute(
-        select(LabelSet.id).where(LabelSet.id == labelset.id).with_for_update()
-    ).scalar_one()
-    session.refresh(labelset)
+    try:
+        review = ReviewService().submit(session, work, account, review_data)
+    except ReviewNotAllowedError as error:
+        raise HTTPException(403, str(error)) from error
+    except ReviewConflictError as error:
+        raise HTTPException(409, str(error)) from error
+    except InvalidReviewError as error:
+        raise HTTPException(422, str(error)) from error
 
-    current = labelset.get_label_dict(session)
-    minimum = (
-        review_data.min_age if review_data.min_age is not None else labelset.min_age
-    )
-    maximum = (
-        review_data.max_age if review_data.max_age is not None else labelset.max_age
-    )
-    if minimum is not None and maximum is not None and minimum > maximum:
-        raise HTTPException(422, "Minimum age must not exceed maximum age")
-    if review_data.confirmed_existing:
-        expected = {
-            "hue_primary_key": current.get("primary_hue_key"),
-            "hue_secondary_key": current.get("secondary_hue_key"),
-            "hue_tertiary_key": current.get("tertiary_hue_key"),
-            "min_age": labelset.min_age,
-            "max_age": labelset.max_age,
-            "reading_ability_key": current["reading_ability_keys"][0]
-            if len(current["reading_ability_keys"]) == 1
-            else None,
-            "recommend_status": labelset.recommend_status,
-        }
-        required = (
-            "hue_primary_key",
-            "min_age",
-            "max_age",
-            "recommend_status",
-        )
-        reading_snapshot = review_data.expected_reading_ability_keys
-        reading_matches = (
-            set(reading_snapshot) == set(current["reading_ability_keys"])
-            if reading_snapshot is not None
-            else expected["reading_ability_key"] is not None
-            and review_data.reading_ability_key == expected["reading_ability_key"]
-        )
-        if (
-            not reading_matches
-            or any(expected[key] is None for key in required)
-            or any(
-                getattr(review_data, key) != value
-                for key, value in expected.items()
-                if key != "reading_ability_key"
-            )
-        ):
-            raise HTTPException(
-                409,
-                "Labels are incomplete or have changed. Reload and submit your proposed labels instead of confirming.",
-            )
-
-    review = review_repository.upsert_review(
-        db=session,
-        labelset_id=labelset.id,
-        reviewer_user_id=account.id,
-        data=review_data,
-        commit=False,
-    )
-
-    # Promote the review into the canonical labelset so it influences
-    # recommendations. Wriveted staff carry HUMAN authority and mark the
-    # labelset as staff-checked; teachers carry EDUCATOR authority (above AI,
-    # below staff) and leave the staff-confirmation flag untouched, so their
-    # input improves recommendations immediately without bypassing QA.
-    promoted = False
-    if account.type == UserAccountType.WRIVETED:
-        _promote_review_to_canonical(
-            session,
-            labelset,
-            review_data,
-            account,
-            origin=LabelOrigin.HUMAN,
-            mark_checked=all(
-                value is not None
-                for value in (
-                    review_data.hue_primary_key,
-                    review_data.reading_ability_key
-                    or review_data.expected_reading_ability_keys,
-                    review_data.min_age,
-                    review_data.max_age,
-                    review_data.recommend_status,
-                )
-            ),
-        )
-        promoted = True
-    elif account.type in (UserAccountType.EDUCATOR, UserAccountType.SCHOOL_ADMIN):
-        _promote_review_to_canonical(
-            session,
-            labelset,
-            review_data,
-            account,
-            origin=LabelOrigin.EDUCATOR,
-            mark_checked=False,
-        )
-        promoted = True
-
-    session.commit()
-
-    if promoted:
-        # A promoted review mutates the canonical labelset, changing
-        # recommendation scoring/eligibility, so debounce a MV refresh
-        # (see enqueue_debounced_mv_refresh). Non-promoting reviews (e.g. from
-        # students) don't touch the labelset, so no refresh is needed.
-        background_tasks.add_task(enqueue_debounced_mv_refresh)
+    background_tasks.add_task(enqueue_debounced_mv_refresh)
 
     logger.info(
         "Review submitted",
@@ -314,47 +219,3 @@ def get_review_stats(
     """
     stats = review_repository.get_review_stats(db=session)
     return ReviewStats(**stats)
-
-
-def _promote_review_to_canonical(
-    session: Session,
-    labelset,
-    review_data: LabelSetReviewIn,
-    account: User,
-    *,
-    origin: LabelOrigin,
-    mark_checked: bool,
-) -> None:
-    """Apply a reviewer's assessment to the canonical labelset.
-
-    `origin` sets the authority weight used by the labelset repository, which
-    only overwrites a field when its existing origin has equal-or-lower weight
-    (so EDUCATOR beats AI but never overrides Wriveted HUMAN labels).
-    `mark_checked` records Wriveted staff confirmation; teacher promotions
-    preserve the existing checked flag rather than clearing it.
-    """
-    patch_data = LabelSetCreateIn(
-        hue_primary_key=review_data.hue_primary_key,
-        hue_secondary_key=review_data.hue_secondary_key,
-        hue_tertiary_key=review_data.hue_tertiary_key,
-        hue_origin=origin if review_data.hue_primary_key else None,
-        min_age=review_data.min_age,
-        max_age=review_data.max_age,
-        age_origin=origin
-        if review_data.min_age is not None or review_data.max_age is not None
-        else None,
-        reading_ability_keys=[review_data.reading_ability_key]
-        if review_data.reading_ability_key
-        else None,
-        reading_ability_origin=origin if review_data.reading_ability_key else None,
-        recommend_status=review_data.recommend_status,
-        recommend_status_origin=origin if review_data.recommend_status else None,
-        checked=True if mark_checked else labelset.checked,
-        labelled_by_user_id=account.id,
-    )
-
-    labelset_repository.patch(session, labelset, patch_data, commit=False)
-
-    if mark_checked:
-        labelset.checked = True
-        labelset.checked_at = datetime.utcnow()
