@@ -62,6 +62,15 @@ class School(Base):
 
     school_uuid: Mapped[uuid.UUID] = synonym("wriveted_identifier")
 
+    organisation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "organisations.id", name="fk_school_organisation", ondelete="RESTRICT"
+        ),
+        nullable=True,
+        index=True,
+    )
+
     __table_args__ = (
         # Composite INDEX combining country code and country specific IDs e.g. (AUS, ACARA ID)
         Index(
@@ -69,6 +78,12 @@ class School(Base):
             country_code,
             official_identifier,
             unique=True,
+        ),
+        Index(
+            "idx_schools_name_trgm",
+            func.lower(text("name")).label("name_lower"),
+            postgresql_using="gin",
+            postgresql_ops={"name_lower": "gin_trgm_ops"},
         ),
         # Index combining country code and optional state stored in the location key of info.
         # Note alembic can't automatically deal with this, but the migration (and index) exists!
@@ -104,11 +119,17 @@ class School(Base):
 
     country: Mapped[Optional["Country"]] = relationship("Country")
 
-    collection: Mapped[Optional["Collection"]] = relationship(
+    collections: Mapped[List["Collection"]] = relationship(
         "Collection",
         back_populates="school",
-        uselist=False,
         cascade="all, delete-orphan",
+    )
+
+    collection: Mapped[Optional["Collection"]] = relationship(
+        "Collection",
+        primaryjoin="and_(School.wriveted_identifier == Collection.school_id, Collection.is_default.is_(True))",
+        uselist=False,
+        viewonly=True,
     )
 
     # https://docs.sqlalchemy.org/en/14/orm/extensions/associationproxy.html#simplifying-association-objects

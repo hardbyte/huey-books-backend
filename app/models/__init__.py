@@ -35,8 +35,15 @@ from .illustrator import Illustrator
 from .labelset import LabelSet
 from .labelset_hue_association import LabelSetHue
 from .labelset_reading_ability_association import LabelSetReadingAbility
+from .library import EducationUnit, EducationUnitLibrary, Library
 from .mcp import MCPOAuthState
 from .oauth import OAuthAuthorizationCode, OAuthGrant, OAuthRefreshToken
+from .organisation import (
+    LibraryMembership,
+    Organisation,
+    OrganisationMembership,
+    OrganisationSubscription,
+)
 from .parent import Parent
 from .product import Product
 from .public_reader import PublicReader

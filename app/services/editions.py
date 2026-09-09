@@ -7,7 +7,6 @@ from structlog import get_logger
 
 from app.config import get_settings
 from app.models import Edition
-from app.repositories.edition_repository import edition_repository
 from app.schemas.edition import EditionCreateIn
 
 logger = get_logger()
@@ -15,6 +14,8 @@ settings = get_settings()
 
 
 async def compare_known_editions(session, isbn_list: List[str]):
+    from app.repositories.edition_repository import edition_repository
+
     valid_isbns = clean_isbns(isbn_list)
     known_matches: list[Edition] = (
         session.execute(edition_repository.get_multi_query(db=session, ids=valid_isbns))
@@ -34,6 +35,8 @@ async def compare_known_editions(session, isbn_list: List[str]):
 
 
 async def create_missing_editions(session, new_edition_data: list[EditionCreateIn]):
+    from app.repositories.edition_repository import edition_repository
+
     isbns = set()
     for edition in new_edition_data:
         try:
@@ -91,6 +94,8 @@ async def create_missing_editions(session, new_edition_data: list[EditionCreateI
 
 
 async def create_missing_editions_unhydrated(session: Session, isbn_list: list[str]):
+    from app.repositories.edition_repository import edition_repository
+
     final_primary_keys = await edition_repository.create_in_bulk_unhydrated(
         session, isbn_list=isbn_list
     )

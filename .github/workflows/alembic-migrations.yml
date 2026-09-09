@@ -26,7 +26,7 @@ jobs:
     - name: 🗄 Set up PostgreSQL
       uses: danielweller-swp/postgresql-action@v2
       with:
-        postgresql version: '16'  # See https://hub.docker.com/_/postgres for available versions
+        postgresql version: '18'
         postgresql user: postgres
         postgresql password: secret
     - name: 🔧 Install dependencies

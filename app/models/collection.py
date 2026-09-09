@@ -3,7 +3,17 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi_permissions import All, Allow  # type: ignore[import-untyped]
-from sqlalchemy import DateTime, ForeignKey, String, func, select, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    func,
+    select,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
@@ -18,6 +28,20 @@ if TYPE_CHECKING:
 
 class Collection(Base):
     __tablename__ = "collections"  # type: ignore[assignment]
+    __table_args__ = (
+        Index(
+            "uq_collections_school_default",
+            "school_id",
+            unique=True,
+            postgresql_where=text("is_default AND school_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "NOT is_default OR school_id IS NOT NULL",
+            name="ck_collections_default_school",
+        ),
+    )
+
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         default=uuid.uuid4,
@@ -54,7 +78,7 @@ class Collection(Base):
         index=True,
     )
     school: Mapped[Optional["School"]] = relationship(
-        "School", back_populates="collection"
+        "School", back_populates="collections"
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(

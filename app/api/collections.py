@@ -50,6 +50,10 @@ from app.schemas.collection import (
 from app.schemas.pagination import Pagination
 from app.services.account_refs import get_account_ref
 from app.services.background_events import record_booklist_collection_comparison_event
+from app.services.collection_errors import (
+    CollectionOwnerChangeError,
+    DefaultCollectionInUseError,
+)
 from app.services.collection_service import CollectionService
 from app.services.collections import (
     get_collection_info_with_criteria,
@@ -219,7 +223,10 @@ async def delete_collection(
     """
     logger.debug("Deleting collection")
     service = get_collection_service()
-    service.delete_collection(session, collection=collection)
+    try:
+        service.delete_collection(session, collection=collection)
+    except DefaultCollectionInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"message": "Collection deleted"}
 
 
@@ -240,8 +247,7 @@ async def set_collection(
     """
     Endpoint for replacing an existing collection and its items.
     """
-    logger.debug("Deleting collection")
-    logger.debug("Replacing deleted collection")
+    logger.debug("Replacing collection contents", collection_id=str(collection.id))
     try:
         service = get_collection_service()
         return service.replace_collection(
@@ -250,6 +256,8 @@ async def set_collection(
             data=collection_data,
             ignore_conflicts=ignore_conflicts,
         )
+    except CollectionOwnerChangeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except IntegrityError:
         raise HTTPException(
             status_code=409,

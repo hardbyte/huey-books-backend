@@ -22,6 +22,7 @@ from app.models.collection_item_activity import (
     CollectionItemActivity,
     CollectionItemReadStatus,
 )
+from app.models.school import School
 from app.repositories.edition_repository import edition_repository
 from app.schemas import is_url
 from app.schemas.collection import (
@@ -43,6 +44,19 @@ logger = get_logger()
 
 class CollectionRepository(ABC):
     """Repository interface for Collection domain operations."""
+
+    @abstractmethod
+    def lock_library(self, db: Session, library_uuid: UUID) -> None:
+        pass
+
+    @abstractmethod
+    def has_other_collections(self, db: Session, collection: Collection) -> bool:
+        pass
+
+    @abstractmethod
+    def delete_by_id(self, db: Session, collection_id: UUID) -> None:
+        """Delete without committing the caller's transaction."""
+        pass
 
     @abstractmethod
     def get(self, db: Session, id: UUID) -> Optional[Collection]:
@@ -172,6 +186,29 @@ class CollectionRepository(ABC):
 class CollectionRepositoryImpl(CollectionRepository):
     """Implementation of CollectionRepository."""
 
+    def lock_library(self, db: Session, library_uuid: UUID) -> None:
+        db.scalar(
+            select(School.id)
+            .where(School.school_uuid == library_uuid)
+            .with_for_update()
+        )
+
+    def has_other_collections(self, db: Session, collection: Collection) -> bool:
+        return (
+            db.scalar(
+                select(Collection.id)
+                .where(
+                    Collection.school_id == collection.school_id,
+                    Collection.id != collection.id,
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
+    def delete_by_id(self, db: Session, collection_id: UUID) -> None:
+        db.execute(delete(Collection).where(Collection.id == collection_id))
+
     def get(self, db: Session, id: UUID) -> Optional[Collection]:
         """Get a collection by its primary key ID."""
         return db.get(Collection, id)
@@ -194,11 +231,18 @@ class CollectionRepositoryImpl(CollectionRepository):
         ignore_conflicts: bool = False,
     ) -> Collection:
         """Create a new collection with items."""
+        if obj_in.school_id is not None:
+            db.scalar(
+                select(School.id)
+                .where(School.school_uuid == obj_in.school_id)
+                .with_for_update()
+            )
         items = obj_in.items or []
         obj_in.items = []
 
         # Create the base collection object
         collection_data = obj_in.model_dump(exclude_unset=True, exclude={"items"})
+        collection_data["is_default"] = obj_in.school_id is not None
         collection_orm_object = Collection(**collection_data)
         db.add(collection_orm_object)
         db.flush()
@@ -234,8 +278,14 @@ class CollectionRepositoryImpl(CollectionRepository):
         if collection_data.user_id:
             q = select(Collection).where(Collection.user_id == collection_data.user_id)
         else:
+            db.scalar(
+                select(School.id)
+                .where(School.school_uuid == collection_data.school_id)
+                .with_for_update()
+            )
             q = select(Collection).where(
-                Collection.school_id == collection_data.school_id
+                Collection.school_id == collection_data.school_id,
+                Collection.is_default.is_(True),
             )
         try:
             collection = db.execute(q).scalar_one()
@@ -516,8 +566,9 @@ class CollectionRepositoryImpl(CollectionRepository):
         if isbn is not None:
             try:
                 edition = edition_repository.get_or_create_unhydrated(
-                    db=db, isbn=isbn, commit=True
+                    db=db, isbn=isbn, commit=False
                 )
+                db.flush()
                 isbn = edition.isbn
             except AssertionError:
                 logger.warning("Skipping invalid isbn", isbn=isbn)
