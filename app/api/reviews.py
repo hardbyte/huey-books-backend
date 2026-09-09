@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from structlog import get_logger
 
 from app.api.common.pagination import PaginatedQueryParams
+from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.security import (
     get_current_active_superuser,
     get_current_active_user_or_service_account,
@@ -143,7 +144,8 @@ def get_reviews(
     response_model=PaginatedResponse[ReviewQueueItem],
     dependencies=[Permission("read", review_acl)],
 )
-def get_review_queue(
+async def get_review_queue(
+    session: DBSessionDep,
     status: str = Query(
         "all",
         description="Filter by review status",
@@ -163,7 +165,6 @@ def get_review_queue(
     account: Union[User, ServiceAccount] = Depends(
         get_current_active_user_or_service_account
     ),
-    session: Session = Depends(get_session),
 ):
     """
     Prioritized review queue sorted by popularity (school_count DESC).
@@ -179,16 +180,20 @@ def get_review_queue(
     ):
         # Teachers are always locked to their own school's books.
         effective_school_id = getattr(account, "school_id", None)
+        if effective_school_id is None:
+            raise HTTPException(status_code=403, detail="School membership required")
     elif school_id is not None:
         # Wriveted staff / service accounts may target any school by its public
         # identifier; resolve it to the internal id the repository filters on.
-        effective_school_id = session.scalar(
+        effective_school_id = await session.scalar(
             select(School.id).where(School.wriveted_identifier == school_id)
         )
+        if effective_school_id is None:
+            raise HTTPException(status_code=404, detail="School not found")
     else:
         effective_school_id = None
 
-    items, total = review_repository.get_review_queue(
+    items, total = await review_repository.get_review_queue(
         db=session,
         status=status,
         min_school_count=min_school_count,

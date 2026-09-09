@@ -32,7 +32,7 @@ class SchoolLocation(BaseModel):
 
 
 class SchoolInfo(BaseModel):
-    location: SchoolLocation
+    location: SchoolLocation = Field(default_factory=SchoolLocation)
     type: Optional[str] = None
     sector: Optional[str] = None
     URL: Optional[str] = None

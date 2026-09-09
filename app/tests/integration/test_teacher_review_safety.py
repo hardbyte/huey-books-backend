@@ -144,7 +144,10 @@ def test_teacher_review_authority_and_provenance(
     )
 
 
-def test_backfill_is_scoped_idempotent_and_preserves_evidence(session, monkeypatch):
+async def test_backfill_is_scoped_idempotent_and_preserves_evidence(
+    async_session, monkeypatch
+):
+    session = async_session
     run = "test-ai-" + uuid4().hex
     monkeypatch.setattr(
         "scripts.reclassify_reviewed_ai_labels.RUNS", (run, "unused-test-run")
@@ -152,7 +155,7 @@ def test_backfill_is_scoped_idempotent_and_preserves_evidence(session, monkeypat
     work = Work(title="Audited AI fixture", type=WorkType.BOOK)
     unrelated_work = Work(title="Unrelated OTHER fixture", type=WorkType.BOOK)
     session.add_all([work, unrelated_work])
-    session.flush()
+    await session.flush()
     provenance = {
         "run": run,
         "research_model": "gpt-5.6-terra",
@@ -176,11 +179,11 @@ def test_backfill_is_scoped_idempotent_and_preserves_evidence(session, monkeypat
         work_id=unrelated_work.id, hue_origin=LabelOrigin.OTHER, checked=None
     )
     session.add_all([labels, unrelated])
-    session.commit()
-    assert len(reclassify(session, expected_count=1)) == 1
-    session.flush()
-    session.refresh(labels)
-    session.refresh(unrelated)
+    await session.commit()
+    assert len(await session.run_sync(reclassify, expected_count=1)) == 1
+    await session.flush()
+    await session.refresh(labels)
+    await session.refresh(unrelated)
     assert labels.hue_origin == LabelOrigin.AI_ASSISTED
     assert labels.reading_ability_origin == LabelOrigin.AI_ASSISTED
     assert labels.info == {"reviewed_ai_labelling": provenance}
@@ -192,9 +195,9 @@ def test_backfill_is_scoped_idempotent_and_preserves_evidence(session, monkeypat
     )
     assert labels.recommend_status == RecommendStatus.BAD_CONTROVERSIAL
     assert unrelated.hue_origin == LabelOrigin.OTHER
-    assert reclassify(session, expected_count=1) == []
-    items, _ = review_repository.get_review_queue(
+    assert await session.run_sync(reclassify, expected_count=1) == []
+    items, _ = await review_repository.get_review_queue(
         db=session, status="ai_labelled", limit=100000
     )
     assert work.id in [item["work_id"] for item in items]
-    session.rollback()
+    await session.rollback()

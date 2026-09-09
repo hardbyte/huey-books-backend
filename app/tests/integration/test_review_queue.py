@@ -20,7 +20,7 @@ def _unique_isbn() -> str:
     return f"978{uuid.uuid4().int % 10_000_000_000:010d}"
 
 
-def _make_work(
+async def _make_work(
     session,
     *,
     title: str,
@@ -30,28 +30,28 @@ def _make_work(
 ) -> Work:
     work = Work(type=WorkType.BOOK, title=title)
     session.add(work)
-    session.flush()
+    await session.flush()
 
     session.add(
         Edition(isbn=_unique_isbn(), work_id=work.id, cover_url=cover_url, info={})
     )
     session.add(LabelSet(work_id=work.id, hue_origin=hue_origin, checked=checked))
-    session.commit()
+    await session.commit()
     return work
 
 
-def test_review_queue_includes_cover_url(session):
+async def test_review_queue_includes_cover_url(async_session):
     cover = "https://covers.test/peach.jpg"
-    work = _make_work(
-        session,
+    work = await _make_work(
+        async_session,
         title=f"Cover Test {uuid.uuid4().hex[:8]}",
         cover_url=cover,
         hue_origin=LabelOrigin.CLUSTER_RELEVANCE,
         checked=False,
     )
 
-    items, _ = review_repository.get_review_queue(
-        db=session, status="all", limit=100_000
+    items, _ = await review_repository.get_review_queue(
+        db=async_session, status="all", limit=100_000
     )
 
     item = next((i for i in items if i["work_id"] == work.id), None)
@@ -59,27 +59,27 @@ def test_review_queue_includes_cover_url(session):
     assert item["cover_url"] == cover
 
 
-def test_review_queue_prioritises_books_needing_attention(session):
+async def test_review_queue_prioritises_books_needing_attention(async_session):
     """An AI-labelled, unchecked book should rank above a human-reviewed,
     checked one regardless of insertion order."""
     # Insert the already-done book first so insertion order can't explain a pass.
-    done = _make_work(
-        session,
+    done = await _make_work(
+        async_session,
         title=f"Done {uuid.uuid4().hex[:8]}",
         cover_url=None,
         hue_origin=LabelOrigin.HUMAN,
         checked=True,
     )
-    needs = _make_work(
-        session,
+    needs = await _make_work(
+        async_session,
         title=f"Needs {uuid.uuid4().hex[:8]}",
         cover_url=None,
         hue_origin=LabelOrigin.CLUSTER_RELEVANCE,
         checked=False,
     )
 
-    items, _ = review_repository.get_review_queue(
-        db=session, status="all", limit=100_000
+    items, _ = await review_repository.get_review_queue(
+        db=async_session, status="all", limit=100_000
     )
     ids = [i["work_id"] for i in items]
 
@@ -87,18 +87,18 @@ def test_review_queue_prioritises_books_needing_attention(session):
     assert ids.index(needs.id) < ids.index(done.id)
 
 
-def test_review_queue_human_reviewed_filter_excludes_unchecked(session):
+async def test_review_queue_human_reviewed_filter_excludes_unchecked(async_session):
     """Sanity check that the status filter still works after the ordering
     change: a freshly AI-labelled book is not in the human-reviewed view."""
-    work = _make_work(
-        session,
+    work = await _make_work(
+        async_session,
         title=f"Filter {uuid.uuid4().hex[:8]}",
         cover_url=None,
         hue_origin=LabelOrigin.CLUSTER_RELEVANCE,
         checked=False,
     )
 
-    items, _ = review_repository.get_review_queue(
-        db=session, status="human_reviewed", limit=100_000
+    items, _ = await review_repository.get_review_queue(
+        db=async_session, status="human_reviewed", limit=100_000
     )
     assert work.id not in [i["work_id"] for i in items]
