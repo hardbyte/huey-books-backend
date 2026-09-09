@@ -86,9 +86,13 @@ class SchoolBrief(SchoolIdentity):
     collection: CollectionBrief | None = None
 
 
+class SchoolAdministratorPresence(BaseModel):
+    """An administrator exists; their identity is not visible to this caller."""
+
+
 class SchoolSelectorOption(SchoolBrief):
     info: SchoolInfo
-    admins: list[UserBrief]
+    admins: list[UserBrief | SchoolAdministratorPresence]
 
 
 class SchoolBookbotInfo(BaseModel):
