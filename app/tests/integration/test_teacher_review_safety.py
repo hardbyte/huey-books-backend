@@ -3,8 +3,73 @@ from uuid import uuid4
 
 from app.models.labelset import LabelOrigin, LabelSet, RecommendStatus
 from app.models.work import Work, WorkType
+from app.repositories.labelset_repository import labelset_repository
 from app.repositories.review_repository import review_repository
+from app.schemas.labelset import LabelSetCreateIn
 from scripts.reclassify_reviewed_ai_labels import reclassify
+
+
+def test_confirm_multiple_existing_levels_preserves_labels(
+    client, session, test_schooladmin_account_headers
+):
+    work = Work(title="Multi-level confirmation fixture", type=WorkType.BOOK)
+    session.add(work)
+    session.flush()
+    labels = labelset_repository.get_or_create(session, work, commit=True)
+    labelset_repository.patch(
+        session,
+        labels,
+        LabelSetCreateIn(
+            hue_primary_key="hue01_dark_suspense",
+            hue_origin=LabelOrigin.HUMAN,
+            min_age=3,
+            max_age=8,
+            age_origin=LabelOrigin.HUMAN,
+            reading_ability_keys=["SPOT", "CHARLIE_CHOCOLATE"],
+            reading_ability_origin=LabelOrigin.HUMAN,
+            recommend_status=RecommendStatus.GOOD,
+            recommend_status_origin=LabelOrigin.HUMAN,
+            checked=True,
+        ),
+        commit=True,
+    )
+    proposal = {
+        "hue_primary_key": "hue01_dark_suspense",
+        "min_age": 3,
+        "max_age": 8,
+        "recommend_status": "GOOD",
+        "confirmed_existing": True,
+        "expected_reading_ability_keys": ["CHARLIE_CHOCOLATE", "SPOT"],
+    }
+    path = f"/v1/work/{work.id}/reviews"
+    with patch("app.api.reviews.enqueue_debounced_mv_refresh"):
+        response = client.post(
+            path, headers=test_schooladmin_account_headers, json=proposal
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["expected_reading_ability_keys"] == [
+        "CHARLIE_CHOCOLATE",
+        "SPOT",
+    ]
+    session.refresh(labels)
+    assert set(labels.get_label_dict(session)["reading_ability_keys"]) == {
+        "CHARLIE_CHOCOLATE",
+        "SPOT",
+    }
+    assert labels.reading_ability_origin == LabelOrigin.HUMAN
+    assert labels.checked is True
+    stale = client.post(
+        path,
+        headers=test_schooladmin_account_headers,
+        json={**proposal, "expected_reading_ability_keys": ["SPOT"]},
+    )
+    assert stale.status_code == 409, stale.text
+    ambiguous = client.post(
+        path,
+        headers=test_schooladmin_account_headers,
+        json={**proposal, "reading_ability_key": "SPOT"},
+    )
+    assert ambiguous.status_code == 422, ambiguous.text
 
 
 def test_teacher_review_authority_and_provenance(

@@ -62,6 +62,7 @@ class ReviewRepositoryImpl:
             "min_age",
             "max_age",
             "reading_ability_key",
+            "expected_reading_ability_keys",
             "confirmed_existing",
             "ai_assistance",
         ]

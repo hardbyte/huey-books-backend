@@ -15,7 +15,7 @@ from app.api.dependencies.security import (
 )
 from app.db.session import get_session
 from app.models import School, ServiceAccount, User, Work
-from app.models.labelset import LabelOrigin
+from app.models.labelset import LabelOrigin, LabelSet
 from app.models.user import UserAccountType
 from app.permissions import Permission
 from app.repositories.labelset_repository import labelset_repository
@@ -66,6 +66,7 @@ def _review_to_detail(review) -> LabelSetReviewDetail:
         min_age=assessment.get("min_age"),
         max_age=assessment.get("max_age"),
         reading_ability_key=assessment.get("reading_ability_key"),
+        expected_reading_ability_keys=assessment.get("expected_reading_ability_keys"),
         recommend_status=assessment.get("recommend_status"),
         notes=review.notes,
         confirmed_existing=assessment.get("confirmed_existing"),
@@ -101,6 +102,10 @@ def submit_review(
         raise HTTPException(status_code=403, detail="Only users can submit reviews")
 
     labelset = labelset_repository.get_or_create(session, work, commit=True)
+    session.execute(
+        select(LabelSet.id).where(LabelSet.id == labelset.id).with_for_update()
+    ).scalar_one()
+    session.refresh(labelset)
 
     current = labelset.get_label_dict(session)
     minimum = (
@@ -127,11 +132,23 @@ def submit_review(
             "hue_primary_key",
             "min_age",
             "max_age",
-            "reading_ability_key",
             "recommend_status",
         )
-        if any(expected[key] is None for key in required) or any(
-            getattr(review_data, key) != value for key, value in expected.items()
+        reading_snapshot = review_data.expected_reading_ability_keys
+        reading_matches = (
+            set(reading_snapshot) == set(current["reading_ability_keys"])
+            if reading_snapshot is not None
+            else expected["reading_ability_key"] is not None
+            and review_data.reading_ability_key == expected["reading_ability_key"]
+        )
+        if (
+            not reading_matches
+            or any(expected[key] is None for key in required)
+            or any(
+                getattr(review_data, key) != value
+                for key, value in expected.items()
+                if key != "reading_ability_key"
+            )
         ):
             raise HTTPException(
                 409,
@@ -143,7 +160,7 @@ def submit_review(
         labelset_id=labelset.id,
         reviewer_user_id=account.id,
         data=review_data,
-        commit=True,
+        commit=False,
     )
 
     # Promote the review into the canonical labelset so it influences
@@ -163,7 +180,8 @@ def submit_review(
                 value is not None
                 for value in (
                     review_data.hue_primary_key,
-                    review_data.reading_ability_key,
+                    review_data.reading_ability_key
+                    or review_data.expected_reading_ability_keys,
                     review_data.min_age,
                     review_data.max_age,
                     review_data.recommend_status,
@@ -181,6 +199,8 @@ def submit_review(
             mark_checked=False,
         )
         promoted = True
+
+    session.commit()
 
     if promoted:
         # A promoted review mutates the canonical labelset, changing
@@ -333,9 +353,8 @@ def _promote_review_to_canonical(
         labelled_by_user_id=account.id,
     )
 
-    labelset_repository.patch(session, labelset, patch_data, commit=True)
+    labelset_repository.patch(session, labelset, patch_data, commit=False)
 
     if mark_checked:
         labelset.checked = True
         labelset.checked_at = datetime.utcnow()
-        session.commit()
