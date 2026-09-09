@@ -100,6 +100,8 @@ def test_expired_token_rejected():
         "other:user-account:" + str(uuid4()),
         "wriveted:unknown:" + str(uuid4()),
         "wriveted:user-account:not-a-uuid",
+        "wriveted:user-account:---123456781234123412341234567890ab",
+        "wriveted:service-account:123456781234123412341234567890ab",
         "wriveted:user-account:",
         "wriveted:user-account:" + str(uuid4()) + ":extra",
     ],

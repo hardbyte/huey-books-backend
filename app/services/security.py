@@ -43,7 +43,8 @@ class TokenPayload(BaseModel):
             or parts[1] not in {"user-account", "service-account"}
         ):
             raise ValueError("Invalid JWT subject")
-        UUID(parts[2])
+        if str(UUID(parts[2])) != parts[2]:
+            raise ValueError("Invalid JWT subject identifier")
         return v.title()
 
 
