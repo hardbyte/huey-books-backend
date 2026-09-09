@@ -1,5 +1,11 @@
 # School Invitations (referral → free trial access)
 
+Historical design: the synthetic-subscription and paying-inviter examples below
+are superseded by [school-billing.md](school-billing.md). Current paid eligibility
+requires verified payment and an unexpired period, not just an active subscription
+or `School.state`. Invitation access does not qualify an organisation for paid
+multi-library management. Preserve these distinctions when reusing this flow.
+
 First-pass design. Lets an **active, paying** school refer another school; the
 invited school gets a configurable free-access period (default 3 months) when
 its admin **accepts** (signs in / activates). Invited-only (no referrer reward

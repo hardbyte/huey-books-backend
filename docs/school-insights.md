@@ -2,7 +2,8 @@
 
 Identifier conventions and compatibility policy: [Neutral identifier naming](identifier-naming.md).
 
-Implementation for review; not deployed to production. Backend and admin worktrees are both `school-insights/`, branch `brian/school-insights`, based on their local main branches. The dependency refresh and older internal KPI worktrees are separate.
+This document defines the dashboard contract and operational checks. Deployment
+status belongs in release records, not this specification.
 
 ## Contract
 
@@ -30,9 +31,21 @@ No sessions, identifiers, conversation text or raw feedback objects leave this e
 
 One aggregate SQL statement gives all dashboard sections the same database snapshot on the request's existing connection. A transaction-local two-second statement timeout bounds database work; timeouts return a retryable 503. JIT is disabled for this transaction only: compilation dominated the short dashboard query in local EXPLAIN measurements. No per-session application fetches or new service. See [PostgreSQL's JIT guidance](https://www.postgresql.org/docs/current/jit-decision.html).
 
-Local synthetic check: 20,000 sessions and 40,000 history records across 26 weeks, without holdings/interests. Request-local JIT off reduced warm sequential elapsed time from about 715–722 ms to 76–77 ms; four concurrent requests sharing two connections completed in 77–189 ms (previously 742–1,561 ms). This is not a Cloud SQL or representative collection benchmark and does not replace the staging release gate.
+Benchmark with representative session history, holdings and interests, including
+concurrent student traffic. Record query plans, cohort sizes, pool limits and
+warm/cold timings with the release evidence. A synthetic local timing is not a
+Cloud SQL performance guarantee.
 
-Migration `e927ad418b62` directly follows production base `a1c2e3f40014`: short DDL statements, restartable 1,000-row backfill batches and a concurrent typed school/date index. The two preproduction migrations were collapsed, retaining the final revision already applied in staging. Databases already at `e927ad418b62` need no stamp or rollback. Any development database still at the removed intermediate `d813cf906e21` must first finish upgrading using the old migration chain before switching to this branch; do not blindly stamp it. Downgrade restores the pre-PR schema without the discarded JSON-expression index. Historical JSON is compared to trusted UUID text, never cast. Apply the backend migration before enabling the frontend. The Firebase static export rewrite includes the new `/school/{id}/insights/` route.
+Migration `e927ad418b62` directly follows `a1c2e3f40014`: short DDL statements, restartable 1,000-row backfill batches and a concurrent typed school/date index. Historical JSON is compared to trusted UUID text, never cast. Apply the backend migration before enabling the frontend. The Firebase static export must route `/school/{id}/insights/` correctly.
+
+Historical development-database recovery: the intermediate revision
+`d813cf906e21` was removed when the preproduction migration chain was collapsed.
+A database at that revision must finish upgrading with the old chain before
+using the replacement chain; do not blindly stamp it. Databases already at
+`e927ad418b62` need no stamp or rollback for that transition. Downgrading that
+migration restores the schema at `a1c2e3f40014`, without the discarded
+JSON-expression index. This is a compatibility note, not permission to rewrite
+other executed migrations.
 
 Release gate: after old API revisions drain, run `uv run python scripts/backfill_session_schools.py --before <drain-time-with-timezone>` with the deployment's `SQLALCHEMY_DATABASE_URI`. Review its candidate count, repeat with `--apply`, then verify the dry run reports zero before enabling Insights. The old writer does not populate the new column. This restartable catch-up only touches legacy rows; new sessions carry an attribution-version marker, including deliberately unscoped chats. It never infers membership from malformed IDs or present-day membership for historical sessions.
 
@@ -40,13 +53,13 @@ Before release, benchmark the largest staging cohort/collection under concurrent
 
 See [analytics-proposal.md](analytics-proposal.md) for the separate daily-aggregate/DuckDB proposal. It is not an infrastructure change in this feature.
 
-## Local validation
+## Regression checks
 
-- Full backend unit suite: 672 passed, including UTC week boundaries, availability precedence and identifier compatibility.
-- Docker-backed insights/API/View-as regression suite: 51 passed (including PostgreSQL queries and late feedback remaining in the original session-start cohort).
-- Insights browser suite: 12 passed at desktop, portrait and landscape sizes, including unverified-feedback and legacy-response states.
-- TypeScript typecheck, targeted Ruff checks, whitespace checks and the admin production static export passed. Existing unrelated lint warnings remain.
-- The typed-attribution migration passed upgrade, downgrade, re-upgrade and retry after a simulated unstamped application on a separate local database. Valid/uppercase links matched; malformed/unknown links stayed null. The post-drain catch-up dry-run/apply/recheck only updated the simulated old writer, not a new unscoped session. The typed index and single-statement snapshot were inspected.
-- After collapsing the migration chain, an existing final-revision database required no migration. Downgrade to the production base removed both the typed column and school indexes; re-upgrade restored a valid typed index and validated foreign key. These checks used a disposable local fixture database, not staging or production.
+- `app/tests/unit/test_school_insights.py`: UTC week boundaries, availability precedence and identifier compatibility.
+- `app/tests/integration/test_school_insights.py`: PostgreSQL aggregates, privacy suppression, authorization and late feedback remaining in its original session-start cohort. Include View-as regressions when access policy changes.
+- Admin browser checks: populated, empty, suppressed, denied, unverified-feedback and legacy-response states at desktop, portrait and landscape sizes. Check URL persistence and the production static export as well as the development server.
+- Migration checks on disposable databases: fresh replay, upgrade of populated data, downgrade/re-upgrade and retry after an unstamped application. Valid links should match; malformed or unknown links must remain unattributed.
+- Catch-up checks: dry-run/apply/recheck must update old-writer rows without changing deliberately unscoped new sessions. Inspect the typed index and validated foreign key after migration.
 
-Browser screenshots live in the admin worktree's `test-results/school-insights-{1440,390,844}.png`; rerunning Playwright replaces disposable test results.
+Keep screenshots and measured test results with the change under review. They
+are evidence for that revision, not a substitute for repeating these checks.

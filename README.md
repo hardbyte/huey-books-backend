@@ -35,7 +35,7 @@ The API is designed for use by Library Management Systems, Wriveted staff (via s
 | Domain | Description |
 |--------|-------------|
 | **Users** | [Joined-table inheritance](https://docs.sqlalchemy.org/en/14/orm/inheritance.html#joined-table-inheritance): Student, Educator, Parent, SchoolAdmin, etc. |
-| **Books** | Work / Edition / CollectionItem hierarchy with AI-powered Labels |
+| **Books** | Work / Edition / CollectionItem hierarchy with provenance-aware labels and staff-owned research tools |
 | **Schools & Collections** | Library collections, class groups, activity tracking |
 | **Chatflows** | Flow-based conversation engine powering Huey the Bookbot |
 | **CMS** | Content management for chatflow questions, jokes, facts, messages |
@@ -70,10 +70,10 @@ The public API is available at `http://localhost:8000`. The seed script prints J
 
 ```bash
 # Public API
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 
 # Internal API
-uvicorn app.internal_api:internal_app --port 8888
+uv run uvicorn app.internal_api:internal_app --port 8888
 ```
 
 ### Configuring local admin access
@@ -155,7 +155,7 @@ uv run pytest -v app/tests/integration/test_specific.py::test_function
 Requires a running Docker stack with seeded data:
 
 ```bash
-python scripts/test_huey_flow_e2e.py
+uv run python scripts/test_huey_flow_e2e.py
 ```
 
 See [docs/testing-credentials.md](docs/testing-credentials.md) for test data setup and authentication tokens.
@@ -174,7 +174,12 @@ uv run alembic upgrade head
 uv run alembic revision --autogenerate -m "Description"
 ```
 
-Workflow: modify models in `app/models/` -> add imports to `app/models/__init__.py` -> generate migration -> review the generated file -> apply.
+Workflow: modify models in `app/models/` and declarative database objects in
+`app/db/` -> register them -> generate a migration -> review its frozen snapshot
+and downgrade -> verify fresh replay and populated upgrade. Revision files must
+not import live application code. Preserve applied revisions; new behaviour
+belongs in a new revision. See [architecture alignment](docs/architecture-alignment.md)
+for current decisions and compatibility gaps.
 
 ## Code quality
 
@@ -214,7 +219,12 @@ Deployed to GCP Cloud Run (public + internal services) backed by Cloud SQL. See 
 
 ### Google Cloud Platform
 
-Build and deploy:
+Use the repository CI deployment workflow for normal releases. Organisation/library
+production cutover additionally requires the gates in
+[the migration plan](docs/organisation-schema-migration.md).
+For an explicitly authorised manual deployment, preserve existing secret and
+environment bindings (especially OAuth); the following is a partial example,
+not a complete production configuration:
 
 ```bash
 gcloud builds submit --tag gcr.io/wriveted-api/wriveted-api
@@ -223,8 +233,8 @@ gcloud run deploy wriveted-api \
   --image gcr.io/wriveted-api/wriveted-api \
   --add-cloudsql-instances=wriveted \
   --platform managed \
-  --set-env-vars="POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql" \
-  --set-secrets=POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,SECRET_KEY=wriveted-api-secret-key:latest
+  --update-env-vars="POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql" \
+  --update-secrets=POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,SECRET_KEY=wriveted-api-secret-key:latest
 ```
 
 ### Production database migrations
