@@ -1,12 +1,15 @@
 import datetime
 import time
+from uuid import uuid4
 
 import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 from jose import ExpiredSignatureError, JWTError, jwt
 from pydantic import ValidationError
 from pytest import approx
 
-from app.api.dependencies.security import create_user_access_token
+from app.api.dependencies.security import create_user_access_token, get_valid_token_data
 from app.api.oauth import _redirect_uri_allowed
 from app.config import get_settings
 from app.models import User
@@ -42,10 +45,10 @@ def test_redirect_uri_lookalikes_rejected():
 
 
 def test_create_token():
-    test_user = User(id=0)
+    test_user = User(id=uuid4())
     token = create_user_access_token(test_user)
     payload = get_payload_from_access_token(token)
-    assert payload.sub == "Wriveted:User-Account:0"
+    assert payload.sub == f"Wriveted:User-Account:{test_user.id}".title()
     assert isinstance(payload.exp, datetime.datetime)
     assert isinstance(payload.iat, datetime.datetime)
     assert payload.iat < payload.exp
@@ -80,10 +83,48 @@ def test_token_with_invalid_subject_rejected():
 
 def test_expired_token_rejected():
     token = create_access_token(
-        subject="Wriveted:user-account:1", expires_delta=datetime.timedelta(seconds=1)
+        subject=f"Wriveted:user-account:{uuid4()}",
+        expires_delta=datetime.timedelta(seconds=1),
     )
     get_payload_from_access_token(token)
     time.sleep(2)
 
     with pytest.raises(ExpiredSignatureError):
         get_payload_from_access_token(token)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "wriveted",
+        "other:user-account:" + str(uuid4()),
+        "wriveted:unknown:" + str(uuid4()),
+        "wriveted:user-account:not-a-uuid",
+        "wriveted:user-account:---123456781234123412341234567890ab",
+        "wriveted:service-account:123456781234123412341234567890ab",
+        "wriveted:user-account:",
+        "wriveted:user-account:" + str(uuid4()) + ":extra",
+    ],
+)
+def test_malformed_subject_is_unauthorized(subject):
+    app = FastAPI()
+
+    @app.get("/protected")
+    async def protected(payload=Depends(get_valid_token_data)):
+        return {"subject": payload.sub}
+
+    response = TestClient(app).get(
+        "/protected",
+        headers={"Authorization": f"Bearer {create_access_token(subject)}"},
+    )
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.parametrize("kind", ["user-account", "service-account"])
+def test_valid_account_subject_retains_identity(kind):
+    identifier = uuid4()
+    payload = get_payload_from_access_token(
+        create_access_token(f"Wriveted:{kind}:{identifier}")
+    )
+    assert payload.sub.lower() == f"wriveted:{kind}:{identifier}"
