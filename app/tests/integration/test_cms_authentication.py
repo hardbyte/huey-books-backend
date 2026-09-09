@@ -16,10 +16,13 @@ Test Organization:
 """
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import text
 from starlette import status
+
+from app.services.security import create_access_token
 
 
 # Test isolation fixture for CMS data
@@ -254,19 +257,26 @@ class TestServiceAccountAuth:
 
         response = await async_client.get("/v1/cms/content", headers=invalid_headers)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers["www-authenticate"] == "Bearer"
 
-    async def test_expired_service_account_token(self, async_client):
+    async def test_expired_service_account_token(
+        self, async_client, backend_service_account
+    ):
         """Test handling of expired service account tokens."""
-        # Use a clearly expired token format
+        token = create_access_token(
+            subject=f"wriveted:service-account:{backend_service_account.id}",
+            expires_delta=timedelta(minutes=-1),
+        )
         expired_headers = {
-            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.expired",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
 
         response = await async_client.get("/v1/cms/content", headers=expired_headers)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers["www-authenticate"] == "Bearer"
 
 
 class TestAuthorizationLevels:
@@ -408,7 +418,8 @@ class TestSecurityBoundaries:
         response = await async_client.get(
             f"/v1/cms/content/{content_id}", headers=different_headers
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers["www-authenticate"] == "Bearer"
 
     async def test_sql_injection_prevention(
         self, async_client, backend_service_account_headers
@@ -436,27 +447,14 @@ class TestSecurityBoundaries:
         )
         assert normal_response.status_code == status.HTTP_200_OK
 
-    async def test_rate_limiting_headers(
+    async def test_authenticated_content_request_succeeds(
         self, async_client, backend_service_account_headers
     ):
-        """Test that rate limiting information is provided in headers."""
+        """A valid service account can list CMS content."""
         response = await async_client.get(
             "/v1/cms/content", headers=backend_service_account_headers
         )
 
-        # Check for common rate limiting headers (if implemented)
-        rate_limit_headers = [
-            "X-RateLimit-Limit",
-            "X-RateLimit-Remaining",
-            "X-RateLimit-Reset",
-            "Retry-After",
-        ]
-
-        # At least one rate limiting header should be present or none (both are valid)
-        rate_limit_present = any(
-            header in response.headers for header in rate_limit_headers
-        )
-        # This test documents expected behavior rather than enforcing it
         assert response.status_code == status.HTTP_200_OK
 
     async def test_content_sanitization(

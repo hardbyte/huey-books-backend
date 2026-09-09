@@ -1,5 +1,6 @@
 import datetime
 from typing import Any, Optional, Union
+from uuid import UUID
 
 from jose import jwt
 from pydantic import BaseModel, field_validator
@@ -34,9 +35,15 @@ class TokenPayload(BaseModel):
 
     @field_validator("sub")
     @classmethod
-    def sub_must_start_with_wriveted(cls, v):
-        if not v.startswith("wriveted") and ":" not in v:
+    def valid_account_subject(cls, v: str) -> str:
+        parts = v.lower().split(":")
+        if (
+            len(parts) != 3
+            or parts[0] != "wriveted"
+            or parts[1] not in {"user-account", "service-account"}
+        ):
             raise ValueError("Invalid JWT subject")
+        UUID(parts[2])
         return v.title()
 
 

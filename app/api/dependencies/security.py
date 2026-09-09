@@ -64,10 +64,7 @@ async def get_valid_token_data(
         return get_payload_from_access_token(token)
     except (jwt.JWTError, ValidationError) as e:
         logger.warning("Invalid access token")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Could not validate credentials",
-        ) from e
+        raise credentials_exception from e
 
 
 def get_optional_auth_header_data(
