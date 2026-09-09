@@ -18,6 +18,9 @@ class LabelSetReviewIn(BaseModel):
     min_age: int | None = Field(default=None, ge=0, le=100)
     max_age: int | None = Field(default=None, ge=0, le=100)
     reading_ability_key: ReadingAbilityKey | None = None
+    expected_reading_ability_keys: list[ReadingAbilityKey] | None = Field(
+        default=None, min_length=1, max_length=20
+    )
     recommend_status: Optional[RecommendStatus] = None
     notes: Optional[str] = None
     confirmed_existing: Optional[bool] = None
@@ -25,6 +28,15 @@ class LabelSetReviewIn(BaseModel):
 
     @model_validator(mode="after")
     def valid_labels(self):
+        if self.expected_reading_ability_keys is not None:
+            if not self.confirmed_existing or self.reading_ability_key is not None:
+                raise ValueError(
+                    "An existing reading-level snapshot is only valid for unchanged confirmation without a replacement level"
+                )
+            if len(set(self.expected_reading_ability_keys)) != len(
+                self.expected_reading_ability_keys
+            ):
+                raise ValueError("Existing reading levels must be distinct")
         if (
             self.min_age is not None
             and self.max_age is not None
@@ -65,6 +77,7 @@ class LabelSetReviewDetail(BaseModel):
     min_age: Optional[int] = None
     max_age: Optional[int] = None
     reading_ability_key: Optional[str] = None
+    expected_reading_ability_keys: list[str] | None = None
     recommend_status: Optional[RecommendStatus] = None
     notes: Optional[str] = None
     confirmed_existing: Optional[bool] = None

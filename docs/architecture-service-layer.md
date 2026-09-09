@@ -337,6 +337,17 @@ Session state modifications use PostgreSQL advisory locks combined with revision
 - All flow node/connection endpoints route through `FlowService`.
 - Snapshot regeneration is handled via a dedicated builder and regeneration endpoint/CLI, not per-operation auto-regeneration.
 
+### Label reviews
+
+`ReviewService.submit` owns labelset creation, confirmation validation, review
+assessment and canonical promotion in one transaction. The HTTP adapter maps
+domain errors and schedules recommendation refresh only after a successful commit.
+The labelset repository locks the owning work before first creation and reloads
+locked canonical labels before any authority-based patch. Confirmation uses the
+repository-loaded snapshot; an unchanged multi-level confirmation preserves the
+existing reading levels and their provenance. Educator reviews preserve the
+staff-checked flag and cannot override higher-authority HUMAN labels.
+
 ---
 
 ## Migration Status
