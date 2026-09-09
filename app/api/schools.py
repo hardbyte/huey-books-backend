@@ -33,6 +33,7 @@ from app.repositories.school_repository import school_repository
 from app.schemas.school import (
     CompGrantRequest,
     CompGrantResponse,
+    SchoolAdministratorPresence,
     SchoolBookbotInfo,
     SchoolCreateIn,
     SchoolDetail,
@@ -199,7 +200,9 @@ async def get_schools(
         is_collection_connected=(
             connected_collection if has_details_permission else None
         ),
-        has_active_subscription=has_active_subscription,
+        has_active_subscription=(
+            has_active_subscription if has_details_permission else None
+        ),
         official_identifier=official_identifier,
         skip=pagination.skip,
         limit=pagination.limit,
@@ -212,6 +215,9 @@ async def get_schools(
         for school in results:
             school.state = None
             school.subscription = None
+            school.admins = [SchoolAdministratorPresence()] if school.admins else []
+            school.info.terms_acceptance = None
+            school.info.experiments = None
 
     if not has_collection_permission:
         for school in results:
