@@ -288,7 +288,7 @@ async def get_collection(
     offset: Annotated[int, Field(ge=0)] = 0,
     school: str | None = None,
 ) -> dict:
-    """List books in the school's collection, with holding totals. `school` selects
+    """List books in the school's default collection, with holding totals. `school` selects
     which school (default: your current one)."""
     async with mcp_context(school) as ctx:
         require_scope(ctx, "catalogue:read", "read the collection")
@@ -297,7 +297,9 @@ async def get_collection(
     def _list() -> dict:
         with get_session_maker()() as db:
             collection = db.execute(
-                select(Collection).where(Collection.school_id == school_uuid)
+                select(Collection).where(
+                    Collection.school_id == school_uuid, Collection.is_default.is_(True)
+                )
             ).scalar_one_or_none()
             if collection is None:
                 return {"error": "This school has no catalogue uploaded yet."}
@@ -322,7 +324,7 @@ if not _READONLY:
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     async def import_books(isbns: list[str], school: str | None = None) -> dict:
-        """Add books to the school's collection by ISBN (catalogue upload). `school`
+        """Add books to the school's default collection by ISBN (catalogue upload). `school`
         selects which school (default: your current one). Unknown books are created
         automatically and enriched by Huey Books afterwards. Confirm the list with
         the librarian before calling."""
@@ -368,10 +370,15 @@ if not _READONLY:
                         .with_for_update()
                     ).scalar_one()
                     collection = db.execute(
-                        select(Collection).where(Collection.school_id == school_uuid)
+                        select(Collection).where(
+                            Collection.school_id == school_uuid,
+                            Collection.is_default.is_(True),
+                        )
                     ).scalar_one_or_none()
                     if collection is None:
-                        collection = Collection(name=school_name, school_id=school_uuid)
+                        collection = Collection(
+                            name=school_name, school_id=school_uuid, is_default=True
+                        )
                         db.add(collection)
                         db.flush()
                     return await add_editions_to_collection_by_isbn(

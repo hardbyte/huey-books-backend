@@ -220,11 +220,7 @@ def _ensure_user(
 def _ensure_service_account(
     session, name: str, account_type: ServiceAccountType = ServiceAccountType.KIOSK
 ) -> ServiceAccount:
-    sa = (
-        session.query(ServiceAccount)
-        .filter(ServiceAccount.name == name)
-        .one_or_none()
-    )
+    sa = session.query(ServiceAccount).filter(ServiceAccount.name == name).one_or_none()
     if sa is None:
         sa = ServiceAccount(name=name, type=account_type)
         session.add(sa)
@@ -353,6 +349,7 @@ def _ensure_collection(
                 and_(
                     Collection.name == config["name"],
                     Collection.school_id == school.wriveted_identifier,
+                    Collection.is_default.is_(True),
                 )
             )
             .one_or_none()
@@ -361,6 +358,7 @@ def _ensure_collection(
         collection = Collection(
             name=config["name"],
             school=school,
+            is_default=True,
             info=_info_with_seed(config.get("info"), seed_key),
         )
         session.add(collection)

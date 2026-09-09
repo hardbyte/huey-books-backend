@@ -2,6 +2,14 @@ from alembic_utils.pg_trigger import PGTrigger
 
 from app.db.functions import cms_content_tsvector_update
 
+collection_legacy_default_trigger = PGTrigger(
+    schema="public",
+    signature="collection_legacy_default_trigger",
+    on_entity="public.collections",
+    is_constraint=False,
+    definition="BEFORE INSERT ON public.collections FOR EACH ROW EXECUTE FUNCTION public.collection_legacy_default()",
+)
+
 editions_update_edition_title_trigger = PGTrigger(
     schema="public",
     signature="update_edition_title_trigger",

@@ -26,6 +26,7 @@ from app.db.base_class import Base  # noqa
 from app.db.extensions import pg_trgm_ex, pgvector_ex
 from app.db.functions import (
     cms_content_tsvector_update,
+    collection_legacy_default,
     notify_flow_event_function,
     public_encode_uri_component,
     refresh_recommendable_editions_function,
@@ -38,6 +39,7 @@ from app.db.functions import (
 )
 from app.db.triggers import (
     cms_content_tsvector_trigger,
+    collection_legacy_default_trigger,
     conversation_sessions_notify_flow_event_trigger,
     editions_update_edition_title_trigger,
     update_collections_trigger,
@@ -55,6 +57,7 @@ register_entities(
         pgvector_ex,
         pg_trgm_ex,
         # Functions
+        collection_legacy_default,
         update_edition_title,
         update_edition_title_from_work,
         update_collections_function,
@@ -70,6 +73,7 @@ register_entities(
         search_view_v1,
         recommendable_editions_view,
         # Triggers
+        collection_legacy_default_trigger,
         editions_update_edition_title_trigger,
         works_update_edition_title_from_work_trigger,
         cms_content_tsvector_trigger,
@@ -115,6 +119,7 @@ def run_migrations_offline() -> None:
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
+        compare_server_default=True,
         # compare_type=True,
         include_name=include_name,
     )
@@ -144,6 +149,7 @@ def run_migrations_online():
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            compare_server_default=True,
             # compare_type=True,
             include_name=include_name,
         )

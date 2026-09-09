@@ -380,8 +380,14 @@ class SchoolRepositoryImpl(SchoolRepository):
                 School.state == ("active" if is_active else "inactive")
             )
         if is_collection_connected is not None:
-            school_query = school_query.join(Collection).where(
-                Collection.book_count > 0
+            connected_collection = exists().where(
+                Collection.school_id == School.wriveted_identifier,
+                Collection.book_count > 0,
+            )
+            school_query = school_query.where(
+                connected_collection
+                if is_collection_connected
+                else ~connected_collection
             )
         if has_active_subscription is not None:
             # "has active subscription" means paying: an active subscription

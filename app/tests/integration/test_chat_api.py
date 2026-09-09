@@ -299,6 +299,69 @@ def test_start_conversation_pins_school(
     )
 
 
+def test_student_context_cannot_switch_to_sibling_organisation_library(
+    client,
+    test_flow_with_nodes,
+    test_school,
+    test_student_user_account_headers,
+    session,
+):
+    from app.models import School, SchoolState
+    from app.models.organisation import Organisation
+
+    organisation = Organisation(name="Student context organisation", kind="school")
+    session.add(organisation)
+    session.flush()
+    sibling = School(
+        name="Sibling library",
+        country_code=test_school.country_code,
+        organisation_id=organisation.id,
+        state=SchoolState.ACTIVE,
+        info={"location": {}},
+    )
+    session.add(sibling)
+    test_school.organisation_id = organisation.id
+    session.commit()
+    payload = {
+        "flow_id": test_flow_with_nodes["flow_id"],
+        "initial_state": {
+            "context": {
+                "school_wriveted_id": str(sibling.school_uuid),
+                "school_name": "Forged sibling",
+            }
+        },
+    }
+    try:
+        authenticated = client.post(
+            "/v1/chat/start", headers=test_student_user_account_headers, json=payload
+        )
+        assert authenticated.status_code == 201, authenticated.text
+        persisted = session.execute(
+            text("SELECT school_id, state FROM conversation_sessions WHERE id = :id"),
+            {"id": authenticated.json()["session_id"]},
+        ).one()
+        assert persisted.school_id == test_school.school_uuid
+        assert persisted.state["context"]["school_wriveted_id"] == str(
+            test_school.school_uuid
+        )
+        assert persisted.state["context"]["school_name"] == test_school.name
+
+        anonymous = client.post("/v1/chat/start", json=payload)
+        assert anonymous.status_code == 201, anonymous.text
+        selected = session.execute(
+            text("SELECT school_id FROM conversation_sessions WHERE id = :id"),
+            {"id": anonymous.json()["session_id"]},
+        ).scalar_one()
+        assert selected == sibling.school_uuid
+    finally:
+        session.rollback()
+        test_school.organisation_id = None
+        session.delete(sibling)
+        session.flush()
+        session.delete(organisation)
+        session.commit()
+
+
 @pytest.mark.parametrize(
     "identifier, expected", [("x" * 36, 422), (str(uuid.uuid4()), 404)]
 )

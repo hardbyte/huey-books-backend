@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from structlog import get_logger
 
@@ -13,12 +13,17 @@ from app.models.collection_item_activity import CollectionItemReadStatus
 from app.repositories.collection_item_activity_repository import (
     collection_item_activity_repository,
 )
+from app.repositories.collection_repository import collection_repository
 from app.schemas.collection import (
     CollectionAndItemsUpdateIn,
     CollectionCreateIn,
     CollectionItemActivityBase,
     CollectionItemAndStatusCreateIn,
     CollectionItemCreateIn,
+)
+from app.services.collection_errors import (
+    CollectionOwnerChangeError,
+    DefaultCollectionInUseError,
 )
 from app.services.collections import (
     add_editions_to_collection_by_isbn,
@@ -79,14 +84,36 @@ class CollectionService:
         data: CollectionCreateIn,
         ignore_conflicts: bool,
     ) -> Collection:
-        session.execute(delete(Collection).where(Collection.id == existing.id))
-        session.flush()
-        return self.create_collection(
-            session, data=data, ignore_conflicts=ignore_conflicts
+        collection_repository.lock_collection(session, existing)
+        if data.school_id != existing.school_id or data.user_id != existing.user_id:
+            raise CollectionOwnerChangeError("A collection's owner cannot be changed.")
+        collection_repository.delete_all_items(
+            db=session, db_obj=existing, commit=False
         )
+        existing.name = data.name
+        existing.info = data.info
+        for item in data.items or []:
+            collection_repository.add_item_to_collection(
+                db=session,
+                collection_orm_object=existing,
+                item=item,
+                commit=False,
+                ignore_conflicts=ignore_conflicts,
+            )
+        session.commit()
+        session.refresh(existing)
+        return existing
 
     def delete_collection(self, session: Session, *, collection: Collection) -> None:
-        session.execute(delete(Collection).where(Collection.id == collection.id))
+        if collection.school_id is not None:
+            collection_repository.lock_library(session, collection.school_id)
+        if collection.is_default and collection_repository.has_other_collections(
+            session, collection
+        ):
+            raise DefaultCollectionInUseError(
+                "Remove the additional collections before deleting the default collection."
+            )
+        collection_repository.delete_by_id(session, collection.id)
         session.commit()
 
     def add_collection_item(

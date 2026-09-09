@@ -158,7 +158,8 @@ async def test_school_only_recommends_single_held_work_with_different_cover_edit
         info={},
     )
     collection = Collection(
-        name="School-only recommendation test", school_id=test_school.wriveted_identifier
+        name="School-only recommendation test",
+        school_id=test_school.wriveted_identifier,
     )
     session.add_all([held_edition, collection])
     session.flush()
@@ -187,8 +188,15 @@ async def test_school_only_recommends_single_held_work_with_different_cover_edit
     finally:
         await async_session.rollback()
         for item in (
-            holding, collection, held_edition, held_labels, cover_edition,
-            held_work, outside_labels, outside_edition, outside_work,
+            holding,
+            collection,
+            held_edition,
+            held_labels,
+            cover_edition,
+            held_work,
+            outside_labels,
+            outside_edition,
+            outside_work,
         ):
             session.delete(item)
         session.commit()
@@ -198,6 +206,77 @@ async def test_school_only_recommends_single_held_work_with_different_cover_edit
 async def test_school_only_requires_school(async_session):
     with pytest.raises(ValueError, match="school_id is required"):
         await get_recommended_editions_from_mv(async_session, school_only=True)
+
+
+@pytest.mark.asyncio
+async def test_library_only_recommendations_union_own_collections_not_organisation(
+    session, async_session, test_school
+):
+    from uuid import uuid4
+
+    from app.models import Collection, CollectionItem, School, SchoolState
+    from app.models.organisation import Organisation
+
+    organisation = Organisation(
+        name=f"Recommendation organisation {uuid4()}", kind="school"
+    )
+    session.add(organisation)
+    session.flush()
+    libraries = [
+        School(
+            name=f"Recommendation library {index}",
+            country_code=test_school.country_code,
+            organisation_id=organisation.id,
+            state=SchoolState.ACTIVE,
+            info={"location": {}},
+        )
+        for index in range(2)
+    ]
+    session.add_all(libraries)
+    session.flush()
+    collections = [
+        Collection(name="Default", school_id=libraries[0].school_uuid, is_default=True),
+        Collection(name="Additional", school_id=libraries[0].school_uuid),
+        Collection(name="Sibling", school_id=libraries[1].school_uuid, is_default=True),
+    ]
+    session.add_all(collections)
+    session.flush()
+    labelled = [
+        _make_labeled_work(session, f"organisation-{uuid4()}", hue_ids=[1], ra_ids=[1])
+        for _ in collections
+    ]
+    holdings = [
+        CollectionItem(collection_id=collection.id, edition_isbn=edition.isbn)
+        for collection, (_, edition, _) in zip(collections, labelled, strict=True)
+    ]
+    session.add_all(holdings)
+    session.commit()
+    _refresh_mv(session)
+    try:
+        own = await get_recommended_editions_from_mv(
+            async_session, school_id=libraries[0].id, school_only=True, limit=100
+        )
+        sibling = await get_recommended_editions_from_mv(
+            async_session, school_id=libraries[1].id, school_only=True, limit=100
+        )
+        assert {work.id for work, _, _ in own} == {labelled[0][0].id, labelled[1][0].id}
+        assert {work.id for work, _, _ in sibling} == {labelled[2][0].id}
+    finally:
+        await async_session.rollback()
+        for holding in holdings:
+            session.delete(holding)
+        for collection in collections:
+            session.delete(collection)
+        session.flush()
+        for work, edition, labels in labelled:
+            session.delete(labels)
+            session.delete(edition)
+            session.delete(work)
+        for library in libraries:
+            session.delete(library)
+        session.flush()
+        session.delete(organisation)
+        session.commit()
 
 
 @pytest.mark.asyncio
@@ -484,9 +563,7 @@ async def test_refresh_function_runs_and_reflects_new_data(session, async_sessio
 
     present = (
         await async_session.execute(
-            text(
-                "SELECT count(*) FROM recommendable_editions WHERE work_id = :wid"
-            ),
+            text("SELECT count(*) FROM recommendable_editions WHERE work_id = :wid"),
             {"wid": work.id},
         )
     ).scalar_one()

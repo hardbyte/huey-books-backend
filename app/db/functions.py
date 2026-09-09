@@ -1,5 +1,32 @@
 from alembic_utils.pg_function import PGFunction
 
+collection_legacy_default = PGFunction(
+    schema="public",
+    signature="collection_legacy_default()",
+    definition="""returns trigger LANGUAGE plpgsql
+    SET search_path = pg_catalog, pg_temp
+    AS $function$
+    BEGIN
+        IF NEW.school_id IS NOT NULL THEN
+            PERFORM 1 FROM public.schools
+            WHERE wriveted_identifier = NEW.school_id FOR UPDATE;
+        END IF;
+        IF NEW.is_default IS NULL THEN
+            IF NEW.school_id IS NULL THEN
+                NEW.is_default := false;
+            ELSE
+                IF EXISTS (SELECT 1 FROM public.collections WHERE school_id = NEW.school_id) THEN
+                    RAISE EXCEPTION 'Legacy collection writer requires an empty library'
+                        USING ERRCODE = '23514';
+                END IF;
+                NEW.is_default := true;
+            END IF;
+        END IF;
+        RETURN NEW;
+    END;
+    $function$""",
+)
+
 public_encode_uri_component = PGFunction(
     schema="public",
     signature="encode_uri_component(text)",
