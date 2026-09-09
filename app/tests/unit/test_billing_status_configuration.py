@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -60,6 +61,3 @@ async def test_unconfigured_prices_preserve_read_only_status(
     assert status.entitlement.active is paid
     assert status.capabilities.manage is paid
     price_lookup.assert_not_called()
-
-
-from datetime import datetime, timedelta
