@@ -8,11 +8,11 @@ from app.api.common.workspace_errors import WorkspaceRoute
 from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.security import get_current_active_user
 from app.models.user import User
-from app.repositories.review_repository import review_repository
 from app.schemas.pagination import PaginatedResponse, Pagination
 from app.schemas.review import ReviewQueueItem
 from app.schemas.school_insights import InsightsWeeks, SchoolInsights
 from app.services.organisation_workspace import resolve_library
+from app.services.review_queues import get_library_review_queue
 from app.services.school_insights import get_school_insights
 
 router = APIRouter(tags=["Library reading"], route_class=WorkspaceRoute)
@@ -56,10 +56,10 @@ async def library_review_queue(
 ):
     """Works held at the requested library across all of its collections."""
     response.headers["Cache-Control"] = "private, no-store"
-    access = await resolve_library(session, actor, library_uuid, "review")
-    items, total = await review_repository.get_review_queue(
-        db=session,
-        school_id=access.library.id,
+    items, total = await get_library_review_queue(
+        session=session,
+        actor=actor,
+        library_uuid=library_uuid,
         status=status,
         min_school_count=min_school_count,
         skip=skip,

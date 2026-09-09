@@ -18,6 +18,7 @@ from app.schemas.organisation import (
     OrganisationCreate,
     OrganisationDetail,
     OrganisationList,
+    WorkspaceMemberList,
 )
 from app.services import organisation_management
 
@@ -26,9 +27,14 @@ Actor = Annotated[User, Depends(get_current_active_user)]
 
 
 @router.get("/organisations", response_model=OrganisationList)
-async def list_organisations(session: DBSessionDep, actor: Actor):
+async def list_organisations(
+    session: DBSessionDep,
+    actor: Actor,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+):
     return await organisation_management.list_organisations(
-        session=session, actor=actor
+        session=session, actor=actor, skip=skip, limit=limit
     )
 
 
@@ -187,12 +193,22 @@ async def add_library_member(
     )
 
 
-@router.get("/organisations/{organisation_uuid}/members")
+@router.get(
+    "/organisations/{organisation_uuid}/members", response_model=WorkspaceMemberList
+)
 async def list_organisation_members(
-    organisation_uuid: UUID, session: DBSessionDep, actor: Actor
+    organisation_uuid: UUID,
+    session: DBSessionDep,
+    actor: Actor,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
 ):
     return await organisation_management.list_organisation_members(
-        organisation_uuid=organisation_uuid, session=session, actor=actor
+        organisation_uuid=organisation_uuid,
+        session=session,
+        actor=actor,
+        skip=skip,
+        limit=limit,
     )
 
 
@@ -227,10 +243,16 @@ async def delete_organisation_member(
     )
 
 
-@router.get("/libraries/{library_uuid}/members")
-async def list_library_members(library_uuid: UUID, session: DBSessionDep, actor: Actor):
+@router.get("/libraries/{library_uuid}/members", response_model=WorkspaceMemberList)
+async def list_library_members(
+    library_uuid: UUID,
+    session: DBSessionDep,
+    actor: Actor,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+):
     return await organisation_management.list_library_members(
-        library_uuid=library_uuid, session=session, actor=actor
+        library_uuid=library_uuid, session=session, actor=actor, skip=skip, limit=limit
     )
 
 

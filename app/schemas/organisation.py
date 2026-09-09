@@ -116,3 +116,21 @@ class OrganisationDetail(OrganisationSummary):
 
 class OrganisationList(BaseModel):
     data: list[OrganisationSummary]
+    total: int = 0
+    skip: int = 0
+    limit: int = 100
+
+
+class WorkspaceMember(BaseModel):
+    user_id: UUID
+    name: str | None
+    role: Literal["manager", "reviewer", "cataloguer"]
+    source: Literal["organisation_membership", "library_membership"]
+
+
+class WorkspaceMemberList(BaseModel):
+    data: list[WorkspaceMember]
+    total: int
+    skip: int
+    limit: int
+    note: str | None = None

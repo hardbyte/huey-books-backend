@@ -2,19 +2,18 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
-from app.api.reviews import get_review_queue
 from app.models.educator import Educator
 from app.models.school_admin import SchoolAdmin
+from app.services.review_queues import get_legacy_review_queue
+from app.services.workspace_errors import WorkspaceForbidden
 
 
 @pytest.mark.parametrize("model", [SchoolAdmin, Educator])
 async def test_missing_teacher_scope_fails_closed(model):
     session = AsyncMock()
-    with pytest.raises(HTTPException) as error:
-        await get_review_queue(
-            session=session, account=model(school_id=None), school_id=uuid4()
+    with pytest.raises(WorkspaceForbidden, match="School membership required"):
+        await get_legacy_review_queue(
+            session=session, actor=model(school_id=None), school_uuid=uuid4()
         )
-    assert error.value.status_code == 403
     session.scalar.assert_not_awaited()

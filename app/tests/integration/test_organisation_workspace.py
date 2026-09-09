@@ -308,7 +308,7 @@ async def test_entitlement_lapse_preserves_direct_access_but_stops_central_write
     session.commit()
     after = await async_client.get(f"/v1/libraries/{libraries[1]}", headers=manager)
     assert after.status_code == 200
-    assert after.json()["capabilities"] == ["catalogue_read"]
+    assert after.json()["capabilities"] == ["catalogue_read", "revoke_members"]
     denied = await async_client.post(
         f"/v1/libraries/{libraries[1]}/collections",
         headers=manager,

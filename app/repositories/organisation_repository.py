@@ -58,8 +58,8 @@ class OrganisationRepository:
         )
 
     async def list_organisations(
-        self, db: AsyncSession, scope: LibraryScope
-    ) -> list[Organisation]:
+        self, db: AsyncSession, scope: LibraryScope, *, skip: int = 0, limit: int = 100
+    ) -> tuple[list[Organisation], int]:
         query = select(Organisation)
         if not scope.unrestricted:
             query = query.where(
@@ -74,11 +74,14 @@ class OrganisationRepository:
                     ),
                 )
             )
+        total = await db.scalar(select(func.count()).select_from(query.subquery()))
         return list(
             await db.scalars(
-                query.order_by(Organisation.name, Organisation.id).limit(100)
+                query.order_by(Organisation.name, Organisation.id)
+                .offset(skip)
+                .limit(limit)
             )
-        )
+        ), total
 
     async def list_libraries(
         self,
@@ -329,24 +332,37 @@ class OrganisationRepository:
         return dict(rows.all())
 
     async def organisation_members(
-        self, db: AsyncSession, organisation_uuid: UUID
-    ) -> list[dict]:
-        rows = await db.execute(
+        self,
+        db: AsyncSession,
+        organisation_uuid: UUID,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[dict], int]:
+        query = (
             select(User.id, User.name)
             .join(OrganisationMembership, OrganisationMembership.user_id == User.id)
             .where(OrganisationMembership.organisation_id == organisation_uuid)
-            .order_by(User.name)
         )
-        return [dict(row) for row in rows.mappings()]
-
-    async def library_members(self, db: AsyncSession, school_id: int) -> list[dict]:
+        total = await db.scalar(select(func.count()).select_from(query.subquery()))
         rows = await db.execute(
+            query.order_by(User.name, User.id).offset(skip).limit(limit)
+        )
+        return [dict(row) for row in rows.mappings()], total
+
+    async def library_members(
+        self, db: AsyncSession, school_id: int, *, skip: int = 0, limit: int = 100
+    ) -> tuple[list[dict], int]:
+        query = (
             select(User.id, User.name, LibraryMembership.role)
             .join(LibraryMembership, LibraryMembership.user_id == User.id)
             .where(LibraryMembership.school_id == school_id)
-            .order_by(User.name)
         )
-        return [dict(row) for row in rows.mappings()]
+        total = await db.scalar(select(func.count()).select_from(query.subquery()))
+        rows = await db.execute(
+            query.order_by(User.name, User.id).offset(skip).limit(limit)
+        )
+        return [dict(row) for row in rows.mappings()], total
 
     async def grant_organisation_membership(
         self, db: AsyncSession, organisation_uuid: UUID, user_uuid: UUID

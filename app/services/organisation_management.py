@@ -55,19 +55,24 @@ def require_staff(actor: User):
         raise WorkspaceForbidden("Platform staff permission required")
 
 
-async def list_organisations(session: AsyncSession, actor: User):
+async def list_organisations(
+    session: AsyncSession, actor: User, skip: int = 0, limit: int = 100
+):
     if not actor.is_active or (
         actor.type not in ELIGIBLE_ROLES and not is_platform_staff(actor)
     ):
-        return OrganisationList(data=[])
-    organisations = await organisation_repository.list_organisations(
-        session, workspace_scope(actor)
+        return OrganisationList(data=[], skip=skip, limit=limit)
+    organisations, total = await organisation_repository.list_organisations(
+        session, workspace_scope(actor), skip=skip, limit=limit
     )
     managed = await organisation_repository.managed_organisation_ids(session, actor.id)
     entitlements = await resolve_organisation_entitlements(
         session, {item.id for item in organisations}
     )
     return OrganisationList(
+        total=total,
+        skip=skip,
+        limit=limit,
         data=[
             OrganisationSummary(
                 id=organisation.id,
@@ -77,7 +82,7 @@ async def list_organisations(session: AsyncSession, actor: User):
                 entitlements=entitlements[organisation.id],
             )
             for organisation in organisations
-        ]
+        ],
     )
 
 
@@ -408,13 +413,20 @@ async def add_library_member(
 
 
 async def list_organisation_members(
-    organisation_uuid: UUID, session: AsyncSession, actor: User
+    organisation_uuid: UUID,
+    session: AsyncSession,
+    actor: User,
+    skip: int = 0,
+    limit: int = 100,
 ):
     await require_organisation_manager(session, actor, organisation_uuid)
-    rows = await organisation_repository.organisation_members(
-        session, organisation_uuid
+    rows, total = await organisation_repository.organisation_members(
+        session, organisation_uuid, skip=skip, limit=limit
     )
     return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
         "data": [
             {
                 "user_id": row["id"],
@@ -423,7 +435,7 @@ async def list_organisation_members(
                 "source": "organisation_membership",
             }
             for row in rows
-        ]
+        ],
     }
 
 
@@ -494,10 +506,21 @@ async def delete_organisation_member(
     return None
 
 
-async def list_library_members(library_uuid: UUID, session: AsyncSession, actor: User):
-    access = await resolve_library(session, actor, library_uuid, "manage_members")
-    rows = await organisation_repository.library_members(session, access.library.id)
+async def list_library_members(
+    library_uuid: UUID,
+    session: AsyncSession,
+    actor: User,
+    skip: int = 0,
+    limit: int = 100,
+):
+    access = await resolve_library(session, actor, library_uuid, "revoke_members")
+    rows, total = await organisation_repository.library_members(
+        session, access.library.id, skip=skip, limit=limit
+    )
     return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
         "data": [
             {
                 "user_id": row["id"],
@@ -547,7 +570,7 @@ async def delete_library_member(
     library_uuid: UUID, user_uuid: UUID, session: AsyncSession, actor: User
 ):
     await organisation_repository.get_library(session, library_uuid, lock=True)
-    access = await resolve_library(session, actor, library_uuid, "manage_members")
+    access = await resolve_library(session, actor, library_uuid, "revoke_members")
     membership = await organisation_repository.library_membership(
         session, access.library.id, user_uuid
     )

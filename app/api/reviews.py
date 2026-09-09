@@ -3,19 +3,18 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from fastapi_permissions import All, Allow
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 from structlog import get_logger
 
 from app.api.common.pagination import PaginatedQueryParams
+from app.api.common.workspace_errors import WorkspaceRoute
 from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.security import (
     get_current_active_superuser,
     get_current_active_user_or_service_account,
 )
 from app.db.session import get_session
-from app.models import School, ServiceAccount, User, Work
-from app.models.user import UserAccountType
+from app.models import ServiceAccount, User, Work
 from app.permissions import Permission
 from app.repositories.review_repository import review_repository
 from app.repositories.work_repository import work_repository
@@ -27,6 +26,7 @@ from app.schemas.review import (
     ReviewStats,
 )
 from app.services.recommendations import enqueue_debounced_mv_refresh
+from app.services.review_queues import get_legacy_review_queue
 from app.services.reviews import (
     InvalidReviewError,
     ReviewConflictError,
@@ -44,6 +44,7 @@ review_acl = [
 
 router = APIRouter(
     tags=["Reviews"],
+    route_class=WorkspaceRoute,
     dependencies=[Depends(get_current_active_user_or_service_account)],
 )
 
@@ -174,32 +175,14 @@ async def get_review_queue(
     service accounts see the global queue, or a chosen school's books when
     ``school_id`` (a school's wriveted_identifier) is supplied.
     """
-    if isinstance(account, User) and account.type in (
-        UserAccountType.EDUCATOR,
-        UserAccountType.SCHOOL_ADMIN,
-    ):
-        # Teachers are always locked to their own school's books.
-        effective_school_id = getattr(account, "school_id", None)
-        if effective_school_id is None:
-            raise HTTPException(status_code=403, detail="School membership required")
-    elif school_id is not None:
-        # Wriveted staff / service accounts may target any school by its public
-        # identifier; resolve it to the internal id the repository filters on.
-        effective_school_id = await session.scalar(
-            select(School.id).where(School.wriveted_identifier == school_id)
-        )
-        if effective_school_id is None:
-            raise HTTPException(status_code=404, detail="School not found")
-    else:
-        effective_school_id = None
-
-    items, total = await review_repository.get_review_queue(
-        db=session,
+    items, total = await get_legacy_review_queue(
+        session=session,
+        actor=account,
         status=status,
         min_school_count=min_school_count,
         skip=pagination.skip,
         limit=pagination.limit,
-        school_id=effective_school_id,
+        school_uuid=school_id,
     )
     return PaginatedResponse(
         data=[ReviewQueueItem(**item) for item in items],

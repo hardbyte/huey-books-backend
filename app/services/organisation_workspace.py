@@ -23,6 +23,7 @@ READ_CAPABILITIES = frozenset({"catalogue_read", "review", "insights"})
 MANAGE_CAPABILITIES = READ_CAPABILITIES | {
     "catalogue_write",
     "manage_members",
+    "revoke_members",
     "manage_details",
 }
 ELIGIBLE_ROLES = {UserAccountType.EDUCATOR, UserAccountType.SCHOOL_ADMIN}
@@ -97,7 +98,7 @@ def _library_access(
         capabilities |= (
             MANAGE_CAPABILITIES
             if organisation_management_enabled
-            else frozenset({"catalogue_read"})
+            else frozenset({"catalogue_read", "revoke_members"})
         )
     if role:
         sources.append(f"library_{role}")

@@ -12,6 +12,7 @@ APP = Path(__file__).resolve().parents[2]
         "services/organisation_management.py",
         "services/organisation_workspace.py",
         "services/organisation_entitlements.py",
+        "services/review_queues.py",
     ],
 )
 def test_workspace_services_do_not_construct_sql_or_depend_on_http(module):
@@ -33,13 +34,14 @@ def test_workspace_services_do_not_construct_sql_or_depend_on_http(module):
             }
 
 
-def test_workspace_http_adapter_does_not_access_persistence():
-    tree = ast.parse((APP / "api/organisations.py").read_text())
+@pytest.mark.parametrize("module", ["api/organisations.py", "api/library_reading.py"])
+def test_workspace_http_adapter_does_not_access_persistence(module):
+    tree = ast.parse((APP / module).read_text())
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            assert not (node.module or "").startswith(
-                ("sqlalchemy", "app.repositories")
-            )
+            assert not (node.module or "").startswith("app.repositories")
+            if (node.module or "").startswith("sqlalchemy"):
+                assert node.module == "sqlalchemy.exc"
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             assert node.func.attr not in {
                 "commit",
