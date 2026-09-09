@@ -1,7 +1,7 @@
 ################################################################################
 # Builder: resolve dependencies into a venv using uv. uv lives only here.
 ################################################################################
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 # uv binary from the official (pinned) image — not shipped to the runtime stage.
 COPY --from=ghcr.io/astral-sh/uv:0.11.14 /uv /uvx /bin/
@@ -32,7 +32,7 @@ RUN if [ "$INSTALL_DEV" = "true" ]; then \
 ################################################################################
 # Runtime: slim image carrying only the venv + app. No uv, no poetry, no caches.
 ################################################################################
-FROM python:3.11-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # DL3064 false positive: this block holds only non-secret runtime config —
 # uid/gid, PATH, PORT, Python flags — no credentials.
