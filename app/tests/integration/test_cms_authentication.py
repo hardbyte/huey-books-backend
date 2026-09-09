@@ -25,6 +25,20 @@ from starlette import status
 from app.services.security import create_access_token
 
 
+@pytest.mark.parametrize("account_kind", ["user-account", "service-account"])
+async def test_noncanonical_subject_is_rejected_before_account_lookup(
+    async_client, account_kind
+):
+    token = create_access_token(
+        subject=f"wriveted:{account_kind}:---123456781234123412341234567890ab"
+    )
+    response = await async_client.get(
+        "/v1/cms/content", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
 # Test isolation fixture for CMS data
 @pytest.fixture(autouse=True)
 async def cleanup_cms_data(async_session):
