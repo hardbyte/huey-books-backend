@@ -11,6 +11,7 @@ def test_retained_billing_links_match_declarative_schema(session):
         session.connection(),
         opts={
             "compare_server_default": True,
+            "include_schemas": False,
             "include_name": lambda name, kind, parents: (
                 kind != "table" or name == table_name
             ),
