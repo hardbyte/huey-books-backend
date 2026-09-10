@@ -152,7 +152,12 @@ class StripeInternalEventPayload(BaseModel):
 
 @router.post("/process-stripe-event")
 def handle_stripe_event(data: StripeInternalEventPayload):
-    logger.info("Internal API processing a stripe event", data=data)
+    logger.info(
+        "Internal API processing a stripe event",
+        stripe_event_id=data.event_id,
+        stripe_event_type=data.stripe_event_type,
+        stripe_api_version=data.api_version,
+    )
 
     result = process_stripe_event(
         event_type=data.stripe_event_type,
