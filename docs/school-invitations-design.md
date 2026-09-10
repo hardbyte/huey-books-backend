@@ -1,5 +1,16 @@
 # School Invitations (referral → free trial access)
 
+Historical design: use [school-billing.md](school-billing.md) for the current
+billing/access contract. Paid access requires verified payment and an unexpired
+period, not just an active subscription or `School.state`. Invitation access does
+not qualify an organisation for paid multi-library management.
+
+The invitation eligibility gate is still legacy: `_has_paying_subscription` in
+`app/services/school_invitations.py` checks an active subscription with a nonempty
+Stripe customer ID, without checking payment evidence or expiry. It must not be
+reused as a paid-entitlement check. Aligning that gate with the billing contract
+requires a separately tested behaviour change; this document does not implement it.
+
 First-pass design. Lets an **active, paying** school refer another school; the
 invited school gets a configurable free-access period (default 3 months) when
 its admin **accepts** (signs in / activates). Invited-only (no referrer reward

@@ -78,11 +78,13 @@ After updating, log out and back in to get a new JWT with updated permissions.
 See [docs/architecture-service-layer.md](docs/architecture-service-layer.md) for the full service layer architecture.
 
 ### Migration Workflow
-1. Modify SQLAlchemy models in `app/models/`
-2. Add imports to `app/models/__init__.py`
+1. Modify SQLAlchemy models in `app/models/`, or declarative functions, triggers, views and extensions in `app/db/`.
+2. Register models in `app/models/__init__.py` and database entities in `alembic/env.py`.
 3. Generate migration: `uv run alembic revision --autogenerate -m "Description"`
-4. Review generated migration file manually. Models are source of truth.
-5. Apply: `uv run alembic upgrade head`
+4. Review the generated snapshot, including reverse operations. Revision files contain frozen SQLAlchemy/alembic_utils definitions and revision-local data tables; they must not import live application models, functions or views. Declarative imports belong in the generation environment, not revision files.
+5. Apply and verify both populated upgrades and fresh replay. Check declarative drift after applying; server defaults are included in comparison. Use a disposable database with the declared extensions available for generation.
+
+Preserve applied revisions. Necessary historical replay repairs require a separately reviewed change with equivalence tests; new schema or data behaviour belongs in a new revision. `test_migration_snapshots.py` records four outstanding legacy import exceptions and rejects application imports in other revisions.
 
 ## Common Patterns and Pitfalls
 

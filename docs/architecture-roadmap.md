@@ -5,9 +5,9 @@
 
 ## Unit of Work Pattern Adoption
 
-### Current State
+### Starting point
 
-`app/services/unit_of_work.py` (128 lines) defines `UnitOfWork` (ABC) and `SQLUnitOfWork` with lazy-loaded repository properties. The implementation is complete but has zero production usage -- services manage transactions manually with `db.commit()` and `db.flush()`.
+`app/services/unit_of_work.py` defines `UnitOfWork` and `SQLUnitOfWork` with lazy-loaded repository properties. Its existence does not require adoption: service-owned `commit()` and `flush()` remain a supported transaction boundary. Evaluate callers and repository compatibility before introducing it into a workflow.
 
 ### Design Intent
 
@@ -27,33 +27,25 @@ Benefits over manual transaction management:
 - Rollback on exception without manual error handling
 - Cleaner separation between service logic and persistence plumbing
 
-### Adoption Plan
+### Adoption criteria
 
-1. Refactor `FlowService` to use UoW (lowest risk -- already has clean service boundaries)
-2. Refactor `CMSWorkflowService` and `ConversationService`
-3. Evaluate whether read-only services like `AnalyticsService` benefit (likely no -- they don't need transactions)
-
-### Why It Hasn't Been Adopted
-
-Services were built before UoW was finalized. Manual transaction management works reliably and the migration cost exceeds the immediate benefit. Worth adopting during the next service refactoring cycle rather than as a standalone task.
+Adopt during a service refactor only when the abstraction makes atomic writes,
+rollback and dependency ownership clearer. Keep the request's existing session;
+do not introduce a second connection or nested transaction owner. Prove that
+business writes and outbox events roll back together. Read-only services still
+use database transactions but do not need a write-oriented Unit of Work merely
+to run a query.
 
 ## CQRS-Lite Evolution
 
-### Current State
-
-Four services demonstrate intentional read/write separation:
-- `AnalyticsService` -- read-only, no transaction overhead
-- `CMSWorkflowService` -- write operations with event publishing
-- `ConversationService` -- session lifecycle management
-- `FlowService` -- flow CRUD with snapshot regeneration
-
-Most other service files (~44 out of 48) mix reads and writes without architectural separation.
-
 ### Design Direction
 
-**Read side**: Query services access repositories directly without transactions. Business calculations happen in the service layer, not in SQL queries. This is already demonstrated in `AnalyticsService`.
+**Read side**: Query services use repositories without an explicit write/commit
+workflow. SQLAlchemy still starts a database transaction for ordinary reads;
+read-only does not mean transaction-free. Repositories perform SQL aggregation
+and filtering; services define metric semantics and disclosure policy.
 
-**Write side**: Command services coordinate repository writes + event outbox publishing within a single Unit of Work. This pattern ensures atomicity between business data and events.
+**Write side**: Command services coordinate repository writes and required outbox events in the same transaction. A Unit of Work is one possible implementation, not a prerequisite for atomicity.
 
 The full CQRS pattern (separate read models, event-driven projections) is not planned. The "Lite" approach -- separating read and write services with different transaction strategies -- provides most of the benefit without the complexity.
 
@@ -66,15 +58,14 @@ The full CQRS pattern (separate read models, event-driven projections) is not pl
 
 ### User Domain (Highest Complexity)
 
-`app/crud/user.py` (337 lines) is the last major unmigrated domain:
-- 39 import usages across 16 files
+Migrating `app/crud/user.py` requires preserving:
 - Polymorphic user types via joined-table inheritance (Student, Educator, Parent, SchoolAdmin, WrivetedAdmin)
 - Deeply integrated with authentication (`app/api/auth.py`, `app/api/dependencies/security.py`)
 - Used in test fixtures (`conftest.py`)
 
 **Migration strategy**:
-1. Create `UserRepository` with Protocol interface supporting polymorphic queries
-2. Start with read operations (most common: `get_by_id`, `get_by_email`, `get_or_create`)
+1. Define a domain-oriented repository surface supporting polymorphic queries; add a Protocol if needed for substitution
+2. Start with reads such as `get_by_id` and `get_by_email`; treat `get_or_create` as a write with concurrency and transaction requirements
 3. Migrate authentication-related consumers carefully (security-critical code)
 4. Migrate write operations and profile management
 5. Update test fixtures last (they commit explicitly for HTTP request isolation)
@@ -84,15 +75,15 @@ The full CQRS pattern (separate read models, event-driven projections) is not pl
 
 ### Collection Domain (Medium Complexity)
 
-`app/crud/collection.py` (210 lines) -- 26 usages across 9 files. `CollectionRepository` already exists. Migration is mechanical: update imports and adjust method signatures.
+`CollectionRepository` provides the destination for consumers of `app/crud/collection.py`. Preserve access scope, collection identity, transaction ownership and import behaviour while moving callers; matching method names alone do not establish equivalence.
 
 ### Event Domain (Medium Complexity)
 
-`app/crud/event.py` (151 lines) -- 49 usages across 16 files. `EventRepository` already exists. Higher usage count but the operations are simpler.
+Move consumers of `app/crud/event.py` to `EventRepository` without changing event attribution or commit timing. Application activity events and delivery-outbox entries have different purposes.
 
 ### API Layer Migration
 
-~16 API files still import from `app.crud`. As domains complete their CRUD-to-repository migration, the corresponding API endpoints should be updated to use service layer methods instead of direct CRUD/repository access. CMS, analytics, and chat endpoints already demonstrate this pattern.
+As domains complete their CRUD-to-repository migration, update corresponding API endpoints to use service methods instead of direct CRUD/repository access. Find remaining consumers with `rg 'app\.crud|from app import crud' app` rather than maintaining usage counts here.
 
 ## Event System Evolution
 
@@ -111,24 +102,23 @@ Three event systems serve different purposes (see [architecture-service-layer.md
 
 **Broadcast / segmented email** *(shipped)*: `app/services/broadcast.py` sends staff announcements to a user segment (account types, country, school) through the Event Outbox, with RFC 8058 one-click unsubscribe (`users.marketing_opt_out`). Recipient resolution currently queries the user domain directly; it will move behind `UserRepository` when that domain is migrated.
 
-**Slack alert migration**: `handle_event_to_slack_alert` in `app/services/events.py` still uses direct Slack API calls. Migrating to `SlackNotificationService` via the event outbox would provide retry logic and better testing.
+**Slack delivery**: `handle_event_to_slack_alert` in `app/services/events.py`
+already delegates to reliable delivery through the event outbox. Preserve that
+transaction boundary when migrating remaining callers.
 
 ## Testing Strategy
 
-### Current Gaps
+### Coverage requirements
 
-- 44 of 48 service files lack dedicated unit tests (tested indirectly through 638+ integration tests)
-- No repository unit tests (complex logic like `EditionRepository.create_in_bulk` with 223-line deduplication is only tested via API endpoints)
-- No concurrency-specific tests (advisory locks, revision conflicts, background task race conditions)
-
-### Recommended Approach
+Assess coverage against the behaviour being changed, not suite size. Keep test
+run results with the change record; they are not enduring architecture facts.
 
 **Service unit tests**: Mock repository interfaces (ABC/Protocol), test business logic in isolation. Priority targets:
-- `CMSWorkflowService` (29KB, zero unit tests)
+- `CMSWorkflowService` (publishing and visibility rules)
 - `FlowService` (complex snapshot/publish logic)
 - `ConversationService` (session lifecycle state machine)
 
-**Repository unit tests**: Priority for repositories with complex business logic:
+**Repository integration tests**: Exercise PostgreSQL persistence semantics with a real database, including:
 - `EditionRepository.create_in_bulk()` -- ISBN deduplication
 - `WorkRepository.get_or_create()` -- complex matching
 - `BooklistRepository.reorder_items()` -- authority system logic
@@ -142,11 +132,11 @@ Three event systems serve different purposes (see [architecture-service-layer.md
 
 ## Migration Workflow Reference
 
-The proven 6-step workflow for CRUD-to-repository migration (refined through 12 successful domain migrations):
+For CRUD-to-repository migration:
 
 1. **Analyze** existing CRUD file
-2. **Create repository** with ABC interface + SQL implementation
-3. **Update consumers** (imports + method calls)
+2. **Create a domain repository** with a narrow interface; add a Protocol or ABC only where useful
+3. **Update consumers** through service boundaries, preserving transaction ownership and authorization
 4. **Handle circular imports** (replace CRUD imports, extract utils to `app/utils/`, or use local imports)
 5. **Delete CRUD file** once all consumers migrated
 6. **Run full test suite** (`bash scripts/integration-tests.sh`)

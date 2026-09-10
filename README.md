@@ -35,7 +35,7 @@ The API is designed for use by Library Management Systems, Wriveted staff (via s
 | Domain | Description |
 |--------|-------------|
 | **Users** | [Joined-table inheritance](https://docs.sqlalchemy.org/en/14/orm/inheritance.html#joined-table-inheritance): Student, Educator, Parent, SchoolAdmin, etc. |
-| **Books** | Work / Edition / CollectionItem hierarchy with AI-powered Labels |
+| **Books** | Work / Edition / CollectionItem hierarchy with provenance-aware labels and staff-owned research tools |
 | **Schools & Collections** | Library collections, class groups, activity tracking |
 | **Chatflows** | Flow-based conversation engine powering Huey the Bookbot |
 | **CMS** | Content management for chatflow questions, jokes, facts, messages |
@@ -70,10 +70,10 @@ The public API is available at `http://localhost:8000`. The seed script prints J
 
 ```bash
 # Public API
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 
 # Internal API
-uvicorn app.internal_api:internal_app --port 8888
+uv run uvicorn app.internal_api:internal_app --port 8888
 ```
 
 ### Configuring local admin access
@@ -155,7 +155,7 @@ uv run pytest -v app/tests/integration/test_specific.py::test_function
 Requires a running Docker stack with seeded data:
 
 ```bash
-python scripts/test_huey_flow_e2e.py
+uv run python scripts/test_huey_flow_e2e.py
 ```
 
 See [docs/testing-credentials.md](docs/testing-credentials.md) for test data setup and authentication tokens.
@@ -174,7 +174,12 @@ uv run alembic upgrade head
 uv run alembic revision --autogenerate -m "Description"
 ```
 
-Workflow: modify models in `app/models/` -> add imports to `app/models/__init__.py` -> generate migration -> review the generated file -> apply.
+Workflow: modify models in `app/models/` and declarative database objects in
+`app/db/` -> register them -> generate a migration -> review its frozen snapshot
+and downgrade -> verify fresh replay and populated upgrade. Revision files must
+not import live application code. Preserve applied revisions; new behaviour
+belongs in a new revision. See [architecture alignment](docs/architecture-alignment.md)
+for current decisions and compatibility gaps.
 
 ## Code quality
 
@@ -214,40 +219,33 @@ Deployed to GCP Cloud Run (public + internal services) backed by Cloud SQL. See 
 
 ### Google Cloud Platform
 
-Build and deploy:
+Merging to `main` triggers the [Cloud Build deployment pipeline](.cloudbuild/cloudbuild-main-branch.yaml).
+Require passing PR checks before merging. The pipeline builds one image, upgrades
+development before production, runs billing reconciliation and deploys both the
+public and internal APIs. Its configuration is the source of truth for image
+names, regions, environment settings and Secret Manager bindings.
 
-```bash
-gcloud builds submit --tag gcr.io/wriveted-api/wriveted-api
+After deployment succeeds, verify the commit label and serving traffic on both
+services, smoke-test `/v1/version` and the changed workflow, then inspect request
+and application logs on the new revisions. A green PR check alone does not prove
+production deployment. Organisation/library cutover additionally requires the
+gates in [the migration plan](docs/organisation-schema-migration.md).
 
-gcloud run deploy wriveted-api \
-  --image gcr.io/wriveted-api/wriveted-api \
-  --add-cloudsql-instances=wriveted \
-  --platform managed \
-  --set-env-vars="POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql" \
-  --set-secrets=POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,SECRET_KEY=wriveted-api-secret-key:latest
-```
+An exceptional manual deployment requires explicit approval and a reviewed plan
+covering the same migration, configuration and verification steps; do not replace
+the pipeline with a partial `gcloud run deploy` command.
 
 ### Production database migrations
 
-```bash
-gcloud --project wriveted-api auth application-default login
+The deployment pipeline runs [the migration script](.cloudbuild/scripts/database_migrate.sh)
+before updating services. Schema changes require fresh-replay and populated-upgrade
+validation on disposable databases; see [migration guidance](#database-migrations).
 
-# Start Cloud SQL proxy
-cloud_sql_proxy -instances=wriveted-api:australia-southeast1:wriveted=tcp:5432
-
-# Apply migrations through the proxy (password in Secret Manager)
-export SQLALCHEMY_DATABASE_URI=postgresql://postgres:password@localhost/postgres
-uv run alembic upgrade head
-```
-
-The Cloud Run service uses a restricted `cloudrun` database role:
-
-```sql
-ALTER ROLE cloudrun WITH NOCREATEDB NOCREATEROLE;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO cloudrun;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO cloudrun;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cloudrun;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO cloudrun;
-```
+The runtime uses the restricted `cloudrun` role rather than the migration owner.
+Roles and privileges are declared in [pgroles.yaml](pgroles.yaml). The pipeline's
+`PgrolesCheck` step reports manifest drift without applying it, then verifies
+required runtime privileges. Change the manifest and explicitly review/apply its
+plan rather than issuing ad hoc production grants. Keep database
+credentials in the configured secret mechanism, not command examples or logs.
 
 Production logs: [Cloud Run console](https://console.cloud.google.com/run/detail/australia-southeast1/wriveted-api/logs?project=wriveted-api)

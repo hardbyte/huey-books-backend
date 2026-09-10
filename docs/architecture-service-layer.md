@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Wriveted API uses a layered architecture with domain-oriented repositories, a service layer for business logic, and reliable event delivery via an outbox pattern. This document describes the **current implemented architecture** and remaining migration work.
+The Huey Books API uses domain-oriented repositories, a service layer for business logic, and an outbox for reliable event delivery. This document defines layer responsibilities and representative implementations. Legacy paths are being migrated incrementally; examples are not an exhaustive inventory or evidence of deployment.
 
 ### Layer Responsibilities
 
@@ -26,7 +26,7 @@ graph TD
     style Models fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px
 ```
 
-**Key services** (all implemented and active):
+**Representative services:**
 
 | Service | File | Role |
 |---------|------|------|
@@ -50,9 +50,13 @@ graph TD
 
 ### Repository Pattern
 
-All data access goes through domain-oriented repositories in `app/repositories/`. Each repository defines an abstract interface (ABC) and a concrete SQL implementation.
+New data access belongs in domain-oriented repositories in `app/repositories/`.
+Existing repositories use a mixture of concrete classes, functions, ABCs and
+Protocols; legacy API/service queries remain to be migrated. A repository does
+not commit: its caller owns the transaction. See [architecture contracts](architecture-alignment.md)
+for the organisation workspace and remaining compatibility work.
 
-**Current repositories** (20 files in `app/repositories/`):
+**Representative repositories** (see `app/repositories/` for the complete set):
 
 | Repository | Domain |
 |-----------|--------|
@@ -69,6 +73,7 @@ All data access goes through domain-oriented repositories in `app/repositories/`
 | `FlowRepository` | Flow definitions, nodes, connections |
 | `IllustratorRepository` | Illustrators |
 | `LabelsetRepository` | Book label sets |
+| `OrganisationRepository` | Organisation workspace discovery, membership and holdings |
 | `ProductRepository` | Stripe products |
 | `SchoolRepository` | Schools |
 | `ServiceAccountRepository` | Service account tokens |
@@ -79,15 +84,15 @@ Protocol interfaces are defined in `app/repositories/protocols.py`.
 
 ### Remaining Legacy CRUD
 
-Four CRUD files remain in `app/crud/`:
+Legacy entry points in `app/crud/` need consumer-by-consumer migration:
 
-| File | Lines | Status |
-|------|-------|--------|
-| `base.py` | 283 | Base class + utilities (kept for shared helpers) |
-| `cms.py` | 1346 | Active — delegates to CMSRepository for some ops |
-| `collection.py` | 210 | Active — 26 usages across 9 files |
-| `event.py` | 151 | Active — 49 usages across 16 files |
-| `user.py` | 337 | Legacy — 86 usages across 20 files, most complex domain |
+| File | Compatibility responsibility |
+|------|----------------------------|
+| `base.py` | Shared base class and utilities |
+| `cms.py` | CMS operations, partly delegated to CMSRepository |
+| `collection.py` | Collection operations |
+| `event.py` | Application events |
+| `user.py` | Polymorphic account operations, including authentication consumers |
 
 The `crud/__init__.py` re-exports `ChatRepository` from `app/repositories/` for backward compatibility.
 
@@ -110,8 +115,10 @@ for database logic.
 > triggers, views, extensions. Plain schema (tables, columns, indexes) is
 > handled by ordinary Alembic migrations generated from the SQLAlchemy models.
 > A functional index like the trigram GIN index on `lower(schools.name)` is a
-> regular migration op (it can't be expressed as a model `Index`), while the
+> model `Index` with a labelled expression and PostgreSQL operator class, while the
 > `pg_trgm` extension it depends on is declared in `app/db/extensions.py`.
+> Generated revisions freeze their definitions; they must not import these live
+> application declarations. Do not edit an applied migration to change behaviour.
 
 **Example** (CMS full-text search trigger):
 
@@ -204,13 +211,14 @@ single query over the MV with a scoring expression:
 | Hue overlap | 1 | `hue_keys && :hue_arr` |
 
 `ORDER BY score DESC, random()` gives graceful degradation in one pass: best
-matches appear first, random shuffle within each score tier. This replaces the
-previous four sequential fallback round-trips (each 10–16 s against the live
-join graph) with a single fast query over the indexed MV.
+matches appear first, with random ordering within each score tier. The indexed
+MV allows fallback ranking in one query rather than sequential retries against
+the live join graph. Measure latency with representative data and concurrency;
+the query shape alone does not guarantee a response time.
 
 ### Refresh Strategy
 
-**Weekly**: `POST /maintenance/refresh-recommendations` on the internal API,
+**Weekly**: `POST /v1/maintenance/refresh-recommendations` on the internal API,
 invoked by Cloud Scheduler (OIDC auth via the background-tasks service account).
 The endpoint calls `SELECT refresh_recommendable_editions_function()` which runs
 `REFRESH MATERIALIZED VIEW CONCURRENTLY recommendable_editions`. CONCURRENTLY
@@ -218,24 +226,9 @@ avoids an `ACCESS EXCLUSIVE` lock so recommendation reads continue uninterrupted
 during the refresh (it requires the unique index on `work_id` and an
 already-populated view, both of which hold here).
 
-Terraform job to add in `hardbyte-iac` (mirror `cloudscheduler_cleanup_sessions.tf`):
-```hcl
-resource "google_cloud_scheduler_job" "refresh_recommendations" {
-  name             = "refresh-recommendations"
-  schedule         = "0 3 * * 1"   # Mondays at 03:00 AEST
-  time_zone        = "Australia/Sydney"
-  attempt_deadline = "600s"
-
-  http_target {
-    uri         = "${var.internal_api_base}/maintenance/refresh-recommendations"
-    http_method = "POST"
-    oidc_token {
-      service_account_email = var.background_tasks_service_account_email
-      audience              = var.internal_api_base
-    }
-  }
-}
-```
+The schedule, timezone, retry policy and OIDC configuration belong to
+`hardbyte-iac/cloudscheduler_refresh_recommendations.tf`; inspect that manifest
+and the deployed job when verifying refresh behaviour.
 
 **Debounced on-write**: After a label mutation, the endpoint enqueues a Cloud
 Tasks job named `refresh-recommendable-editions` via
@@ -248,8 +241,10 @@ wired callers are:
   reviews (e.g. from students) leave the labelset untouched and skip the refresh.
 
 Named tasks are deduplicated by GCP within a ~4-hour window, so a burst of writes
-collapses into a single refresh ~60 s after the last write. The function is a
-no-op when Cloud Tasks is not configured (local dev / tests unaffected).
+collapses into a refresh scheduled ~60 s after the first accepted enqueue, not
+the last write. Later writes do not reschedule it and may wait for the periodic
+refresh. The function is a no-op when Cloud Tasks is not configured (local dev /
+tests unaffected).
 
 ---
 
@@ -327,7 +322,7 @@ Session state modifications use PostgreSQL advisory locks combined with revision
 ## Transactions & Events
 
 - **Ownership**: Services own transaction boundaries. Repositories persist and flush; they do not commit.
-- **Pattern**: For each write operation, the service coordinates repository writes, publishes an outbox event, then commits once.
+- **Pattern**: The service coordinates repository writes and any required outbox events, then commits once.
 - **Outbox**: `EventOutboxService.publish_event` enqueues events within the same SQLAlchemy session so the commit includes both business data and the event row.
 - **Snapshots**: Snapshot materialization/regeneration is orchestrated by services to keep repositories side-effect free; builders perform `flush` only.
 
@@ -335,7 +330,8 @@ Session state modifications use PostgreSQL advisory locks combined with revision
 
 - `FlowService` is the canonical write/read surface for flow operations (create/update/clone/publish, node and connection CRUD).
 - All flow node/connection endpoints route through `FlowService`.
-- Snapshot regeneration is handled via a dedicated builder and regeneration endpoint/CLI, not per-operation auto-regeneration.
+- Structural writes regenerate snapshots through the shared builder within the
+  service transaction. A regeneration operation also repairs existing snapshots.
 
 ### Label reviews
 
@@ -350,39 +346,22 @@ staff-checked flag and cannot override higher-authority HUMAN labels.
 
 ---
 
-## Migration Status
+## Incremental migration
 
-### Completed
-
-- **Repository migration**: 15 of 16 domains have repository implementations (94%)
-- **CRUD removal**: 12 domain CRUD files deleted (75%)
-- **Service layer**: 4 core services (Analytics, CMS, Conversation, Flow) implementing domain-focused patterns
-- **Declarative DB**: Functions, triggers, views and extensions managed via `alembic_utils`
-- **Full-text search**: PostgreSQL tsvector/GIN indexes for CMS content
-- **Trigram search**: `pg_trgm` GIN index for ranked, typo-tolerant school-name search
-- **Educator/user broadcast**: staff email-to-segment (`app/services/broadcast.py`) via the Event Outbox, with one-click unsubscribe (`users.marketing_opt_out`)
-- **Event Outbox**: Production-ready reliable delivery
-- **Concurrency control**: Advisory locks with revision control
-- **Test isolation**: Singleton reset infrastructure, CSRF isolation, 638+ integration tests passing
-
-### Remaining Work
-
-| Item | Effort | Notes |
-|------|--------|-------|
-| **User domain migration** | High | 337-line CRUD, 86 usages across 20 files, polymorphic user types. New consumers (e.g. `broadcast.py` recipient resolution) query users directly via `select(User)` until a `UserRepository` exists. |
-| **Collection CRUD removal** | Medium | 26 active usages across 9 files |
-| **Event CRUD removal** | Medium | 49 active usages across 16 files |
-| **API layer migration** | Ongoing | ~16 API files still import from `app.crud`; CMS, analytics, and chat endpoints already use services |
-| **Unit of Work adoption** | Low | `app/services/unit_of_work.py` is implemented but unused; services manage transactions manually |
-| **Service unit tests** | Medium | Most service files lack dedicated unit tests (tested indirectly via integration tests) |
+Move legacy persistence behind domain repositories as the relevant workflows are
+changed. Route adapters should delegate policy and transaction orchestration to
+services, not merely replace CRUD imports with direct repository calls. Preserve
+polymorphic account behaviour, permission checks and request isolation during
+the transition. Proposed changes such as Unit of Work adoption belong in the
+[architecture roadmap](architecture-roadmap.md), not the required contract.
 
 ### Migration Workflow
 
 When migrating a domain from CRUD to repository pattern:
 
 1. **Analyze** the existing CRUD file (operations, method signatures, dependencies)
-2. **Create repository** in `app/repositories/{domain}_repository.py` with ABC interface + SQL implementation
-3. **Update consumers** to import from the new repository instead of `app.crud.{domain}`
+2. **Create repository** in `app/repositories/{domain}_repository.py`; introduce an ABC or Protocol when it provides a useful substitution boundary, not as boilerplate
+3. **Update consumers** through the appropriate service boundary, preserving caller-owned transactions
 4. **Handle circular imports** using one of three proven patterns:
    - Replace CRUD imports with repository imports
    - Extract shared utilities to `app/utils/` (e.g., `dict_utils.py`)
@@ -399,7 +378,7 @@ These principles guide architectural decisions:
 1. **Single Responsibility**: Each service handles one domain
 2. **Dependency Injection**: Services receive dependencies via constructor
 3. **Domain Exceptions**: Services raise domain-specific exceptions, never HTTP status codes
-4. **Transaction Ownership**: Each public service method = one transaction boundary
-5. **CQRS-Lite**: Write services coordinate transactions; read services (e.g., `AnalyticsService`) access repositories directly without transaction overhead
+4. **Transaction Ownership**: The service coordinating a write owns its commit/rollback boundary; collaborating methods share that transaction
+5. **CQRS-Lite**: Read services use database transactions without a write/commit workflow; write services coordinate atomic changes
 6. **Repository Focus**: Domain-oriented methods with clear business meaning, not generic query variations
 7. **Testability**: Repository interfaces (ABC/Protocol) enable mocking for isolated unit tests
