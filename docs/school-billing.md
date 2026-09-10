@@ -65,6 +65,10 @@ must not be exposed to a school administrator.
 | `customer.subscription.deleted` | Retire that subscription and recompute from any replacement paid subscription or live grant |
 
 The public webhook verifies Stripe's signature and queues the event envelope.
+Events without a supported transition are acknowledged and receipt-deduplicated
+without requiring a customer. In particular, `invoice_payment.paid` describes an
+individual invoice payment; `invoice.paid` remains the payment evidence used for
+school access. Failures in supported handlers still roll back and retry.
 The worker records `event.id` in `stripe_event_receipts` in the same transaction
 as the domain transition and audit event. Duplicate IDs are ignored. Event
 timestamps prevent an older delivery from overwriting newer state; handlers can

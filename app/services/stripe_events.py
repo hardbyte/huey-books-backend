@@ -80,7 +80,7 @@ def process_stripe_event(
 ) -> dict[str, str]:
     """Claim and apply one Stripe event in a single database transaction."""
     logger.info("Processing a stripe event", event_type=event_type, event_id=event_id)
-    bind_contextvars(stripe_event_type=event_type)
+    bind_contextvars(stripe_event_type=event_type, stripe_event_id=event_id)
     event_created_at = (
         datetime.utcfromtimestamp(event_created) if event_created is not None else None
     )
@@ -139,6 +139,26 @@ def _dispatch_stripe_event(session, event_type: str, event_data: dict) -> None:
         )
         return
 
+    if event_type not in {
+        "invoice.paid",
+        "invoice.upcoming",
+        "invoice.finalized",
+        "invoice.voided",
+        "invoice.marked_uncollectible",
+        "invoice.payment_failed",
+        "checkout.session.completed",
+        "checkout.session.async_payment_succeeded",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+        "customer.subscription.created",
+        "customer.created",
+        "customer.updated",
+        "payment_intent.succeeded",
+        "payment_intent.payment_failed",
+    }:
+        logger.info("Unhandled Stripe event", event_type=event_type)
+        return
+
     wriveted_user, school, _ = _extract_user_and_customer_from_stripe_object(
         session, event_data, event_data.get("object")
     )
@@ -171,8 +191,6 @@ def _dispatch_stripe_event(session, event_type: str, event_data: dict) -> None:
             )
         case "payment_intent.payment_failed":
             logger.warning("Payment failed")
-        case _:
-            logger.info("Unhandled Stripe event", event_type=event_type)
 
 
 def _handle_price_catalog_event(event_type: str, event_data: dict) -> None:
@@ -714,12 +732,13 @@ def _extract_user_and_customer_from_stripe_object(
     session, stripe_object, stripe_object_type
 ):
     logger.info(
-        "Extracting user and customer from stripe object", stripe_object=stripe_object
+        "Extracting user and customer from stripe object",
+        stripe_object_id=stripe_object.get("id"),
+        stripe_object_type=stripe_object_type,
     )
 
     wriveted_user = None
     school = None
-    # webhook is only listening to events that are guaranteed to include a customer id (for now)
     stripe_customer = _get_stripe_customer_from_stripe_object(
         stripe_object, stripe_object_type
     )
