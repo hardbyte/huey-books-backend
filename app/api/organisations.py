@@ -93,6 +93,8 @@ async def list_libraries(
     q: str | None = Query(None, max_length=200),
     organisation_uuid: UUID | None = Query(None),
     standalone: bool = Query(False),
+    country_code: str | None = Query(None, pattern="^[A-Z]{3}$"),
+    has_catalogue: bool | None = Query(None),
 ):
     return await organisation_management.list_libraries(
         session=session,
@@ -102,6 +104,8 @@ async def list_libraries(
         q=q,
         organisation_uuid=organisation_uuid,
         standalone=standalone,
+        country_code=country_code,
+        has_catalogue=has_catalogue,
     )
 
 

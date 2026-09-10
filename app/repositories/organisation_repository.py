@@ -93,6 +93,8 @@ class OrganisationRepository:
         q: str | None = None,
         organisation_uuid: UUID | None = None,
         standalone: bool = False,
+        country_code: str | None = None,
+        has_catalogue: bool | None = None,
     ) -> tuple[list[School], int]:
         query = select(School)
         if not scope.unrestricted:
@@ -103,6 +105,17 @@ class OrganisationRepository:
             query = query.where(School.organisation_id == organisation_uuid)
         if standalone:
             query = query.where(School.organisation_id.is_(None))
+        if country_code is not None:
+            query = query.where(School.country_code == country_code)
+        if has_catalogue is not None:
+            catalogue_exists = (
+                select(Collection.id)
+                .where(Collection.school_id == School.school_uuid)
+                .exists()
+            )
+            query = query.where(
+                catalogue_exists if has_catalogue else ~catalogue_exists
+            )
         total = await db.scalar(select(func.count()).select_from(query.subquery()))
         libraries = await db.scalars(
             query.order_by(School.name, School.id).offset(skip).limit(limit)
