@@ -30,6 +30,58 @@ def enabled_multiple_collections(monkeypatch):
     monkeypatch.setattr(get_settings(), "MULTIPLE_COLLECTIONS_ENABLED", True)
 
 
+async def test_directory_filters_apply_before_pagination_without_expanding_access(
+    async_client,
+    workspace,
+    session,
+    test_wrivetedadmin_account_headers,
+    test_schooladmin_account_headers,
+):
+    organisation, libraries, collections = workspace
+    session.delete(session.get(Collection, collections[1]))
+    session.commit()
+    country = session.scalar(
+        select(School.country_code).where(School.school_uuid == libraries[0])
+    )
+    params = {"organisation_uuid": organisation, "country_code": country, "limit": 1}
+    for has_catalogue, expected in (("true", libraries[0]), ("false", libraries[1])):
+        response = await async_client.get(
+            "/v1/libraries",
+            params={**params, "has_catalogue": has_catalogue},
+            headers=test_wrivetedadmin_account_headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["total"] == 1
+        assert [row["library_uuid"] for row in response.json()["data"]] == [expected]
+        beyond = await async_client.get(
+            "/v1/libraries",
+            params={**params, "has_catalogue": has_catalogue, "skip": 1},
+            headers=test_wrivetedadmin_account_headers,
+        )
+        assert beyond.json()["total"] == 1
+        assert beyond.json()["data"] == []
+    missing = await async_client.get(
+        "/v1/libraries",
+        params={**params, "country_code": "ZZZ"},
+        headers=test_wrivetedadmin_account_headers,
+    )
+    assert missing.json()["total"] == 0
+    denied = await async_client.get(
+        "/v1/libraries",
+        params={**params, "has_catalogue": "true"},
+        headers=test_schooladmin_account_headers,
+    )
+    assert denied.status_code in (200, 403, 404)
+    if denied.status_code == 200:
+        assert denied.json()["total"] == 0
+    invalid = await async_client.get(
+        "/v1/libraries",
+        params={"country_code": "NZ"},
+        headers=test_wrivetedadmin_account_headers,
+    )
+    assert invalid.status_code == 422
+
+
 async def test_rollout_gate_blocks_additional_collections(
     async_client, workspace, test_wrivetedadmin_account_headers, monkeypatch
 ):

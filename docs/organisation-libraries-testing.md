@@ -26,5 +26,12 @@ For unattended browser testing, mint short-lived ordinary user tokens with `app.
 4. Verify a reviewer cannot import or manage access; a local manager cannot reach siblings; View As is read-only.
 5. As platform staff, explicitly attach an independent synthetic library. Confirm this does not activate readers or change billing/student ownership.
 6. Inspect portrait, landscape and desktop layouts after transitions settle. Capture only synthetic data.
+7. Combine directory name, organisation, country and catalogue-presence filters; verify totals and every page use the same filters, and restricted users cannot discover other libraries through filtering.
+
+Directory `country_code` is an uppercase alpha-3 code. Optional `has_catalogue`
+means an institutional collection exists, including an empty catalogue; it does
+not mean books are present, the school is active or its subscription is paid.
+Both filters are applied within the existing access scope before counting and
+pagination. Omitting them preserves the unfiltered directory.
 
 The prototype import is additive and bounded to 1,000 rows. It does not remove absent books, hydrate shared bibliographic metadata, activate subscriptions, or move students. Invitation delivery and organisation billing are separate design decisions.

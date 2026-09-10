@@ -172,6 +172,8 @@ async def list_libraries(
     q: str | None = None,
     organisation_uuid: UUID | None = None,
     standalone: bool = False,
+    country_code: str | None = None,
+    has_catalogue: bool | None = None,
 ):
     if not actor.is_active or (
         actor.type not in ELIGIBLE_ROLES and not is_platform_staff(actor)
@@ -185,6 +187,8 @@ async def list_libraries(
         q=q,
         organisation_uuid=organisation_uuid,
         standalone=standalone,
+        country_code=country_code,
+        has_catalogue=has_catalogue,
     )
     return {
         "data": await library_summaries(session, actor, list(libraries)),
