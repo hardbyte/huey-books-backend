@@ -15,8 +15,9 @@ from app.models import SchoolState
 @pytest.mark.parametrize("collection_access", [False, True])
 @pytest.mark.parametrize("subscribed", [False, True])
 @pytest.mark.parametrize("empty_info", [False, True])
+@pytest.mark.parametrize("missing_country", [False, True])
 async def test_selector_redacts_response_without_mutating_source(
-    monkeypatch, details, collection_access, subscribed, empty_info
+    monkeypatch, details, collection_access, subscribed, empty_info, missing_country
 ):
     subscription = SimpleNamespace(
         id="sub_selector",
@@ -52,6 +53,8 @@ async def test_selector_redacts_response_without_mutating_source(
     )
     if empty_info:
         school.info = None
+    if missing_country:
+        school.country_code = None
     get_schools = AsyncMock(return_value=[school])
     monkeypatch.setattr(
         schools.school_repository, "get_all_with_optional_filters", get_schools
@@ -86,6 +89,7 @@ async def test_selector_redacts_response_without_mutating_source(
     assert school.subscription is subscription
     assert school.collection is collection
     serialized = result[0].model_dump(mode="json")
+    assert serialized["country_code"] == school.country_code
     if details:
         assert serialized["admins"][0]["email"] == "private@example.com"
         assert serialized["info"]["terms_acceptance"] == (school.info or {}).get(

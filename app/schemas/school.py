@@ -98,6 +98,7 @@ class SchoolAdministratorPresence(BaseModel):
 
 
 class SchoolSelectorOption(SchoolBrief):
+    country_code: str | None
     info: SchoolInfo
     admins: list[UserBrief | SchoolAdministratorPresence]
 
