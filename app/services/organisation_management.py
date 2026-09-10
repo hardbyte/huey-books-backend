@@ -3,7 +3,6 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
-from app.config import get_settings
 from app.models.collection import Collection
 from app.models.organisation import Organisation
 from app.models.school import School, SchoolState
@@ -30,6 +29,7 @@ from app.services.organisation_entitlements import (
 from app.services.organisation_workspace import (
     ELIGIBLE_ROLES,
     LibraryAccess,
+    collection_creation_unavailable_reason,
     is_platform_staff,
     library_summaries,
     library_summary,
@@ -234,10 +234,9 @@ async def create_collection(
     await resolve_library(session, actor, library_uuid, "catalogue_write")
     await organisation_repository.get_library(session, library_uuid, lock=True)
     count = await organisation_repository.count_collections(session, library_uuid)
-    if count and not get_settings().MULTIPLE_COLLECTIONS_ENABLED:
-        raise WorkspaceConflict("Additional collections are not enabled yet")
-    if count >= 100:
-        raise WorkspaceConflict("A library supports up to 100 collections")
+    unavailable_reason = collection_creation_unavailable_reason(count)
+    if unavailable_reason is not None:
+        raise WorkspaceConflict(unavailable_reason)
     is_default = count == 0
     collection = Collection(
         name=data.name, school_id=library_uuid, is_default=is_default

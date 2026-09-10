@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.collection import Collection
 from app.models.organisation import Organisation
 from app.models.school import School
@@ -74,6 +75,24 @@ class LibraryAccess:
             raise WorkspaceForbidden(
                 "This library action requires additional permission"
             )
+
+
+def collection_creation_unavailable_reason(collection_count: int) -> str | None:
+    if collection_count and not get_settings().MULTIPLE_COLLECTIONS_ENABLED:
+        return "Additional collections are not enabled yet"
+    if collection_count >= 100:
+        return "A library supports up to 100 collections"
+    return None
+
+
+def _summary_capabilities(access: LibraryAccess, collection_count: int) -> list[str]:
+    capabilities = access.capabilities
+    if (
+        "catalogue_write" in capabilities
+        and collection_creation_unavailable_reason(collection_count) is None
+    ):
+        capabilities |= {"create_collection"}
+    return sorted(capabilities)
 
 
 def _library_access(
@@ -197,7 +216,9 @@ async def library_summaries(
                     name=library.name,
                     organisation_uuid=library.organisation_id,
                     country_code=library.country_code,
-                    capabilities=sorted(access.capabilities),
+                    capabilities=_summary_capabilities(
+                        access, len(collections.get(library.school_uuid, []))
+                    ),
                     access_sources=list(access.sources),
                     collections=collections.get(library.school_uuid, []),
                 )
@@ -244,7 +265,7 @@ async def library_summary(
         name=library.name,
         organisation_uuid=library.organisation_id,
         country_code=library.country_code,
-        capabilities=sorted(access.capabilities),
+        capabilities=_summary_capabilities(access, len(collections)),
         access_sources=list(access.sources),
         collections=[
             CollectionSummary(
