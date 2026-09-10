@@ -17,6 +17,27 @@ from app.services.organisation_workspace import library_access, manages_organisa
 from app.services.workspace_errors import WorkspaceConflict, WorkspaceNotFound
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("count", [0, 1, 99, 100])
+@pytest.mark.parametrize("writer", [False, True])
+def test_collection_creation_capability_matches_policy(
+    monkeypatch, enabled, count, writer
+):
+    from app.config import get_settings
+    from app.services.organisation_workspace import LibraryAccess, _summary_capabilities
+
+    monkeypatch.setattr(get_settings(), "MULTIPLE_COLLECTIONS_ENABLED", enabled)
+    permissions = frozenset(
+        {"catalogue_read", "catalogue_write"} if writer else {"catalogue_read"}
+    )
+    access = LibraryAccess(SimpleNamespace(), permissions, ())
+    capabilities = _summary_capabilities(access, count)
+    assert ("create_collection" in capabilities) == (
+        writer and count < 100 and (count == 0 or enabled)
+    )
+    assert access.capabilities == permissions
+
+
 def test_library_details_cannot_change_education_or_billing_scope():
     for field in ("country_code", "organisation_id", "student_domain", "state"):
         with pytest.raises(ValidationError):

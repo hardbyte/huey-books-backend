@@ -44,6 +44,16 @@ async def test_rollout_gate_blocks_additional_collections(
     )
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == "Additional collections are not enabled yet"
+    for path in (f"/v1/libraries/{libraries[0]}", "/v1/libraries"):
+        response = await async_client.get(
+            path, headers=test_wrivetedadmin_account_headers
+        )
+        assert response.status_code == 200
+        summaries = response.json().get("data", [response.json()])
+        target = next(
+            row for row in summaries if row["library_uuid"] == str(libraries[0])
+        )
+        assert "create_collection" not in target["capabilities"]
 
 
 async def test_cataloguer_can_import_but_cannot_administer_or_review(
@@ -64,7 +74,18 @@ async def test_cataloguer_can_import_but_cannot_administer_or_review(
     )
     assert granted.status_code == 200, granted.text
     detail = await async_client.get(path, headers=actor)
-    assert detail.json()["capabilities"] == ["catalogue_read", "catalogue_write"]
+    assert detail.json()["capabilities"] == [
+        "catalogue_read",
+        "catalogue_write",
+        "create_collection",
+    ]
+    directory = await async_client.get("/v1/libraries", headers=actor)
+    listed = next(
+        row
+        for row in directory.json()["data"]
+        if row["library_uuid"] == str(libraries[0])
+    )
+    assert listed["capabilities"] == detail.json()["capabilities"]
     imported = await async_client.post(
         f"{path}/collections/{collections[0]}/import",
         headers=actor,
