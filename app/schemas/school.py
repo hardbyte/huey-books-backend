@@ -2,7 +2,14 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 from uuid import UUID, uuid4
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 from typing_extensions import Annotated
 
 from app.models import SchoolState
@@ -91,8 +98,14 @@ class SchoolAdministratorPresence(BaseModel):
 
 
 class SchoolSelectorOption(SchoolBrief):
+    country_code: str | None
     info: SchoolInfo
     admins: list[UserBrief | SchoolAdministratorPresence]
+
+    @field_validator("info", mode="before")
+    @classmethod
+    def empty_info_for_null(cls, value: Any) -> Any:
+        return SchoolInfo() if value is None else value
 
 
 class SchoolBookbotInfo(BaseModel):

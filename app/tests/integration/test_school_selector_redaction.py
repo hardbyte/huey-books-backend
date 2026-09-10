@@ -2,6 +2,8 @@ import pytest
 
 
 @pytest.mark.parametrize("subscribed", ["true", "false"])
+@pytest.mark.parametrize("empty_info", [False, True])
+@pytest.mark.parametrize("missing_country", [False, True])
 def test_public_selector_ignores_private_filters_and_preserves_school(
     client,
     session,
@@ -10,7 +12,14 @@ def test_public_selector_ignores_private_filters_and_preserves_school(
     test_user_account_headers,
     backend_service_account_headers,
     subscribed,
+    empty_info,
+    missing_country,
 ):
+    if missing_country:
+        test_school.country_code = None
+    if empty_info:
+        test_school.info = None
+    session.commit()
     params = {"official_identifier": test_school.official_identifier}
     before = client.get(
         "/v1/schools", params=params, headers=backend_service_account_headers
@@ -45,3 +54,8 @@ def test_public_selector_ignores_private_filters_and_preserves_school(
     )
     after.raise_for_status()
     assert after.json() == before.json()
+    if empty_info:
+        assert test_school.info is None
+    if missing_country:
+        assert test_school.country_code is None
+        assert after.json()[0]["country_code"] is None
