@@ -218,7 +218,7 @@ the query shape alone does not guarantee a response time.
 
 ### Refresh Strategy
 
-**Weekly**: `POST /maintenance/refresh-recommendations` on the internal API,
+**Weekly**: `POST /v1/maintenance/refresh-recommendations` on the internal API,
 invoked by Cloud Scheduler (OIDC auth via the background-tasks service account).
 The endpoint calls `SELECT refresh_recommendable_editions_function()` which runs
 `REFRESH MATERIALIZED VIEW CONCURRENTLY recommendable_editions`. CONCURRENTLY
@@ -226,24 +226,9 @@ avoids an `ACCESS EXCLUSIVE` lock so recommendation reads continue uninterrupted
 during the refresh (it requires the unique index on `work_id` and an
 already-populated view, both of which hold here).
 
-Terraform job to add in `hardbyte-iac` (mirror `cloudscheduler_cleanup_sessions.tf`):
-```hcl
-resource "google_cloud_scheduler_job" "refresh_recommendations" {
-  name             = "refresh-recommendations"
-  schedule         = "0 3 * * 1"   # Mondays at 03:00 AEST
-  time_zone        = "Australia/Sydney"
-  attempt_deadline = "600s"
-
-  http_target {
-    uri         = "${var.internal_api_base}/maintenance/refresh-recommendations"
-    http_method = "POST"
-    oidc_token {
-      service_account_email = var.background_tasks_service_account_email
-      audience              = var.internal_api_base
-    }
-  }
-}
-```
+The schedule, timezone, retry policy and OIDC configuration belong to
+`hardbyte-iac/cloudscheduler_refresh_recommendations.tf`; inspect that manifest
+and the deployed job when verifying refresh behaviour.
 
 **Debounced on-write**: After a label mutation, the endpoint enqueues a Cloud
 Tasks job named `refresh-recommendable-editions` via
@@ -256,8 +241,10 @@ wired callers are:
   reviews (e.g. from students) leave the labelset untouched and skip the refresh.
 
 Named tasks are deduplicated by GCP within a ~4-hour window, so a burst of writes
-collapses into a single refresh ~60 s after the last write. The function is a
-no-op when Cloud Tasks is not configured (local dev / tests unaffected).
+collapses into a refresh scheduled ~60 s after the first accepted enqueue, not
+the last write. Later writes do not reschedule it and may wait for the periodic
+refresh. The function is a no-op when Cloud Tasks is not configured (local dev /
+tests unaffected).
 
 ---
 
@@ -335,7 +322,7 @@ Session state modifications use PostgreSQL advisory locks combined with revision
 ## Transactions & Events
 
 - **Ownership**: Services own transaction boundaries. Repositories persist and flush; they do not commit.
-- **Pattern**: For each write operation, the service coordinates repository writes, publishes an outbox event, then commits once.
+- **Pattern**: The service coordinates repository writes and any required outbox events, then commits once.
 - **Outbox**: `EventOutboxService.publish_event` enqueues events within the same SQLAlchemy session so the commit includes both business data and the event row.
 - **Snapshots**: Snapshot materialization/regeneration is orchestrated by services to keep repositories side-effect free; builders perform `flush` only.
 
@@ -343,7 +330,8 @@ Session state modifications use PostgreSQL advisory locks combined with revision
 
 - `FlowService` is the canonical write/read surface for flow operations (create/update/clone/publish, node and connection CRUD).
 - All flow node/connection endpoints route through `FlowService`.
-- Snapshot regeneration is handled via a dedicated builder and regeneration endpoint/CLI, not per-operation auto-regeneration.
+- Structural writes regenerate snapshots through the shared builder within the
+  service transaction. A regeneration operation also repairs existing snapshots.
 
 ### Label reviews
 
@@ -390,7 +378,7 @@ These principles guide architectural decisions:
 1. **Single Responsibility**: Each service handles one domain
 2. **Dependency Injection**: Services receive dependencies via constructor
 3. **Domain Exceptions**: Services raise domain-specific exceptions, never HTTP status codes
-4. **Transaction Ownership**: Each public service method = one transaction boundary
-5. **CQRS-Lite**: Write services coordinate transactions; read services (e.g., `AnalyticsService`) access repositories directly without transaction overhead
+4. **Transaction Ownership**: The service coordinating a write owns its commit/rollback boundary; collaborating methods share that transaction
+5. **CQRS-Lite**: Read services use database transactions without a write/commit workflow; write services coordinate atomic changes
 6. **Repository Focus**: Domain-oriented methods with clear business meaning, not generic query variations
 7. **Testability**: Repository interfaces (ABC/Protocol) enable mocking for isolated unit tests

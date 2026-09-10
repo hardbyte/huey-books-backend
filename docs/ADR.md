@@ -20,6 +20,13 @@
 
 **Rationale**: Domain repositories express business intent and prevent data access layer from becoming a bag of random queries.
 
+**Clarification (2026-09-10)**: The required boundary is domain-oriented
+persistence, not a mandatory interface hierarchy. Concrete repositories are
+appropriate for a single implementation; introduce a Protocol or ABC when a
+substitution boundary makes testing or multiple implementations clearer. This
+refines the original Protocol requirement without changing service-owned
+transactions. See [layer responsibilities](architecture-service-layer.md).
+
 ---
 
 ### ADR-002: CQRS-Lite over Full CQRS
@@ -40,6 +47,11 @@
 - **Cons**: More complex service architecture, need to manage two patterns
 
 **Rationale**: Analytics reads don't need write transaction overhead, but workflows need ACID guarantees.
+
+**Proposal revision (2026-09-10)**: Ordinary SQLAlchemy reads still use database
+transactions. Read services need no explicit write/commit workflow; write
+services own atomic business and outbox changes. A Unit of Work is optional,
+not a prerequisite. See [adoption criteria](architecture-roadmap.md#adoption-criteria).
 
 ---
 

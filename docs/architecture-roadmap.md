@@ -102,7 +102,9 @@ Three event systems serve different purposes (see [architecture-service-layer.md
 
 **Broadcast / segmented email** *(shipped)*: `app/services/broadcast.py` sends staff announcements to a user segment (account types, country, school) through the Event Outbox, with RFC 8058 one-click unsubscribe (`users.marketing_opt_out`). Recipient resolution currently queries the user domain directly; it will move behind `UserRepository` when that domain is migrated.
 
-**Slack alert migration**: `handle_event_to_slack_alert` in `app/services/events.py` still uses direct Slack API calls. Migrating to `SlackNotificationService` via the event outbox would provide retry logic and better testing.
+**Slack delivery**: `handle_event_to_slack_alert` in `app/services/events.py`
+already delegates to reliable delivery through the event outbox. Preserve that
+transaction boundary when migrating remaining callers.
 
 ## Testing Strategy
 
