@@ -225,13 +225,6 @@ not response fields and are not loaded. These query-local loader options do not
 change model defaults or the caller's transaction. Missing candidate records are
 skipped, allowing for a materialized view that has not yet refreshed.
 
-For a cold session with up to 500 candidates, ranking plus hydration uses seven
-SELECTs. Larger candidate sets require additional select-in batches; seven is not
-a query-count guarantee for arbitrary request sizes. The public recommendation
-endpoint currently has no maximum `limit`; callers should request small interactive
-result sets (the default is five, with five extra candidates for author diversity).
-This loader is not a bulk catalogue export interface.
-
 ### Refresh Strategy
 
 **Weekly**: `POST /v1/maintenance/refresh-recommendations` on the internal API,
