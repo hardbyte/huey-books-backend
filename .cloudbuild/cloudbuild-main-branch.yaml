@@ -52,6 +52,7 @@ steps:
       - "--region=$_DEPLOY_REGION"
       - "--concurrency=20"
       - "--max-instances=3"
+      - "--min-instances=0"
       - "--quiet"
       - >-
         --update-env-vars=
@@ -59,6 +60,7 @@ steps:
         POSTGRESQL_USER=cloudrun,
         GCP_CLOUD_SQL_INSTANCE_ID=wriveted-development,
         LOG_AS_JSON=True,
+        SLACK_NOTIFICATIONS_ENABLED=False,
         DATABASE_MAX_OVERFLOW=5,
         GCP_CLOUD_TASKS_NAME=background-tasks,
         WRIVETED_INTERNAL_API=https://wriveted-api-development-main-branch-internal-lg5ntws4da-ts.a.run.app,
@@ -103,6 +105,7 @@ steps:
       - "--region=$_DEPLOY_REGION"
       - "--concurrency=20"
       - "--max-instances=3"
+      - "--min-instances=0"
       - "--quiet"
       - "--args=app.internal_api:internal_app"
       - >-
@@ -111,6 +114,7 @@ steps:
         POSTGRESQL_USER=cloudrun,
         GCP_CLOUD_SQL_INSTANCE_ID=wriveted-development,
         LOG_AS_JSON=True,
+        SLACK_NOTIFICATIONS_ENABLED=False,
         DATABASE_MAX_OVERFLOW=5,
         GCP_CLOUD_TASKS_NAME=background-tasks,
         WRIVETED_INTERNAL_API=https://wriveted-api-development-main-branch-internal-lg5ntws4da-ts.a.run.app,
@@ -197,6 +201,7 @@ steps:
         POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
         POSTGRESQL_USER=cloudrun,
         LOG_AS_JSON=True,
+        SLACK_NOTIFICATIONS_ENABLED=False,
         DATABASE_POOL_SIZE=5,
         DATABASE_MAX_OVERFLOW=5,
         GCP_CLOUD_TASKS_NAME=background-tasks,
@@ -250,6 +255,7 @@ steps:
         POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
         POSTGRESQL_USER=cloudrun,
         LOG_AS_JSON=True,
+        SLACK_NOTIFICATIONS_ENABLED=False,
         DATABASE_POOL_SIZE=3,
         DATABASE_MAX_OVERFLOW=3,
         GCP_CLOUD_TASKS_NAME=background-tasks,
