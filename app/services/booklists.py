@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy.orm import Session
 from structlog import get_logger
 
 import app.services as services
@@ -6,10 +6,8 @@ from app import crud
 from app.config import get_settings
 from app.crud.base import deep_merge_dicts
 from app.models.booklist import BookList, ListSharingType, ListType
-from app.models.booklist_work_association import BookListItem
 from app.models.event import EventLevel, EventSlackChannel
 from app.repositories.booklist_repository import booklist_repository
-from app.repositories.edition_repository import edition_repository
 from app.schemas.booklist import (
     BookListCreateIn,
     BookListDetail,
@@ -23,6 +21,7 @@ from app.schemas.edition import EditionDetail
 from app.schemas.pagination import Pagination
 from app.schemas.users.huey_attributes import HueyAttributes
 from app.services.background_tasks import queue_background_task
+from app.services.editions import get_definitive_isbn
 
 # Local import to avoid circular dependency
 # from app.services.events import create_event
@@ -253,44 +252,42 @@ def validate_booklist_publicity(
 
 def populate_booklist_object(
     booklist: BookList,
-    session,
+    session: Session,
     pagination,
     enriched: bool = False,
-):
+) -> BookListDetail | BookListDetailEnriched:
     logger.debug("Getting booklist", booklist=booklist)
-    booklist_items: list[BookListItem] = session.scalars(
-        select(BookListItem)
-        .where(BookListItem.booklist == booklist)
-        .offset(pagination.skip)
-        .limit(pagination.limit)
-        .order_by(BookListItem.order_id)
-    ).all()
+    booklist_items = booklist_repository.get_detail_items(
+        session, booklist.id, skip=pagination.skip, limit=pagination.limit
+    )
+    missing_edition_events = []
 
     def get_enriched_booklist_items() -> list[BookListItemEnriched]:
         enriched_booklist_items = []
-        for i in booklist_items:
-            edition_result = edition_repository.get(
-                session,
-                i.info["edition"] if i.info and i.info["edition"] else None,
-            )
-
-            edition = edition_result or i.work.get_feature_edition(session)
+        requested_isbns: dict[int, str] = {}
+        for item in booklist_items:
+            try:
+                requested_isbns[item.work_id] = get_definitive_isbn(
+                    (item.info or {}).get("edition")
+                )
+            except (AssertionError, ValueError, TypeError):
+                continue
+        editions = booklist_repository.get_detail_editions(
+            session, [item.work_id for item in booklist_items], requested_isbns
+        )
+        for item in booklist_items:
+            edition = editions.get(item.work_id)
             if edition is None:
-                # Local import to avoid circular dependency
-                from app.services.events import create_event
-
-                create_event(
-                    session=session,
-                    level=EventLevel.WARNING,
-                    title="Work referenced by a booklist has no editions",
-                    description=f"The booklist '{booklist.name}' has an item referencing work {i.work.title} which has no editions",
-                    info={
-                        "booklist_id": booklist.id,
-                        "booklist_name": booklist.name,
-                        "work_id": i.work_id,
-                        "work_title": i.work.title,
-                    },
-                    slack_channel=EventSlackChannel.EDITORIAL,
+                missing_edition_events.append(
+                    {
+                        "description": f"The booklist '{booklist.name}' has an item referencing work {item.work.title} which has no editions",
+                        "info": {
+                            "booklist_id": booklist.id,
+                            "booklist_name": booklist.name,
+                            "work_id": item.work_id,
+                            "work_title": item.work.title,
+                        },
+                    }
                 )
                 # Skip this item
                 continue
@@ -298,7 +295,9 @@ def populate_booklist_object(
             edition_detail = EditionDetail.model_validate(
                 edition,
             )
-            enriched_item = BookListItemEnriched(**i.__dict__, edition=edition_detail)
+            enriched_item = BookListItemEnriched(
+                **item.__dict__, edition=edition_detail
+            )
             enriched_booklist_items.append(enriched_item)
 
         return enriched_booklist_items
@@ -310,8 +309,21 @@ def populate_booklist_object(
     booklist.data = booklist_items
     booklist.pagination = Pagination(**pagination.to_dict(), total=booklist.book_count)
 
-    return (
+    response = (
         BookListDetail.model_validate(booklist)
         if not enriched
         else BookListDetailEnriched.model_validate(booklist)
     )
+    if missing_edition_events:
+        from app.services.events import create_event
+
+        for warning in missing_edition_events:
+            create_event(
+                session=session,
+                level=EventLevel.WARNING,
+                title="Work referenced by a booklist has no editions",
+                description=warning["description"],
+                info=warning["info"],
+                slack_channel=EventSlackChannel.EDITORIAL,
+            )
+    return response

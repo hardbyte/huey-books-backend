@@ -5,14 +5,15 @@ Replaces the generic CRUDBookList class with proper repository pattern.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Mapping, Optional, Sequence
+from uuid import UUID
 
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, defer, joinedload, raiseload, selectinload
 from structlog import get_logger
 
-from app.models import School, User
+from app.models import Edition, LabelSet, School, User, Work
 from app.models.booklist import BookList
 from app.models.booklist_work_association import BookListItem
 from app.schemas import is_url
@@ -129,6 +130,74 @@ class BooklistRepository(ABC):
 
 class BooklistRepositoryImpl(BooklistRepository):
     """Implementation of BooklistRepository."""
+
+    def get_detail_items(
+        self, db: Session, booklist_id: UUID, *, skip: int, limit: int
+    ) -> list[BookListItem]:
+        statement = (
+            select(BookListItem)
+            .where(BookListItem.booklist_id == booklist_id)
+            .offset(skip)
+            .limit(limit)
+            .order_by(BookListItem.order_id)
+            .options(
+                raiseload("*"),
+                joinedload(BookListItem.work).options(
+                    raiseload("*"),
+                    selectinload(Work.authors),
+                    selectinload(Work.labelset).options(
+                        raiseload("*"),
+                        selectinload(LabelSet.hues),
+                        selectinload(LabelSet.reading_abilities),
+                    ),
+                ),
+            )
+        )
+        return list(db.scalars(statement).all())
+
+    def get_detail_editions(
+        self, db: Session, work_ids: Sequence[int], requested_isbns: Mapping[int, str]
+    ) -> dict[int, Edition]:
+        edition_options = (
+            raiseload("*"),
+            defer(Edition.collection_count, raiseload=True),
+            joinedload(Edition.work).options(
+                raiseload("*"), selectinload(Work.authors)
+            ),
+            selectinload(Edition.illustrators),
+        )
+        requested = (
+            {
+                edition.isbn: edition
+                for edition in db.scalars(
+                    select(Edition)
+                    .where(Edition.isbn.in_(set(requested_isbns.values())))
+                    .options(*edition_options)
+                ).all()
+            }
+            if requested_isbns
+            else {}
+        )
+        result = {
+            work_id: requested[isbn]
+            for work_id, isbn in requested_isbns.items()
+            if isbn in requested
+        }
+        fallback_work_ids = [work_id for work_id in work_ids if work_id not in result]
+        if fallback_work_ids:
+            fallback = db.scalars(
+                select(Edition)
+                .where(Edition.work_id.in_(fallback_work_ids))
+                .distinct(Edition.work_id)
+                .order_by(
+                    Edition.work_id,
+                    Edition.cover_url.desc().nulls_last(),
+                    Edition.date_published.desc(),
+                )
+                .options(*edition_options)
+            ).all()
+            result.update({edition.work_id: edition for edition in fallback})
+        return result
 
     def get_by_id(self, db: Session, booklist_id: int) -> Optional[BookList]:
         """Get a booklist by its ID."""
