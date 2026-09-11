@@ -4,9 +4,10 @@ from functools import lru_cache
 from typing import Optional
 from weakref import WeakKeyDictionary
 
-from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-from sqlalchemy import URL, create_engine
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+import sqlalchemy
+import sqlalchemy.ext.asyncio
+from sqlalchemy import URL
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import sessionmaker
 from structlog import get_logger
 
@@ -29,8 +30,9 @@ def database_connection(
     Cloud Run - how many containers will be brought up, and how many requests
     can they each serve.
     """
-    engine = create_engine(
+    engine = sqlalchemy.create_engine(
         database_uri,
+        hide_parameters=True,
         pool_pre_ping=True,
         # Pool size is the maximum number of permanent connections to keep.
         # defaults to 5
@@ -79,8 +81,9 @@ def _get_async_session_maker(
     if cached is not None:
         return cached[1]
 
-    engine = create_async_engine(
+    engine = sqlalchemy.ext.asyncio.create_async_engine(
         database_uri,
+        hide_parameters=True,
         pool_pre_ping=True,
         # Pool size is the maximum number of permanent connections to keep.
         # defaults to 5
@@ -97,10 +100,6 @@ def _get_async_session_maker(
         # new connection from the pool. After the specified amount of time, an
         # exception will be thrown.
         pool_timeout=120,
-    )
-
-    SQLAlchemyInstrumentor().instrument(
-        engine=engine.sync_engine, enable_commenter=True, commenter_options={}
     )
 
     session_maker = async_sessionmaker(
@@ -146,10 +145,6 @@ def _get_session_maker(
         database_uri,
         pool_size=pool_size,
         max_overflow=max_overflow,
-    )
-    SQLAlchemyInstrumentor().instrument(
-        engine=engine,
-        enable_commenter=True,
     )
     return SessionLocal
 

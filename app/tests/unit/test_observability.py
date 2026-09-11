@@ -66,6 +66,7 @@ async def test_lifespan_drains_exporter_off_event_loop(monkeypatch):
         "HTTPXClientInstrumentor",
         "FastAPIInstrumentor",
         "Psycopg2Instrumentor",
+        "SQLAlchemyInstrumentor",
         "AsyncPGInstrumentor",
     ]:
         monkeypatch.setattr(app_logging, name, MagicMock())
@@ -225,6 +226,89 @@ def test_disabled_access_logging_and_application_debug_overrides(capsys):
         "No webhooks configured"
     )
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("json_logging", [True, False])
+def test_database_error_logs_retain_class_and_sqlstate_not_parameter_values(
+    json_logging, capsys
+):
+    from sqlalchemy.exc import DataError
+
+    class OriginalDatabaseError(Exception):
+        pgcode = "22P02"
+
+    private_value = "synthetic-private-bound-value"
+    app_logging.init_logging(
+        Settings(
+            POSTGRESQL_PASSWORD="unused",
+            SHOPIFY_HMAC_SECRET="unused",
+            SECRET_KEY="unused",
+            LOG_AS_JSON=json_logging,
+        )
+    )
+    original = OriginalDatabaseError(f"invalid input: {private_value}")
+    try:
+        raise DataError(
+            "SELECT :value", {"value": private_value}, original, hide_parameters=True
+        )
+    except DataError as exc:
+        structlog.get_logger("app.test").exception("Query failed", error=str(exc))
+        logging.getLogger("app.test").exception("Standard query failed")
+        structlog.get_logger("app.test").error("Explicit exception", exc_info=exc)
+    captured = capsys.readouterr()
+    assert private_value not in captured.err + captured.out
+    assert "DataError" in captured.err
+    assert "22P02" in captured.err
+
+
+def test_parent_span_does_not_echo_database_error_values():
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+    from sqlalchemy.exc import DataError
+
+    from app.observability.tracing import RedactingSpanProcessor
+
+    private_value = "synthetic-private-bound-value"
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(RedactingSpanProcessor(SimpleSpanProcessor(exporter)))
+    try:
+        with pytest.raises(DataError):
+            with provider.get_tracer(__name__).start_as_current_span(
+                "application request"
+            ):
+                raise DataError(
+                    "SELECT :value",
+                    {"value": private_value},
+                    ValueError(private_value),
+                    hide_parameters=True,
+                )
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].status.status_code == trace.StatusCode.ERROR
+        assert (
+            spans[0].events[0].attributes["exception.type"]
+            == "sqlalchemy.exc.DataError"
+        )
+        assert private_value not in spans[0].to_json()
+    finally:
+        provider.shutdown()
+
+
+def test_database_span_exception_without_attributes_is_safe():
+    from opentelemetry.sdk.trace import Event, ReadableSpan
+
+    from app.observability.tracing import RedactingSpanProcessor
+
+    processor = MagicMock()
+    RedactingSpanProcessor(processor).on_end(
+        ReadableSpan(
+            "query", attributes={"db.system": "postgresql"}, events=[Event("exception")]
+        )
+    )
+    processor.on_end.assert_called_once()
 
 
 @pytest.mark.parametrize("legacy", [True, False])

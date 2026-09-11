@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace.sampling import (
 from opentelemetry.trace import Link, SpanKind, Status, TraceState
 from opentelemetry.util.types import Attributes
 
-from app.observability.privacy import redact
+from app.observability.privacy import is_database_exception_type, redact
 
 
 class RequestSampler(Sampler):
@@ -59,6 +59,28 @@ class RedactingSpanProcessor(SpanProcessor):
         self.processor.on_start(span, parent_context)
 
     def on_end(self, span: ReadableSpan) -> None:
+        is_database = bool(
+            (span.attributes or {}).get("db.system")
+            or (span.attributes or {}).get("db.statement")
+        )
+        has_database_error = any(
+            is_database_exception_type(
+                (event.attributes or {}).get("exception.type", "")
+            )
+            for event in span.events
+        )
+        events = []
+        for event in span.events:
+            attributes = redact(event.attributes or {})
+            if (is_database or has_database_error) and event.name == "exception":
+                # Database errors can echo bound values even when SQLAlchemy
+                # hides the parameter collection in its exception representation.
+                attributes = {
+                    key: value
+                    for key, value in attributes.items()
+                    if key not in {"exception.message", "exception.stacktrace"}
+                }
+            events.append(Event(redact(event.name), attributes, event.timestamp))
         self.processor.on_end(
             ReadableSpan(
                 name=redact(span.name),
@@ -66,15 +88,17 @@ class RedactingSpanProcessor(SpanProcessor):
                 parent=span.parent,
                 resource=span.resource,
                 attributes=redact(span.attributes),
-                events=[
-                    Event(redact(event.name), redact(event.attributes), event.timestamp)
-                    for event in span.events
-                ],
+                events=events,
                 links=[
                     Link(link.context, redact(link.attributes)) for link in span.links
                 ],
                 kind=span.kind,
-                status=Status(span.status.status_code, redact(span.status.description)),
+                status=Status(
+                    span.status.status_code,
+                    None
+                    if is_database or has_database_error
+                    else redact(span.status.description),
+                ),
                 start_time=span.start_time,
                 end_time=span.end_time,
                 instrumentation_scope=span.instrumentation_scope,

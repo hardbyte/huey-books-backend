@@ -284,8 +284,13 @@ def reset_event_listener() -> None:
 
 async def log_all_events(event: FlowEvent) -> None:
     """Example handler that logs all flow events."""
-    logger.info(
-        f"Flow Event: {event.event_type} - Session: {event.session_id} - Node: {event.current_node}"
+    logger.debug(
+        "Flow event received",
+        extra={
+            "event_type": event.event_type,
+            "session_id": str(event.session_id),
+            "current_node": event.current_node,
+        },
     )
 
 
