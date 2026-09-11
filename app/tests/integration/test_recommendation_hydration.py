@@ -2,11 +2,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import BackgroundTasks
-from sqlalchemy import event, inspect, text
+from sqlalchemy import event, inspect, select, text
+from sqlalchemy.orm import raiseload
 from sqlalchemy.orm.attributes import NO_VALUE
 
 from app.api.recommendations import get_recommendations_with_fallback
-from app.models import Collection, CollectionItem
+from app.models import Collection, CollectionItem, Work
 from app.repositories.recommendation_repository import (
     RecommendationCandidate,
     recommendation_repository,
@@ -23,8 +24,9 @@ HYDRATION_SELECT_BUDGET = 7
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("warm_identity_map", [False, True])
 async def test_recommendation_hydration_budget_and_title_fallback(
-    session, async_session
+    session, async_session, warm_identity_map
 ):
     work, edition, labels = _make_labeled_work(
         session, "hydration-budget", hue_ids=[1], ra_ids=[1]
@@ -33,6 +35,12 @@ async def test_recommendation_hydration_budget_and_title_fallback(
     labels.checked = True
     session.commit()
     _refresh_mv(session)
+    previously_loaded_work = None
+    if warm_identity_map:
+        previously_loaded_work = await async_session.scalar(
+            select(Work).where(Work.id == work.id).options(raiseload("*"))
+        )
+        assert inspect(previously_loaded_work).attrs.authors.loaded_value is NO_VALUE
     statements: list[str] = []
 
     def capture(connection, cursor, statement, parameters, context, executemany):
@@ -48,6 +56,8 @@ async def test_recommendation_hydration_budget_and_title_fallback(
         matching = [(w, e, ls) for w, e, ls in rows if w.id == work.id]
         assert len(matching) == 1
         loaded_work, loaded_edition, loaded_labels = matching[0]
+        if warm_identity_map:
+            assert loaded_work is previously_loaded_work
         result = HueyBook(
             work_id=loaded_work.id,
             isbn=loaded_edition.isbn,
