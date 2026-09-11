@@ -106,7 +106,6 @@ async def process_outbox_events(session: DBSessionDep):
         if stats.get("processed", 0) < outbox_service.batch_size:
             break
 
-    logger.info("EventOutbox processing completed", stats=totals)
     return {"msg": "EventOutbox processing completed", "stats": totals}
 
 
