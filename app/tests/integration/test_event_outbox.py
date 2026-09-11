@@ -6,7 +6,7 @@ These tests verify the Event Outbox Pattern implementation for reliable event de
 
 import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -14,6 +14,7 @@ from sqlalchemy import select, text
 
 from app.db.session import get_async_session_maker
 from app.models.event_outbox import EventOutbox, EventPriority, EventStatus
+from app.repositories.outbox import get_outbox_health
 from app.services.event_outbox_service import EventOutboxService
 
 
@@ -37,6 +38,59 @@ async def cleanup_event_outbox(async_session):
 
 class TestEventOutboxService:
     """Test the Event Outbox Service for reliable event delivery."""
+
+    async def test_disabled_slack_retained_without_blocking_other_delivery(
+        self, async_session
+    ):
+        service = EventOutboxService()
+        old_time = datetime.utcnow() - timedelta(days=1)
+        disabled = EventOutbox(
+            event_type="slack_notification",
+            destination="slack:#memberships",
+            payload={},
+            created_at=old_time,
+        )
+        historic = EventOutbox(
+            event_type="old_failure",
+            destination="internal:old",
+            payload={},
+            status=EventStatus.DEAD_LETTER,
+            created_at=old_time,
+        )
+        deliverable = EventOutbox(
+            event_type="test_success",
+            destination="webhook_test",
+            payload={"simulate_success": True},
+        )
+        async_session.add_all([disabled, historic, deliverable])
+        await async_session.commit()
+        with (
+            patch("app.services.event_outbox_service.get_settings") as settings,
+            patch("app.services.event_outbox_service.logger") as logger,
+        ):
+            settings.return_value.SLACK_NOTIFICATIONS_ENABLED = False
+            stats = await service.process_pending_events(async_session)
+        assert stats["processed"] == 1
+        assert stats["succeeded"] == 1
+        await async_session.refresh(disabled)
+        await async_session.refresh(historic)
+        await async_session.refresh(deliverable)
+        assert disabled.status == EventStatus.PENDING
+        assert disabled.retry_count == 0
+        assert historic.status == EventStatus.DEAD_LETTER
+        assert deliverable.status == EventStatus.PUBLISHED
+        summaries = [
+            call.kwargs
+            for call in logger.info.call_args_list
+            if call.args == ("Outbox queue health",)
+        ]
+        assert summaries[0]["pending_count"] == 0
+        assert summaries[0]["disabled_count"] == 1
+        assert summaries[0]["oldest_pending_age_seconds"] == 0
+        health = await get_outbox_health(async_session, slack_enabled=True)
+        assert health.pending_count == 1
+        assert health.disabled_count == 0
+        assert health.oldest_pending_age_seconds >= 86400
 
     async def test_publish_event_basic(self, async_session):
         """Test basic event publishing to outbox."""
