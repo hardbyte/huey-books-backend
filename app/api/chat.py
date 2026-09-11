@@ -7,6 +7,7 @@ from fastapi import (
     APIRouter,
     Body,
     Depends,
+    Header,
     HTTPException,
     Path,
     Query,
@@ -21,10 +22,13 @@ from structlog import get_logger
 from app import crud
 from app.api.common.pagination import PaginatedQueryParams
 from app.api.dependencies.async_db_dep import DBSessionDep
+from app.api.dependencies.chat_session import (
+    get_chat_session_token,
+    legacy_session_token,
+)
 from app.api.dependencies.csrf import CSRFProtected
 from app.api.dependencies.security import (
     get_current_active_superuser_or_backend_service_account,
-    get_current_active_user,
     get_optional_authenticated_user,
 )
 from app.config import get_settings
@@ -34,6 +38,7 @@ from app.models.campaign import Campaign
 from app.models.cms import ChatTheme, SessionStatus
 from app.models.school import School
 from app.repositories.chat_repository import chat_repo
+from app.schemas.browser_timing import BrowserTiming
 from app.schemas.cms import (
     ConversationHistoryResponse,
     InteractionCreate,
@@ -45,6 +50,7 @@ from app.schemas.cms import (
 )
 from app.schemas.pagination import Pagination
 from app.security.csrf import generate_csrf_token, set_secure_session_cookie
+from app.services.browser_timing import InvalidTimingReceipt, browser_timing_service
 from app.services.campaigns import CampaignContext, resolve_campaign
 from app.services.chat_runtime import FlowNotFoundError, chat_runtime
 
@@ -312,10 +318,29 @@ async def start_conversation(
         )
 
 
-@router.get("/sessions/{session_token}", response_model=SessionDetail)
+@router.post("/telemetry", status_code=status.HTTP_204_NO_CONTENT)
+async def record_browser_timing(
+    timing: BrowserTiming,
+    receipt: str = Header(alias="X-Response-Timing-Token", max_length=512),
+    settings=Depends(get_settings),
+) -> Response:
+    try:
+        browser_timing_service.record(timing, receipt, settings.SECRET_KEY)
+    except InvalidTimingReceipt:
+        raise HTTPException(status_code=401, detail="Invalid or expired timing receipt")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/session", response_model=SessionDetail)
+@router.get(
+    "/sessions/{session_token}",
+    response_model=SessionDetail,
+    deprecated=True,
+    dependencies=[Depends(legacy_session_token)],
+)
 async def get_session_state(
     session: DBSessionDep,
-    session_token: str = Path(description="Session token"),
+    session_token: str = Depends(get_chat_session_token),
 ):
     """Get current session state."""
 
@@ -331,10 +356,16 @@ async def get_session_state(
     return conversation_session
 
 
-@router.post("/sessions/{session_token}/interact", response_model=InteractionResponse)
+@router.post("/session/interact", response_model=InteractionResponse)
+@router.post(
+    "/sessions/{session_token}/interact",
+    response_model=InteractionResponse,
+    deprecated=True,
+    dependencies=[Depends(legacy_session_token)],
+)
 async def interact_with_session(
     session: DBSessionDep,
-    session_token: str = Path(description="Session token"),
+    session_token: str = Depends(get_chat_session_token),
     interaction: InteractionCreate = Body(...),
     _csrf_protected: bool = CSRFProtected,
 ):
@@ -364,12 +395,11 @@ async def interact_with_session(
             input_type=interaction.input_type,
         )
 
-        logger.info(
+        logger.debug(
             "Processed interaction",
             session_id=conversation_session.id,
             input_type=interaction.input_type,
             response_keys=list(response.keys()),
-            session_updated=response.get("session_updated"),
         )
 
         return InteractionResponse(
@@ -403,10 +433,15 @@ async def interact_with_session(
         )
 
 
-@router.post("/sessions/{session_token}/end")
+@router.post("/session/end")
+@router.post(
+    "/sessions/{session_token}/end",
+    deprecated=True,
+    dependencies=[Depends(legacy_session_token)],
+)
 async def end_session(
     session: DBSessionDep,
-    session_token: str = Path(description="Session token"),
+    session_token: str = Depends(get_chat_session_token),
     _csrf_protected: bool = CSRFProtected,
 ):
     """End conversation session."""
@@ -443,12 +478,16 @@ async def end_session(
         )
 
 
+@router.get("/session/history", response_model=ConversationHistoryResponse)
 @router.get(
-    "/sessions/{session_token}/history", response_model=ConversationHistoryResponse
+    "/sessions/{session_token}/history",
+    response_model=ConversationHistoryResponse,
+    deprecated=True,
+    dependencies=[Depends(legacy_session_token)],
 )
 async def get_conversation_history(
     session: DBSessionDep,
-    session_token: str = Path(description="Session token"),
+    session_token: str = Depends(get_chat_session_token),
     pagination: PaginatedQueryParams = Depends(),
 ):
     """Get conversation history for session."""
@@ -474,10 +513,15 @@ async def get_conversation_history(
     )
 
 
-@router.patch("/sessions/{session_token}/state")
+@router.patch("/session/state")
+@router.patch(
+    "/sessions/{session_token}/state",
+    deprecated=True,
+    dependencies=[Depends(legacy_session_token)],
+)
 async def update_session_state(
     session: DBSessionDep,
-    session_token: str = Path(description="Session token"),
+    session_token: str = Depends(get_chat_session_token),
     state_update: SessionStateUpdate = Body(...),
     _csrf_protected: bool = CSRFProtected,
 ):
@@ -566,7 +610,7 @@ async def list_sessions(
 
 @router.delete(
     "/admin/sessions/{session_id}",
-    dependencies=[Security(get_current_active_user)],
+    dependencies=[Security(get_current_active_superuser_or_backend_service_account)],
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_session(

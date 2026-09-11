@@ -683,10 +683,9 @@ class QuestionNodeProcessor(NodeProcessor):
             variable_name = node_content.get("variable")
 
         state_was_updated = False
-        self.logger.info(
+        self.logger.debug(
             "Processing question response",
             variable_name=variable_name,
-            user_input=user_input,
             node_id=node.node_id,
             content_id=content_id if content_id else "no_content_id",
         )
@@ -724,11 +723,8 @@ class QuestionNodeProcessor(NodeProcessor):
                 expected_revision=session.revision,
             )
             state_was_updated = True
-            self.logger.info(
+            self.logger.debug(
                 "Updated session state",
-                state_updates=state_updates,
-                session_state=updated_session.state,
-                full_state=updated_session.state,
                 variable_name=variable_name,
             )
             # Update the session reference to the new one
@@ -1031,13 +1027,6 @@ class ChatRuntime:
             flow_version=flow.version,
             trace_enabled=trace_enabled,
             trace_level=trace_level,
-        )
-
-        self.logger.info(
-            "Started conversation session",
-            session_id=session.id,
-            flow_id=flow_id,
-            user_id=user_id,
         )
 
         return session

@@ -20,7 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from structlog import get_logger
 
+from app.config import get_settings
 from app.models.event_outbox import EventOutbox, EventPriority, EventStatus
+from app.repositories.outbox import get_outbox_health, slack_destination
 
 logger = get_logger()
 
@@ -207,8 +209,6 @@ class EventOutboxService:
         This is the background daemon that ensures reliable delivery.
         Returns statistics about processing results.
         """
-        logger.info("Starting outbox event processing")
-
         stats = {
             "processed": 0,
             "succeeded": 0,
@@ -252,9 +252,36 @@ class EventOutboxService:
                     stats["failed"] += 1
                 logger.error("Event delivery failed", event_id=event.id, error=str(e))
 
+        dead_letters = []
+        for event in events:
+            if event.status == EventStatus.DEAD_LETTER:
+                dead_letters.append(
+                    dict(
+                        event_id=str(event.id),
+                        event_type=event.event_type,
+                        destination_type=event.destination.partition(":")[0],
+                        retry_count=event.retry_count,
+                        correlation_id=event.correlation_id,
+                    )
+                )
+        health = await get_outbox_health(
+            db, slack_enabled=get_settings().SLACK_NOTIFICATIONS_ENABLED
+        )
         await db.commit()
-
-        logger.info("Completed outbox event processing", stats=stats)
+        for dead_letter in dead_letters:
+            logger.error("Outbox event dead lettered", **dead_letter)
+        log_health = logger.debug
+        if health.oldest_pending_age_seconds >= 1800:
+            log_health = logger.warning
+        elif health.pending_count or stats["processed"]:
+            log_health = logger.info
+        log_health(
+            "Outbox queue health",
+            pending_count=health.pending_count,
+            disabled_count=health.disabled_count,
+            oldest_pending_age_seconds=health.oldest_pending_age_seconds,
+            **stats,
+        )
         return stats
 
     async def get_failed_events(
@@ -338,6 +365,9 @@ class EventOutboxService:
             .with_for_update(skip_locked=True)
             .limit(self.batch_size)
         )
+
+        if not get_settings().SLACK_NOTIFICATIONS_ENABLED:
+            query = query.where(~slack_destination())
 
         result = await db.execute(query)
         return result.scalars().all()
@@ -740,11 +770,6 @@ class EventOutboxService:
         if event.should_move_to_dead_letter:
             event.status = EventStatus.DEAD_LETTER
             self._redact_email_payload(event)
-            logger.warning(
-                "Event moved to dead letter queue",
-                event_id=event.id,
-                retry_count=event.retry_count,
-            )
         else:
             event.status = EventStatus.FAILED
 

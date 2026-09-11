@@ -141,12 +141,12 @@ class FlowEventListener:
             try:
                 flow_event = FlowEvent.model_validate(event_data)
             except Exception as e:
-                logger.error(f"Failed to parse flow event data: {e}")
+                logger.error(
+                    "Invalid flow event notification", error_type=type(e).__name__
+                )
                 return
 
-            logger.info(
-                f"Received flow event: {flow_event.event_type} for session {flow_event.session_id}"
-            )
+            logger.debug("Flow event received", event_type=flow_event.event_type)
 
             # Dispatch to registered handlers. Build a NEW list — never mutate
             # the stored handler list. `dict.get` returns the live list, so an
@@ -171,7 +171,6 @@ class FlowEventListener:
 
         except Exception as e:
             logger.error(f"Failed to process flow event notification: {e}")
-            logger.debug(f"Raw payload: {payload}")
 
     async def start_listening(self) -> None:
         """Start listening for PostgreSQL notifications."""

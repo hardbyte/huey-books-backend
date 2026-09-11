@@ -3,7 +3,7 @@ import json
 from functools import lru_cache
 from typing import Annotated, List, Literal, Optional, Union
 
-from pydantic import AnyHttpUrl, DirectoryPath, HttpUrl, field_validator
+from pydantic import AnyHttpUrl, DirectoryPath, Field, HttpUrl, field_validator
 from pydantic_core.core_schema import FieldValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     GPT_SERVICE_ACCOUNT_ID: str = "2c092595-76e8-4ba9-9340-37b7237d6b59"
 
     SLACK_BOT_TOKEN: str = ""
+    SLACK_NOTIFICATIONS_ENABLED: bool = True
 
     HUEY_BOOKS_APP_URL: str = "https://hueybooks.com"
 
@@ -313,8 +314,7 @@ class Settings(BaseSettings):
     METABASE_SITE_URL: HttpUrl = "https://metabase-lg5ntws4da-ts.a.run.app"
     METABASE_SECRET_KEY: str = ""
 
-    # Capture uvicorn's access log messages in our logging stack
-    LOG_UVICORN_ACCESS: bool = True
+    LOG_UVICORN_ACCESS: bool = False
     LOG_AS_JSON: bool = False
     DEBUG: bool = False
 
@@ -384,6 +384,7 @@ class Settings(BaseSettings):
         return v
 
     ENABLE_OTEL_GOOGLE_EXPORTER: bool = False
+    CHAT_TRACE_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
 
     # E2E Test configuration - when set, enables test auth endpoints
     # This should NEVER be set in production

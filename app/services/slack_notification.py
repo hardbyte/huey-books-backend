@@ -11,6 +11,7 @@ This replaces direct Slack API calls in handle_event_to_slack_alert with
 reliable event-driven delivery.
 """
 
+import asyncio
 import json
 from typing import Any, Dict, Optional
 
@@ -58,6 +59,13 @@ class SlackNotificationService:
     def __init__(self, event_outbox_service: EventOutboxService):
         self.event_outbox_service = event_outbox_service
 
+    @staticmethod
+    def _disabled(event_id: str) -> bool:
+        if config.SLACK_NOTIFICATIONS_ENABLED:
+            return False
+        logger.info("Slack notification skipped", event_id=event_id, reason="disabled")
+        return True
+
     async def send_event_alert_via_outbox(
         self,
         db: AsyncSession,
@@ -73,24 +81,10 @@ class SlackNotificationService:
         This replaces handle_event_to_slack_alert with reliable event delivery.
         The event is stored in the outbox and processed by background workers.
         """
+        if self._disabled(event_id):
+            return
         try:
-            # Load event from database using async method
-            # Note: Need to create async version of CRUD or use raw SQL
-            from sqlalchemy import text
-
-            result = await db.execute(
-                text("SELECT * FROM events WHERE id = :event_id"),
-                {"event_id": event_id},
-            )
-            event_row = result.fetchone()
-
-            if not event_row:
-                raise SlackNotificationError(f"Event {event_id} not found")
-
-            # Convert row to Event object for compatibility
-            from app.models.event import Event
-
-            event = db.get(Event, event_id)
+            event = await db.get(Event, event_id)
             if not event:
                 raise SlackNotificationError(f"Event {event_id} not found")
 
@@ -133,7 +127,7 @@ class SlackNotificationService:
                 "Failed to queue Slack alert",
                 event_id=event_id,
                 slack_channel=slack_channel.value,
-                error=str(e),
+                error_type=type(e).__name__,
             )
             raise SlackNotificationError(f"Failed to queue Slack alert: {e}")
 
@@ -152,6 +146,8 @@ class SlackNotificationService:
         This works with the existing synchronous CRUD layer and is used by
         the create_event function in events.py.
         """
+        if self._disabled(event_id):
+            return
         try:
             # Load event from database using existing CRUD
             event = crud.event.get(db, id=event_id)
@@ -197,7 +193,7 @@ class SlackNotificationService:
                 "Failed to queue Slack alert (sync)",
                 event_id=event_id,
                 slack_channel=slack_channel.value,
-                error=str(e),
+                error_type=type(e).__name__,
             )
             raise SlackNotificationError(f"Failed to queue Slack alert: {e}")
 
@@ -235,7 +231,7 @@ class SlackNotificationService:
                 "Failed to send direct Slack alert",
                 event_id=event_id,
                 slack_channel=slack_channel.value,
-                error=str(e),
+                error_type=type(e).__name__,
             )
             return False
 
@@ -340,6 +336,8 @@ class SlackNotificationService:
 
         Returns True if successful, False if failed.
         """
+        if not config.SLACK_NOTIFICATIONS_ENABLED:
+            return False
         if not config.SLACK_BOT_TOKEN:
             logger.warning("SLACK_BOT_TOKEN not configured, skipping Slack message")
             return False
@@ -363,12 +361,13 @@ class SlackNotificationService:
                 "Slack API error",
                 channel=channel,
                 error_code=e.response["error"],
-                error_message=str(e),
             )
             return False
         except Exception as e:
             logger.error(
-                "Unexpected error sending Slack message", channel=channel, error=str(e)
+                "Unexpected error sending Slack message",
+                channel=channel,
+                error_type=type(e).__name__,
             )
             return False
 
@@ -376,13 +375,13 @@ class SlackNotificationService:
         """
         Send message to Slack using the Slack SDK (async version).
 
-        This is just a wrapper around the sync version since the Slack SDK
-        doesn't have native async support.
+        Offload the synchronous client so delivery does not block the event loop.
 
         Returns True if successful, False if failed.
         """
-        # The Slack SDK is synchronous, so we just call the sync version
-        return self._send_slack_message_sync(channel, blocks, text)
+        return await asyncio.to_thread(
+            self._send_slack_message_sync, channel=channel, blocks=blocks, text=text
+        )
 
     async def process_outbox_slack_notification(self, payload: Dict[str, Any]) -> bool:
         """
@@ -400,11 +399,10 @@ class SlackNotificationService:
             slack_text = payload.get("slack_text")
 
             if not all([slack_channel, slack_blocks, slack_text]):
-                logger.error("Invalid Slack notification payload", payload=payload)
-                return False  # Don't retry invalid payloads
+                logger.error("Invalid Slack notification payload")
+                return False
 
-            # Send the message using sync version (Slack SDK is sync anyway)
-            success = self._send_slack_message_sync(
+            success = await self._send_slack_message(
                 channel=slack_channel, blocks=slack_blocks, text=slack_text
             )
 
@@ -426,8 +424,7 @@ class SlackNotificationService:
         except Exception as e:
             logger.error(
                 "Error processing outbox Slack notification",
-                payload=payload,
-                error=str(e),
+                error_type=type(e).__name__,
             )
             return False  # Trigger retry
 

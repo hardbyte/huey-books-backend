@@ -43,7 +43,7 @@ internal_app = FastAPI(
     redoc_url="/v1/redoc",
 )
 
-init_tracing(internal_app, settings)
+init_tracing(internal_app, settings, internal=True)
 
 # Load the Stripe API key
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -52,8 +52,8 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 @internal_app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     logger.warning(
-        f"The client sent invalid data!: {exc}\n\n{exc.errors()}",
-        request=request.url,
+        "Request validation failed",
+        error_count=len(exc.errors()),
     )
     return await request_validation_exception_handler(request, exc)
 

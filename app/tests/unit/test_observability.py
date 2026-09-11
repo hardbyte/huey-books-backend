@@ -147,6 +147,236 @@ def test_no_trace_fields_outside_request():
     assert "logging.googleapis.com/trace" not in result
 
 
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("/v1/chat/start", True),
+        ("/v1/chat/session/interact", True),
+        ("/v1/chat/sessions/token/interact", True),
+        ("/v1/chat/admin/sessions", False),
+        ("/v1/schools", False),
+        ("/v1/version", False),
+        ("/v1/chat/telemetry", False),
+    ],
+)
+def test_chat_sampling_overrides_unsampled_remote_parent_only_for_chat(path, expected):
+    from app.observability.tracing import RequestSampler
+
+    parent = trace.set_span_in_context(
+        NonRecordingSpan(
+            SpanContext(
+                trace_id=42, span_id=7, is_remote=True, trace_flags=TraceFlags(0)
+            )
+        )
+    )
+    decision = RequestSampler(1).should_sample(
+        parent, 42, "POST", trace.SpanKind.SERVER, {"http.target": path}
+    )
+    assert decision.decision.is_sampled() is expected
+    assert (
+        not RequestSampler(0)
+        .should_sample(parent, 42, "POST", trace.SpanKind.SERVER, {"http.target": path})
+        .decision.is_sampled()
+    )
+
+
+@pytest.mark.parametrize("json_logging", [True, False])
+def test_exception_logs_redacted_before_console_or_json_output(json_logging, capsys):
+    from app.observability.privacy import request_secrets
+
+    app_logging.init_logging(
+        Settings(
+            POSTGRESQL_PASSWORD="unused",
+            SHOPIFY_HMAC_SECRET="unused",
+            SECRET_KEY="unused",
+            LOG_AS_JSON=json_logging,
+        )
+    )
+    context = request_secrets.set(("bare-session-secret",))
+    try:
+        try:
+            raise ValueError(
+                "bare-session-secret /v1/chat/sessions/other-secret/interact"
+            )
+        except ValueError:
+            structlog.get_logger("app.test").exception(
+                "failure", user_input="child-private-answer"
+            )
+    finally:
+        request_secrets.reset(context)
+    captured = capsys.readouterr()
+    assert "bare-session-secret" not in captured.err + captured.out
+    assert "other-secret" not in captured.err + captured.out
+    assert "child-private-answer" not in captured.err + captured.out
+    assert "ValueError" in captured.err
+
+
+def test_disabled_access_logging_and_application_debug_overrides(capsys):
+    app_logging.init_logging(
+        Settings(
+            POSTGRESQL_PASSWORD="unused",
+            SHOPIFY_HMAC_SECRET="unused",
+            SECRET_KEY="unused",
+            LOG_AS_JSON=True,
+        )
+    )
+    logging.getLogger("uvicorn.access").info("secret-path")
+    structlog.get_logger("app.services.webhook_notifier").debug(
+        "No webhooks configured"
+    )
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_full_asgi_error_correlates_once_and_redacts_spans_before_async_export(
+    legacy, capsys
+):
+    from fastapi import FastAPI, Request
+    from fastapi.testclient import TestClient
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+    from starlette.responses import JSONResponse
+
+    from app.middleware.request_logging import RequestLoggingMiddleware
+    from app.middleware.sensitive_request_context import (
+        SensitiveRequestContextMiddleware,
+    )
+    from app.observability.privacy import request_secrets
+    from app.observability.tracing import RedactingSpanProcessor, RequestSampler
+
+    app_logging.init_logging(
+        Settings(
+            POSTGRESQL_PASSWORD="unused",
+            SHOPIFY_HMAC_SECRET="unused",
+            SECRET_KEY="unused",
+            LOG_AS_JSON=True,
+        )
+    )
+    provider = TracerProvider(sampler=RequestSampler(1))
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(
+        RedactingSpanProcessor(app_logging.create_span_processor(exporter))
+    )
+    app = FastAPI()
+
+    @app.exception_handler(Exception)
+    async def error_response(request: Request, exc: Exception):
+        # The response adapter deliberately does not log a second traceback.
+        return JSONResponse(
+            {"detail": "Internal server error"},
+            status_code=500,
+            headers={"X-Request-ID": request.state.request_id},
+        )
+
+    @app.post("/v1/chat/sessions/{session_token}/interact")
+    @app.post("/v1/chat/session/interact")
+    def broken():
+        with provider.get_tracer("test").start_as_current_span("query"):
+            raise RuntimeError("sensitive-credential")
+
+    app.add_middleware(RequestLoggingMiddleware)
+    FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+    app.add_middleware(SensitiveRequestContextMiddleware)
+    path = (
+        "/v1/chat/sessions/sensitive-credential/interact"
+        if legacy
+        else "/v1/chat/session/interact"
+    )
+    headers = {"X-Cloud-Trace-Context": f"{42:032x}/7;o=0"}
+    if not legacy:
+        headers["X-Chat-Session"] = "sensitive-credential"
+    response = TestClient(app, raise_server_exceptions=False).post(
+        path, headers=headers
+    )
+    assert response.status_code == 500
+    assert not request_secrets.get()
+    provider.force_flush()
+    spans = exporter.get_finished_spans()
+    assert spans
+    assert "sensitive-credential" not in "".join(span.to_json() for span in spans)
+    records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    errors = [
+        record
+        for record in records
+        if record.get("event") == "Unhandled request exception"
+    ]
+    assert len(errors) == 1
+    assert errors[0]["request_id"] == response.headers["X-Request-ID"]
+    assert errors[0]["logging.googleapis.com/trace"]
+    assert "sensitive-credential" not in json.dumps(errors)
+    summaries = [
+        record for record in records if record.get("event") == "HTTP request completed"
+    ]
+    assert len(summaries) == 1
+    assert summaries[0]["failed"] is True
+    assert summaries[0]["severity"] == "ERROR"
+    provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_is_not_a_success_and_duplicate_uvicorn_exception_is_suppressed(
+    monkeypatch,
+):
+    from app.middleware.request_logging import RequestLoggingMiddleware
+
+    log = []
+    monkeypatch.setattr(
+        "app.middleware.request_logging.logger.error",
+        lambda event, **fields: log.append(fields),
+    )
+    monkeypatch.setattr(
+        "app.middleware.request_logging.logger.exception", lambda *args, **kwargs: None
+    )
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send(
+            {"type": "http.response.body", "body": b"partial", "more_body": True}
+        )
+        raise RuntimeError("stream failed")
+
+    with pytest.raises(RuntimeError) as error:
+        await RequestLoggingMiddleware(app)(
+            {"type": "http", "method": "GET"}, AsyncMock(), AsyncMock()
+        )
+    assert log[0]["status_code"] == 200
+    assert log[0]["failed"] is True
+    assert log[0]["response_complete"] is False
+    record = logging.LogRecord(
+        "uvicorn.error",
+        logging.ERROR,
+        "",
+        0,
+        "ASGI exception",
+        (),
+        (RuntimeError, error.value, None),
+    )
+    assert app_logging.AlreadyCorrelatedExceptionFilter().filter(record) is False
+    record.exc_info = (RuntimeError, RuntimeError("not previously logged"), None)
+    assert app_logging.AlreadyCorrelatedExceptionFilter().filter(record) is True
+
+
+@pytest.mark.parametrize(
+    "route,internal,expected",
+    [
+        ("/v1/chat/session/interact", False, "chat"),
+        ("/v1/chat/admin/sessions", False, "admin"),
+        ("/v1/school/{school_id}", False, "admin"),
+        ("/v1/process-stripe-event", True, "webhook"),
+        ("/v1/process-outbox-events", True, "background"),
+        ("/v1/version", True, "health"),
+        ("/v1/chat/telemetry", False, "telemetry"),
+        ("<unmatched>", False, "other"),
+    ],
+)
+def test_request_classes_are_bounded(route, internal, expected):
+    from app.middleware.request_logging import traffic_class
+
+    assert traffic_class(route, internal=internal) == expected
+
+
 @pytest.mark.asyncio
 async def test_request_summary_uses_route_template_not_secrets(monkeypatch):
     from app.middleware.request_logging import RequestLoggingMiddleware
@@ -154,7 +384,8 @@ async def test_request_summary_uses_route_template_not_secrets(monkeypatch):
     messages = []
     log = []
     monkeypatch.setattr(
-        "app.middleware.request_logging.logger.info", lambda event, **fields: log.append(fields)
+        "app.middleware.request_logging.logger.info",
+        lambda event, **fields: log.append(fields),
     )
 
     async def app(scope, receive, send):
