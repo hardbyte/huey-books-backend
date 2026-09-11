@@ -14,6 +14,7 @@ from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.cloud_trace_propagator import CloudTraceFormatPropagator
 from opentelemetry.sdk.trace import TracerProvider
@@ -24,7 +25,7 @@ from app.middleware.browser_timing_receipt import BrowserTimingReceiptMiddleware
 from app.middleware.request_body_limit import RequestBodyLimitMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.middleware.sensitive_request_context import SensitiveRequestContextMiddleware
-from app.observability.privacy import redact_log_event
+from app.observability.privacy import redact_database_exception, redact_log_event
 from app.observability.tracing import RedactingSpanProcessor, RequestSampler
 
 
@@ -73,6 +74,7 @@ def init_tracing(app, settings: Settings, *, internal: bool = False):
         # Set the X-Cloud-Trace-Context header
         set_global_textmap(CloudTraceFormatPropagator())
 
+    SQLAlchemyInstrumentor().instrument()
     HTTPXClientInstrumentor().instrument()
     app.add_middleware(
         RequestBodyLimitMiddleware,
@@ -121,6 +123,7 @@ def init_logging(settings: Settings):
         # structlog.processors.TimeStamper(fmt='iso'),
         structlog.processors.StackInfoRenderer(),
     ]
+    shared_processors.append(redact_database_exception)
     shared_processors.append(structlog.processors.format_exc_info)
     shared_processors.append(redact_log_event)
 

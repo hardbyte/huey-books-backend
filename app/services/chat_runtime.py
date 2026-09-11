@@ -1221,7 +1221,7 @@ class ChatRuntime:
         # Process based on node type
         result = {"messages": [], "session_ended": False}
 
-        self.logger.info(
+        self.logger.debug(
             "Processing interaction",
             current_node_id=current_node.node_id,
             node_type=current_node.node_type,

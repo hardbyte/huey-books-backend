@@ -28,3 +28,14 @@ def test_instrumented_pool_checkout_does_not_wait_for_export():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "70 exported spans" in result.stdout
+
+
+def test_queries_are_traced_for_sync_and_async_engines_across_event_loops():
+    result = subprocess.run(
+        [sys.executable, "-m", "app.tests.util.sql_engine_trace_probe"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "privacy on 6 engines" in result.stdout

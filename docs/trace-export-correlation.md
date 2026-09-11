@@ -41,6 +41,24 @@ complete chat traces makes slow responses diagnosable without a synchronous expo
 collector. This does not guarantee every slow admin/background trace is retained. Revisit the
 chat sample rate as traffic grows; unsampled request summaries still provide durations.
 
+SQLAlchemy is instrumented once during API startup, before lazy engine creation. Database
+factories use module-qualified calls so the installed wrappers instrument every sync and
+async engine, including factories cached for later event loops. Do not instrument engines
+one at a time: the instrumentor is process-wide and subsequent `instrument()` calls are
+ignored. The multi-engine PostgreSQL probe in `test_trace_export.py` checks actual query
+spans, not merely connection spans.
+
+SQL spans retain parameterized statement templates, not parameter values. Engine
+`hide_parameters` is enabled, and database span exception messages/stack traces and status
+descriptions are omitted because PostgreSQL can echo invalid bound values in errors. The
+exception type and error status remain. Recognized database exceptions on parent spans are
+sanitized too. Structured exception logs retain stack frames, class and SQLSTATE rather than
+the database error text. Callers should log database errors with `exc_info`, not interpolate
+raw error strings without exception context. SQL commenter is disabled: per-request trace comments
+are unnecessary for span correlation and can fragment prepared-statement caches. Continue
+using bound parameters in application queries; literal values embedded directly in SQL text
+cannot be distinguished from the statement template by this instrumentation.
+
 Sensitive-request context wraps the OpenTelemetry middleware. Logs are redacted after exception
 formatting in both console and JSON modes. A span processor redacts attributes, events and
 status before enqueueing spans: the background exporter cannot access request ContextVars.
