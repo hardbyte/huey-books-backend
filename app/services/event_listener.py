@@ -171,7 +171,6 @@ class FlowEventListener:
 
         except Exception as e:
             logger.error(f"Failed to process flow event notification: {e}")
-            logger.debug(f"Raw payload: {payload}")
 
     async def start_listening(self) -> None:
         """Start listening for PostgreSQL notifications."""

@@ -20,7 +20,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
 from app.config import Settings
+from app.middleware.browser_timing_receipt import BrowserTimingReceiptMiddleware
+from app.middleware.request_body_limit import RequestBodyLimitMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
+from app.middleware.sensitive_request_context import SensitiveRequestContextMiddleware
+from app.observability.privacy import redact_log_event
+from app.observability.tracing import RedactingSpanProcessor, RequestSampler
 
 
 class BoundedTraceClient(TraceServiceClient):
@@ -40,8 +45,10 @@ def create_span_processor(exporter: SpanExporter) -> BatchSpanProcessor:
     )
 
 
-def init_tracing(app, settings: Settings):
-    trace.set_tracer_provider(TracerProvider())
+def init_tracing(app, settings: Settings, *, internal: bool = False):
+    trace.set_tracer_provider(
+        TracerProvider(sampler=RequestSampler(settings.CHAT_TRACE_SAMPLE_RATE))
+    )
 
     if settings.ENABLE_OTEL_GOOGLE_EXPORTER:
         cloud_trace_exporter = CloudTraceSpanExporter(
@@ -49,7 +56,9 @@ def init_tracing(app, settings: Settings):
             client=BoundedTraceClient(),
         )
         provider = trace.get_tracer_provider()
-        provider.add_span_processor(create_span_processor(cloud_trace_exporter))
+        provider.add_span_processor(
+            RedactingSpanProcessor(create_span_processor(cloud_trace_exporter))
+        )
         original_lifespan = app.router.lifespan_context
 
         @asynccontextmanager
@@ -65,8 +74,18 @@ def init_tracing(app, settings: Settings):
         set_global_textmap(CloudTraceFormatPropagator())
 
     HTTPXClientInstrumentor().instrument()
-    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        paths={f"{settings.API_V1_STR}/chat/telemetry"},
+        max_bytes=1024,
+    )
+    if not internal:
+        app.add_middleware(
+            BrowserTimingReceiptMiddleware, secret_key=settings.SECRET_KEY
+        )
+    app.add_middleware(RequestLoggingMiddleware, internal=internal)
     FastAPIInstrumentor().instrument_app(app)
+    app.add_middleware(SensitiveRequestContextMiddleware)
 
     Psycopg2Instrumentor().instrument()
     AsyncPGInstrumentor().instrument()
@@ -102,13 +121,12 @@ def init_logging(settings: Settings):
         # structlog.processors.TimeStamper(fmt='iso'),
         structlog.processors.StackInfoRenderer(),
     ]
-    if settings.LOG_AS_JSON:
-        shared_processors.append(structlog.processors.format_exc_info)
-    else:
-        shared_processors.append(structlog.processors.ExceptionPrettyPrinter())
+    shared_processors.append(structlog.processors.format_exc_info)
+    shared_processors.append(redact_log_event)
 
     logconfig_dict = {
         "version": 1,
+        "filters": {"already_correlated": {"()": AlreadyCorrelatedExceptionFilter}},
         "formatters": {
             "console": {
                 "()": structlog.stdlib.ProcessorFormatter,
@@ -144,19 +162,18 @@ def init_logging(settings: Settings):
             "sqlalchemy": {"level": settings.SQLALCHEMY_LOGGING_LEVEL},
             "app": {"level": settings.LOGGING_LEVEL},
             "app.api.auth": {"level": settings.AUTH_LOGGING_LEVEL},
-            "app.api.works": {"level": "DEBUG"},
-            "app.crud.collection": {"level": "DEBUG"},
-            "app.services": {"level": "DEBUG"},
-            "app.services.recommendations": {"level": "DEBUG"},
+            "app.api.works": {"level": settings.LOGGING_LEVEL},
+            "app.crud.collection": {"level": settings.LOGGING_LEVEL},
+            "app.services": {"level": settings.LOGGING_LEVEL},
+            "app.services.recommendations": {"level": settings.LOGGING_LEVEL},
             "uvicorn.error": {
                 "handlers": ["default"],
                 "level": "INFO",
                 "propagate": False,
+                "filters": ["already_correlated"],
             },
             "uvicorn.access": {
-                "handlers": [
-                    "default" if settings.LOG_UVICORN_ACCESS else "uvicorn.access"
-                ],
+                "handlers": ["default"] if settings.LOG_UVICORN_ACCESS else [],
                 "level": "INFO",
                 "propagate": False,
             },
@@ -177,3 +194,10 @@ def init_logging(settings: Settings):
         cache_logger_on_first_use=True,
         context_class=dict,
     )
+
+
+class AlreadyCorrelatedExceptionFilter(logging.Filter):
+    def filter(self, record):
+        return not (
+            record.exc_info and getattr(record.exc_info[1], "_huey_logged", False)
+        )

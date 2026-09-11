@@ -75,29 +75,20 @@ app = FastAPI(
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     logger.warning(
-        f"The client sent invalid data!: {exc}\n\n{exc.errors()}",
-        request=request.url,
+        "Request validation failed",
+        error_count=len(exc.errors()),
     )
     return await request_validation_exception_handler(request, exc)
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    """Log the full traceback for any unhandled exception before returning a 500.
-
-    Without this, Cloud Run only records the bare 500 status with no stack
-    trace, making production failures effectively undebuggable.
-    """
-    logger.error(
-        "Unhandled exception",
-        error=str(exc),
-        path=request.url.path,
-        method=request.method,
-        exc_info=True,
-    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error"},
+        headers={"X-Request-ID": request.state.request_id}
+        if getattr(request.state, "request_id", None)
+        else None,
     )
 
 
@@ -115,7 +106,7 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Request-ID"],
+        expose_headers=["X-Request-ID", "X-Response-Timing-Token"],
     )
 
 init_tracing(app, settings)
