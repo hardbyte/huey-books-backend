@@ -127,7 +127,7 @@ class SlackNotificationService:
                 "Failed to queue Slack alert",
                 event_id=event_id,
                 slack_channel=slack_channel.value,
-                error=str(e),
+                error_type=type(e).__name__,
             )
             raise SlackNotificationError(f"Failed to queue Slack alert: {e}")
 
@@ -193,7 +193,7 @@ class SlackNotificationService:
                 "Failed to queue Slack alert (sync)",
                 event_id=event_id,
                 slack_channel=slack_channel.value,
-                error=str(e),
+                error_type=type(e).__name__,
             )
             raise SlackNotificationError(f"Failed to queue Slack alert: {e}")
 
@@ -231,7 +231,7 @@ class SlackNotificationService:
                 "Failed to send direct Slack alert",
                 event_id=event_id,
                 slack_channel=slack_channel.value,
-                error=str(e),
+                error_type=type(e).__name__,
             )
             return False
 
@@ -365,7 +365,9 @@ class SlackNotificationService:
             return False
         except Exception as e:
             logger.error(
-                "Unexpected error sending Slack message", channel=channel, error=str(e)
+                "Unexpected error sending Slack message",
+                channel=channel,
+                error_type=type(e).__name__,
             )
             return False
 
@@ -422,7 +424,7 @@ class SlackNotificationService:
         except Exception as e:
             logger.error(
                 "Error processing outbox Slack notification",
-                error=str(e),
+                error_type=type(e).__name__,
             )
             return False  # Trigger retry
 
