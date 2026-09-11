@@ -29,7 +29,6 @@ from app.api.dependencies.chat_session import (
 from app.api.dependencies.csrf import CSRFProtected
 from app.api.dependencies.security import (
     get_current_active_superuser_or_backend_service_account,
-    get_current_active_user,
     get_optional_authenticated_user,
 )
 from app.config import get_settings
@@ -611,7 +610,7 @@ async def list_sessions(
 
 @router.delete(
     "/admin/sessions/{session_id}",
-    dependencies=[Security(get_current_active_user)],
+    dependencies=[Security(get_current_active_superuser_or_backend_service_account)],
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_session(
