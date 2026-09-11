@@ -1,7 +1,7 @@
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
 from app.api.common.pagination import PaginatedQueryParams
@@ -20,13 +20,20 @@ def detail_fixture(session):
     marker = uuid4().hex
     author = Author(first_name="Fixture", last_name=marker)
     illustrator = Illustrator(first_name="Picture", last_name=marker)
+    foreign_author = Author(first_name="Foreign author", last_name=marker)
+    foreign_illustrator = Illustrator(first_name="Foreign picture", last_name=marker)
     booklist = BookList(
         name=marker, type=ListType.HUEY, sharing=ListSharingType.PUBLIC, slug=marker
     )
-    session.add_all([author, illustrator, booklist])
+    session.add_all(
+        [author, illustrator, foreign_author, foreign_illustrator, booklist]
+    )
     works, editions, labels, items = [], [], [], []
     for index in range(12):
-        work = Work(title=f"{marker} work {index}", authors=[author])
+        work = Work(
+            title=f"{marker} work {index}",
+            authors=[foreign_author if index == 1 else author],
+        )
         session.add(work)
         session.flush()
         labelset = LabelSet(
@@ -52,7 +59,7 @@ def detail_fixture(session):
                     edition_title=f"Edition {index}/{n}",
                     date_published=2000 + n,
                     cover_url="https://example.com/cover.jpg",
-                    illustrators=[illustrator],
+                    illustrators=[foreign_illustrator if index == 1 else illustrator],
                 )
                 for n in (0, 1)
             ]
@@ -82,6 +89,8 @@ def detail_fixture(session):
         "isbns": [[edition.isbn for edition in pair] for pair in editions],
         "illustrator": illustrator.id,
         "author": str(author.id),
+        "foreign_author": str(foreign_author.id),
+        "foreign_illustrator": foreign_illustrator.id,
         "items": items,
     }
     yield data
@@ -98,6 +107,8 @@ def detail_fixture(session):
     session.flush()
     session.delete(illustrator)
     session.delete(author)
+    session.delete(foreign_illustrator)
+    session.delete(foreign_author)
     session.commit()
 
 
@@ -199,8 +210,37 @@ def test_explicit_other_work_and_missing_isbn_fallback(session, detail_fixture):
         assert result.data[0].work_id == detail_fixture["works"][0]
         assert result.data[0].edition.work_id == str(detail_fixture["works"][1])
         assert result.data[0].edition.isbn == detail_fixture["isbns"][1][0]
+        assert str(result.data[0].work.authors[0].id) == detail_fixture["author"]
+        assert (
+            str(result.data[0].edition.authors[0].id)
+            == detail_fixture["foreign_author"]
+        )
+        assert (
+            result.data[0].edition.illustrators[0].id
+            == detail_fixture["foreign_illustrator"]
+        )
         assert result.data[1].edition.isbn == detail_fixture["isbns"][1][1]
         assert result.data[2].edition.isbn == detail_fixture["isbns"][2][1]
+
+
+@pytest.mark.parametrize("null_field", ["cover_url", "date_published"])
+def test_fallback_preserves_postgres_null_ordering(session, detail_fixture, null_field):
+    first = session.scalar(
+        select(Edition).where(Edition.isbn == detail_fixture["isbns"][0][0])
+    )
+    second = session.scalar(
+        select(Edition).where(Edition.isbn == detail_fixture["isbns"][0][1])
+    )
+    setattr(first, null_field, None)
+    detail_fixture["items"][0].info = None
+    session.commit()
+    expected_isbn = second.isbn if null_field == "cover_url" else first.isbn
+    with Session(session.bind) as cold:
+        booklist = booklist_repository.get_or_404(cold, detail_fixture["id"])
+        result = populate_booklist_object(
+            booklist, cold, PaginatedQueryParams(skip=0, limit=1), True
+        )
+        assert result.data[0].edition.isbn == expected_isbn
 
 
 @pytest.mark.parametrize("enriched", [False, True])
