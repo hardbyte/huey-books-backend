@@ -216,6 +216,15 @@ MV allows fallback ranking in one query rather than sequential retries against
 the live join graph. Measure latency with representative data and concurrency;
 the query shape alone does not guarantee a response time.
 
+### Candidate Hydration
+
+Candidate hydration belongs to `RecommendationRepository.load_ranked_candidates`.
+It preserves ranked order and loads the response's authors, hues, reading abilities
+and title fallback explicitly. Collection membership/counts and illustrators are
+not response fields and are not loaded. These query-local loader options do not
+change model defaults or the caller's transaction. Missing candidate records are
+skipped, allowing for a materialized view that has not yet refreshed.
+
 ### Refresh Strategy
 
 **Weekly**: `POST /v1/maintenance/refresh-recommendations` on the internal API,
