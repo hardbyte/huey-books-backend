@@ -19,6 +19,10 @@ from app.models import (
 )
 from app.models.collection import Collection
 from app.models.labelset import RecommendStatus
+from app.repositories.recommendation_repository import (
+    RecommendationCandidate,
+    recommendation_repository,
+)
 from app.schemas.recommendations import ReadingAbilityKey
 
 logger = get_logger()
@@ -173,36 +177,15 @@ async def get_recommended_editions_from_mv(
     if not mv_rows:
         return []
 
-    work_ids = [row.work_id for row in mv_rows]
-    labelset_ids = [row.labelset_id for row in mv_rows]
-    edition_isbns = [row.cover_edition_isbn for row in mv_rows]
-
-    # Reload ORM objects to preserve the (Work, Edition, LabelSet) tuple contract
-    # that downstream callers (get_recommendations_with_fallback) expect.
-    works_q = select(Work).where(Work.id.in_(work_ids))
-    editions_q = select(Edition).where(Edition.isbn.in_(edition_isbns))
-    labelsets_q = select(LabelSet).where(LabelSet.id.in_(labelset_ids))
-
-    works_by_id = {
-        row.id: row for row in (await asession.execute(works_q)).scalars().all()
-    }
-    editions_by_isbn = {
-        row.isbn: row for row in (await asession.execute(editions_q)).scalars().all()
-    }
-    labelsets_by_id = {
-        row.id: row for row in (await asession.execute(labelsets_q)).scalars().all()
-    }
-
-    # Reassemble in score order (mv_rows is already ordered)
-    result = []
-    for row in mv_rows:
-        work = works_by_id.get(row.work_id)
-        edition = editions_by_isbn.get(row.cover_edition_isbn)
-        labelset = labelsets_by_id.get(row.labelset_id)
-        if work is not None and edition is not None and labelset is not None:
-            result.append((work, edition, labelset))
-
-    return result
+    return await recommendation_repository.load_ranked_candidates(
+        asession,
+        [
+            RecommendationCandidate(
+                row.work_id, row.labelset_id, row.cover_edition_isbn
+            )
+            for row in mv_rows
+        ],
+    )
 
 
 async def get_recommended_labelset_query(
