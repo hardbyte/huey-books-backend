@@ -29,7 +29,7 @@ code, tests and release records before assuming a proposal is implemented or liv
   not migration input or sufficient evidence that a capability is deployed.
   Preserve normalized flow storage, original session attribution, content
   visibility and presentation/runtime separation through library migration.
-- README, seed/testing docs and trace-correlation guidance govern local
+- README, seed/testing docs and [observability architecture](observability-architecture.md) govern local
   verification and operations. Use isolated synthetic data and ordinary tokens;
   never deploy a testing authentication bypass or expose credentials in logs.
 

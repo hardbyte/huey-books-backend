@@ -160,7 +160,10 @@ def test_no_trace_fields_outside_request():
         ("/v1/chat/telemetry", False),
     ],
 )
-def test_chat_sampling_overrides_unsampled_remote_parent_only_for_chat(path, expected):
+@pytest.mark.parametrize("path_attribute", ["http.target", "url.path"])
+def test_chat_sampling_overrides_unsampled_remote_parent_only_for_chat(
+    path, expected, path_attribute
+):
     from app.observability.tracing import RequestSampler
 
     parent = trace.set_span_in_context(
@@ -171,12 +174,14 @@ def test_chat_sampling_overrides_unsampled_remote_parent_only_for_chat(path, exp
         )
     )
     decision = RequestSampler(1).should_sample(
-        parent, 42, "POST", trace.SpanKind.SERVER, {"http.target": path}
+        parent, 42, "POST", trace.SpanKind.SERVER, {path_attribute: path}
     )
     assert decision.decision.is_sampled() is expected
     assert (
         not RequestSampler(0)
-        .should_sample(parent, 42, "POST", trace.SpanKind.SERVER, {"http.target": path})
+        .should_sample(
+            parent, 42, "POST", trace.SpanKind.SERVER, {path_attribute: path}
+        )
         .decision.is_sampled()
     )
 
@@ -297,7 +302,16 @@ def test_parent_span_does_not_echo_database_error_values():
         provider.shutdown()
 
 
-def test_database_span_exception_without_attributes_is_safe():
+@pytest.mark.parametrize(
+    "database_attributes",
+    [
+        {"db.system": "postgresql"},
+        {"db.statement": "SELECT 1"},
+        {"db.system.name": "postgresql"},
+        {"db.query.text": "SELECT 1"},
+    ],
+)
+def test_database_span_exception_without_attributes_is_safe(database_attributes):
     from opentelemetry.sdk.trace import Event, ReadableSpan
 
     from app.observability.tracing import RedactingSpanProcessor
@@ -305,10 +319,39 @@ def test_database_span_exception_without_attributes_is_safe():
     processor = MagicMock()
     RedactingSpanProcessor(processor).on_end(
         ReadableSpan(
-            "query", attributes={"db.system": "postgresql"}, events=[Event("exception")]
+            "query", attributes=database_attributes, events=[Event("exception")]
         )
     )
     processor.on_end.assert_called_once()
+
+
+@pytest.mark.parametrize("attribute", ["db.system", "db.system.name"])
+def test_database_redaction_removes_driver_values_for_both_conventions(attribute):
+    from opentelemetry.sdk.trace import Event, ReadableSpan
+
+    from app.observability.tracing import RedactingSpanProcessor
+
+    processor = MagicMock()
+    RedactingSpanProcessor(processor).on_end(
+        ReadableSpan(
+            "query",
+            attributes={attribute: "postgresql"},
+            status=trace.Status(trace.StatusCode.ERROR, "private-value"),
+            events=[
+                Event(
+                    "exception",
+                    {
+                        "exception.type": "DriverError",
+                        "exception.message": "private-value",
+                        "exception.stacktrace": "private-value",
+                    },
+                )
+            ],
+        )
+    )
+    exported = processor.on_end.call_args.args[0]
+    assert "private-value" not in exported.to_json()
+    assert exported.events[0].attributes == {"exception.type": "DriverError"}
 
 
 @pytest.mark.parametrize("legacy", [True, False])
