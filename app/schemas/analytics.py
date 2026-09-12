@@ -22,5 +22,5 @@ class NodeAnalytics(BaseModel):
     visits: int
     interactions: int
     bounce_rate: float
-    average_time_spent: float
+    average_time_spent: float | None
     response_distribution: Dict[str, Any]

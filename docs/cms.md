@@ -816,7 +816,7 @@ Body: {
 
 ### Analytics Endpoints
 
-Analytics endpoints are defined in `app/api/analytics.py` and served under `/v1/cms/`. The service layer (`app/services/analytics.py`) contains SQL-backed flow metrics alongside synthetic content analytics and export responses. Synthetic responses are not evidence of usage or completed exports and must not power reporting. The [analytics architecture](analytics.md) defines their end-to-end removal, including callers and controls; the examples below are not a supported analytics contract.
+Analytics endpoints in `app/api/analytics.py` are staff/backend-only SQL-backed reporting. Product and operational measurement contracts are defined in [analytics architecture](analytics.md). School Insights and KPIs use their own bounded reporting interfaces.
 
 #### Flow Analytics
 
@@ -835,24 +835,11 @@ Response: {
   "engagement_metrics": {...}
 }
 
-# Get flow conversion funnel
-GET /v1/cms/flows/{flow_id}/analytics/funnel
-Query params:
-  - start_date: date (optional)
-  - end_date: date (optional)
-Response: {
-  "flow_id": "uuid",
-  "funnel_steps": [
-    {"step": "entry", "visitors": 1000, "completion_rate": 1.0},
-    {"step": "question_1", "visitors": 850, "completion_rate": 0.85},
-    {"step": "final", "visitors": 620, "completion_rate": 0.62}
-  ],
-  "overall_conversion_rate": 0.62,
-  "drop_off_points": {
-    "entry_to_question_1": 0.15,
-    "question_1_to_final": 0.27
-  }
-}
+# Get node reach for sessions started in the date range
+GET /v1/cms/flows/{flow_id}/analytics/node-reach
+# Returns total_sessions and nodes with node_id, node_type, sessions,
+# reached_fraction (null without sessions). Reach is bounded by the end date.
+# Nodes are not sequential funnel steps; branching paths are not drop-off.
 
 # Get flow performance over time
 GET /v1/cms/flows/{flow_id}/analytics/performance
@@ -900,70 +887,24 @@ GET /v1/cms/flows/{flow_id}/nodes/{node_id}/analytics
 Query params:
   - start_date: date (optional)
   - end_date: date (optional)
-# Returns: visits, interactions, bounce_rate, average_time_spent, response_distribution
+# Returns: visits, interactions, bounce_rate, response_distribution.
+# average_time_spent is null: node display duration is not measured.
 
-# Get node response analytics (placeholder -- returns hardcoded data)
-GET /v1/cms/flows/{flow_id}/nodes/{node_id}/analytics/responses
-
-# Get node path analytics (placeholder -- returns hardcoded data)
-GET /v1/cms/flows/{flow_id}/nodes/{node_id}/analytics/paths
 ```
 
-#### Content Analytics (placeholder implementations)
+#### Dashboard and session snapshot
 
-Content-level analytics endpoints exist but return simulated data. There is no content impression/interaction tracking table yet, so metrics are derived from content ID hashes rather than real usage data. Sentiment analysis values are hardcoded.
+`GET /v1/cms/analytics/dashboard` reports active flow/content counts, stored-active
+sessions, completion rate over sessions started in the last 30 days, and flows
+ordered by session count. Completion rate is unavailable (`null`) without sessions.
 
-```python
-GET /v1/cms/content/{content_id}/analytics          # Engagement metrics (params: start_date, end_date)
-GET /v1/cms/content/{content_id}/analytics/ab-test   # A/B test results (queries real variants, simulates stats)
-GET /v1/cms/content/{content_id}/analytics/usage     # Usage patterns (hardcoded distributions)
-```
+`GET /v1/cms/analytics/real-time` reports stored-active sessions and sessions started
+in the last hour. Stored status is not evidence of online presence. API response
+time and error rates come from [operational telemetry](observability-architecture.md),
+not conversation history timestamps.
 
-#### Dashboard & Real-time Analytics
-
-```python
-# Get dashboard overview metrics (real SQL queries)
-GET /v1/cms/analytics/dashboard
-# Returns: flow/content counts, active sessions, engagement rate (from completed/total),
-# top performing flows by completion rate, recent activity summary.
-# Note: "recent_activity.content_created_this_week" and "flows_published_this_week" are placeholders.
-
-# Get real-time system metrics (partially real)
-GET /v1/cms/analytics/real-time
-# Active sessions count and top active flows use real SQL queries.
-# The "real_time_events" array is simulated -- not backed by an actual event stream.
-
-# Get top-performing content
-GET /v1/cms/analytics/content/top
-Query params:
-  - limit: int (default: 10, max: 50)
-  - metric: engagement|impressions (default: engagement)
-  - days: int (default: 30, max: 90)
-
-# Get top-performing flows
-GET /v1/cms/analytics/flows/top
-Query params:
-  - limit: int (default: 5, max: 20)
-  - metric: completion_rate|sessions (default: completion_rate)
-  - days: int (default: 30, max: 90)
-```
-
-#### Export & Data Analysis (placeholder implementation)
-
-The export system has endpoints and response shapes defined but does not actually generate files. The service generates fake export IDs and simulated progress/status. These endpoints exist as scaffolding for a future background-job-based export system.
-
-```python
-GET  /v1/cms/analytics/export                      # General export (params: format, flow_ids, dates)
-GET  /v1/cms/analytics/exports/{export_id}/status   # Export status check
-POST /v1/cms/flows/{flow_id}/analytics/export       # Flow-specific export
-POST /v1/cms/content/analytics/export               # Content analytics export
-POST /v1/cms/analytics/export                       # General export (POST variant)
-
-# Placeholder endpoints that return hardcoded data (no service layer calls):
-GET  /v1/cms/analytics/summary                      # Filtered summary (params: dates, user_segment, age_range)
-GET  /v1/cms/analytics/sessions                     # Paginated sessions (params: limit, offset, flow_id, status)
-GET  /v1/cms/analytics/content                      # Filtered content analytics (params: content_type, tags)
-```
+`GET /v1/cms/analytics/flows/top` ranks SQL-backed flow metrics. Content impression,
+A/B significance and asynchronous analytics export capabilities are not available.
 
 ### Webhook Notifications
 

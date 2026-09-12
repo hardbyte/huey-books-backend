@@ -42,14 +42,13 @@ These are implementation entry points, not a claim that every endpoint is sound:
 | Request latency/errors | `app/middleware/request_logging.py`, `app/logging.py` | Route templates, request/trace correlation and traffic classes; do not use raw token-bearing paths |
 | Browser timing | `app/schemas/browser_timing.py`, `app/services/browser_timing.py`, receipt middleware; student `useResponseTiming` | Sampled observations, signed receipts, bounded per-instance deduplication; next-frame timing is not proof of painted pixels |
 | Educator Insights | `app/repositories/school_insights.py`, `app/services/school_insights.py`, `app/schemas/school_insights.py` | Fixed UTC start cohorts, latest available outcomes, current collection snapshot, suppression |
-| Flow analytics | `app/services/analytics.py`, `app/api/analytics.py` | Mixed real queries and simulated values; review each exposed field before using it |
+| Flow analytics | `app/services/analytics.py`, `app/api/analytics.py` | SQL-backed counts; session status is not online presence; node dwell/funnel semantics require care |
 | Business history/delivery | Domain tables, `app/models/event.py`, `app/models/event_outbox.py` | Editorial/audit events and notification delivery are not a generic page-view store |
 | Monitoring declarations | `hardbyte-iac` monitoring Terraform | Existing traffic-class SLOs, browser distributions and outbox monitoring |
 
-Legacy `AnalyticsService` still contains simulated response/error figures,
-hash-derived content engagement and export progress. The implementation audit
-must map those methods to routes, frontend consumers and tests before their
-removal is shipped. This design does not claim that runtime cleanup is complete.
+Synthetic content statistics, response/error figures and export progress have no
+supported reporting contract. The corresponding routes, implementations and
+fabricated-success tests are removed; educator Insights and KPIs remain separate.
 Retire an unsupported feature by removing its implementation, route, client
 controls/types and fabricated-success tests together; do not leave deprecated
 stubs. For a retained metric, implement its real source or an explicit unavailable
