@@ -299,6 +299,25 @@ are cleanup mechanisms, not a substitute for deletion/correction logic.
 
 ## Cost controls and cost per active customer
 
+### Staff overview
+
+The staff usage report uses bounded UTC session-start cohorts (up to 26 weeks),
+including a clearly marked current partial week. It counts stored MESSAGE history
+with `input_type=book_feedback`, or a rendered `book_list` message, as reaching
+recommendations, once per session. Both the staff report and educator Insights
+recognise these formats. A reading-ability carousel is not a recommendation.
+This does not prove a book impression, a nonempty result or a read.
+Outcomes are cut off at the report's observation time. Site counts are distinct
+within each week and independently across the whole report; weekly distincts
+must not be summed. Unattributed sessions remain visible.
+
+Historical production sessions do not reliably distinguish QA from students.
+This report therefore does not claim the stricter non-test monthly-active-site
+definition or provide its denominator for cost allocation. It is current retained
+history, not a durable analytics archive. The delivery card is a current database
+snapshot, including pending, failed/retrying and processing work, with disabled
+destinations separate and historical dead letters excluded.
+
 Protect the small Cloud SQL primary first. Measure extraction rows/bytes, query
 plans/buffers, database CPU/I/O, connection occupancy and concurrent chat latency.
 Cap analytics concurrency and abort on resource/latency guardrails agreed from

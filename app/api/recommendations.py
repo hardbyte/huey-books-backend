@@ -13,6 +13,7 @@ from app.repositories.event_repository import event_repository
 from app.repositories.school_repository import school_repository
 from app.schemas.labelset import LabelSetDetail
 from app.schemas.recommendations import HueyBook, HueyOutput, HueyRecommendationFilter
+from app.services.recommendation_timing import observe_recommendation
 from app.services.recommendations import get_recommended_editions_from_mv
 
 router = APIRouter(
@@ -94,11 +95,12 @@ async def get_recommendations_with_fallback(
         "boost_work_ids": boost_work_ids or [],
         "limit": limit + 5,
     }
-    logger.info("About to make a recommendation", query_parameters=query_parameters)
+    logger.debug("About to make a recommendation", query_parameters=query_parameters)
 
-    row_results = await get_recommended_editions_and_labelsets(
-        asession, **query_parameters
-    )
+    with observe_recommendation():
+        row_results = await get_recommended_editions_and_labelsets(
+            asession, **query_parameters
+        )
     logger.debug("Have got recommendation results from database")
 
     # Note the row_results are an iterable of (work, edition, labelset) orm instances
