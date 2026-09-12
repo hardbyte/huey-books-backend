@@ -9,17 +9,19 @@ from fastapi.testclient import TestClient
 from jose import jwt
 from pydantic import ValidationError
 
-from app.api import chat
+from app.api import browser_observations, chat
 from app.config import get_settings
 from app.db.session import get_async_session
 from app.middleware.browser_timing_receipt import BrowserTimingReceiptMiddleware
 from app.middleware.request_body_limit import RequestBodyLimitMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.models.cms import SessionStatus
-from app.schemas.browser_timing import BrowserTiming
-from app.services import browser_timing
+from app.schemas.browser_observations import TimingObservation as BrowserTiming
+from app.services import browser_observations as browser_timing
 
 TIMING = {
+    "event": "response_timing",
+    "schema_version": 1,
     "operation": "interact",
     "response_to_commit_ms": 2.5,
     "response_to_next_frame_ms": 16.5,
@@ -31,17 +33,20 @@ TIMING = {
 def client(monkeypatch):
     app = FastAPI()
     app.include_router(chat.router, prefix="/v1/chat")
+    app.include_router(browser_observations.router, prefix="/v1")
     app.add_middleware(
-        RequestBodyLimitMiddleware, paths={"/v1/chat/telemetry"}, max_bytes=1024
+        RequestBodyLimitMiddleware, paths={"/v1/observations"}, max_bytes=1024
     )
     app.add_middleware(BrowserTimingReceiptMiddleware, secret_key="test-signing-secret")
     app.add_middleware(RequestLoggingMiddleware)
     app.dependency_overrides[get_async_session] = lambda: AsyncMock()
     app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
-        SECRET_KEY="test-signing-secret"
+        SECRET_KEY="test-signing-secret", BROWSER_OBSERVATIONS_ENABLED=True
     )
     monkeypatch.setattr(
-        chat, "browser_timing_service", browser_timing.BrowserTimingService()
+        browser_observations,
+        "browser_observation_service",
+        browser_timing.BrowserObservationService(),
     )
     monkeypatch.setattr(
         chat.chat_repo,
@@ -76,18 +81,18 @@ def test_new_and_legacy_interactions_preserve_credentials_csrf_and_issue_receipt
         chat.chat_repo.get_session_by_token.call_args.kwargs["session_token"]
         == "test-session-token"
     )
-    receipt = response.headers["X-Response-Timing-Token"]
+    receipt = response.headers["X-Observation-Receipt"]
     claims = jwt.decode(
         receipt,
         "test-signing-secret",
         algorithms=["HS256"],
-        audience="browser-response-timing",
+        audience="browser-observation",
     )
     assert claims["sub"] == response.headers["X-Request-ID"]
     assert "test-session-token" not in json.dumps(claims)
     assert claims["operation"] == "interact"
     result = client.post(
-        "/v1/chat/telemetry", headers={"X-Response-Timing-Token": receipt}, json=TIMING
+        "/v1/observations", headers={"X-Observation-Receipt": receipt}, json=TIMING
     )
     assert result.status_code == 204
     assert (
@@ -107,6 +112,21 @@ def test_legacy_interaction_does_not_require_new_header(client):
         json={"input": "a choice", "input_type": "choice"},
     )
     assert response.status_code == 200, response.text
+
+
+def test_observation_collection_can_be_disabled(client, monkeypatch):
+    client.app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
+        SECRET_KEY="unused", BROWSER_OBSERVATIONS_ENABLED=False
+    )
+    record = AsyncMock()
+    monkeypatch.setattr(
+        browser_observations.browser_observation_service, "record", record
+    )
+    response = client.post(
+        "/v1/observations", headers={"X-Observation-Receipt": "unused"}, json=TIMING
+    )
+    assert response.status_code == 204
+    record.assert_not_called()
 
 
 def test_legacy_openapi_still_declares_path_credentials(client):
@@ -156,22 +176,22 @@ def test_unknown_session_is_not_authenticated_by_csrf_alone(client):
         json={"input": "hello", "input_type": "text"},
     )
     assert response.status_code == 404
-    assert "X-Response-Timing-Token" not in response.headers
+    assert "X-Observation-Receipt" not in response.headers
     chat.chat_runtime.process_interaction.assert_not_called()
 
 
 def test_telemetry_requires_signed_receipt_and_limits_body(client):
-    assert client.post("/v1/chat/telemetry", json=TIMING).status_code == 422
+    assert client.post("/v1/observations", json=TIMING).status_code == 422
     assert (
         client.post(
-            "/v1/chat/telemetry",
+            "/v1/observations",
             json=TIMING,
-            headers={"X-Response-Timing-Token": "invalid"},
+            headers={"X-Observation-Receipt": "invalid"},
         ).status_code
         == 401
     )
     response = client.post(
-        "/v1/chat/telemetry",
+        "/v1/observations",
         content=b" " * 1025,
         headers={"Content-Type": "application/json"},
     )
@@ -200,20 +220,20 @@ def test_receipts_expire_are_operation_bound_and_replays_are_bounded(monkeypatch
     monkeypatch.setattr(
         browser_timing.logger, "info", lambda event, **fields: log.append(fields)
     )
-    service = browser_timing.BrowserTimingService()
+    service = browser_timing.BrowserObservationService()
     secret = "secret"
     timing = BrowserTiming(**TIMING)
     receipt = browser_timing.create_timing_receipt(str(uuid4()), "interact", secret)
     service.record(timing, receipt, secret)
     service.record(timing, receipt, secret)
     assert len(log) == 1
-    with pytest.raises(browser_timing.InvalidTimingReceipt):
+    with pytest.raises(browser_timing.InvalidObservationReceipt):
         service.record(
             BrowserTiming(**{**TIMING, "operation": "start"}), receipt, secret
         )
     expired = jwt.encode(
         {
-            "aud": "browser-response-timing",
+            "aud": "browser-observation",
             "sub": str(uuid4()),
             "operation": "interact",
             "exp": 1,
@@ -221,9 +241,9 @@ def test_receipts_expire_are_operation_bound_and_replays_are_bounded(monkeypatch
         secret,
         algorithm="HS256",
     )
-    with pytest.raises(browser_timing.InvalidTimingReceipt):
+    with pytest.raises(browser_timing.InvalidObservationReceipt):
         service.record(timing, expired, secret)
-    with pytest.raises(browser_timing.InvalidTimingReceipt):
+    with pytest.raises(browser_timing.InvalidObservationReceipt):
         service.record(timing, receipt, "different-key")
     monkeypatch.setattr(browser_timing, "MAX_RECENT_RECEIPTS", 1)
     service.record(

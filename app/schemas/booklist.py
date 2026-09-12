@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field
+from pydantic import UUID4, AnyHttpUrl, BaseModel, ConfigDict, Field
 
 from app.models.booklist import ListSharingType, ListType
 from app.schemas import CaseInsensitiveStringEnum
@@ -38,8 +38,18 @@ class BookListItemDetail(BookListItemBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AlternativeBookCover(BaseModel):
+    url: AnyHttpUrl
+    source_isbn: str
+
+
 class BookListItemEnriched(BookListItemDetail):
     edition: EditionDetail
+    observation_receipt: str | None = None
+    alternative_cover: AlternativeBookCover | None = Field(
+        default=None,
+        description="Cover from another edition of the same work. Display 'Cover may differ' when using it.",
+    )
 
 
 class BookListItemCreateIn(BookListItemBase):

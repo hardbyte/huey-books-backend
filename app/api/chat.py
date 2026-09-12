@@ -7,7 +7,6 @@ from fastapi import (
     APIRouter,
     Body,
     Depends,
-    Header,
     HTTPException,
     Path,
     Query,
@@ -38,7 +37,6 @@ from app.models.campaign import Campaign
 from app.models.cms import ChatTheme, SessionStatus
 from app.models.school import School
 from app.repositories.chat_repository import chat_repo
-from app.schemas.browser_timing import BrowserTiming
 from app.schemas.cms import (
     ConversationHistoryResponse,
     InteractionCreate,
@@ -50,7 +48,6 @@ from app.schemas.cms import (
 )
 from app.schemas.pagination import Pagination
 from app.security.csrf import generate_csrf_token, set_secure_session_cookie
-from app.services.browser_timing import InvalidTimingReceipt, browser_timing_service
 from app.services.campaigns import CampaignContext, resolve_campaign
 from app.services.chat_runtime import FlowNotFoundError, chat_runtime
 
@@ -316,19 +313,6 @@ async def start_conversation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error starting conversation",
         )
-
-
-@router.post("/telemetry", status_code=status.HTTP_204_NO_CONTENT)
-async def record_browser_timing(
-    timing: BrowserTiming,
-    receipt: str = Header(alias="X-Response-Timing-Token", max_length=512),
-    settings=Depends(get_settings),
-) -> Response:
-    try:
-        browser_timing_service.record(timing, receipt, settings.SECRET_KEY)
-    except InvalidTimingReceipt:
-        raise HTTPException(status_code=401, detail="Invalid or expired timing receipt")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/session", response_model=SessionDetail)

@@ -72,6 +72,7 @@ class Settings(BaseSettings):
 
     SLACK_BOT_TOKEN: str = ""
     SLACK_NOTIFICATIONS_ENABLED: bool = True
+    BROWSER_OBSERVATIONS_ENABLED: bool = True
 
     HUEY_BOOKS_APP_URL: str = "https://hueybooks.com"
 

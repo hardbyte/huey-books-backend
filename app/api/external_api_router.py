@@ -7,6 +7,7 @@ from app.api.booklists import public_router as booklist_router_public
 from app.api.booklists import router as booklist_router
 from app.api.broadcast import public_router as broadcast_router_public
 from app.api.broadcast import router as broadcast_router
+from app.api.browser_observations import router as browser_observation_router
 from app.api.campaigns import router as campaign_router
 from app.api.chat import router as chat_router
 from app.api.chatbot_integrations import router as chatbot_integrations_router
@@ -42,6 +43,7 @@ from app.api.view_as import router as view_as_router
 from app.api.works import router as work_router
 
 api_router = APIRouter()
+api_router.include_router(browser_observation_router)
 
 api_router.include_router(analytics_router, prefix="/cms")
 api_router.include_router(auth_router)

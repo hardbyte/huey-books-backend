@@ -1,6 +1,6 @@
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.services.browser_timing import create_timing_receipt
+from app.services.browser_observations import create_timing_receipt
 
 
 class BrowserTimingReceiptMiddleware:
@@ -30,7 +30,7 @@ class BrowserTimingReceiptMiddleware:
                     )
                     message = dict(message)
                     message["headers"] = list(message.get("headers", [])) + [
-                        (b"x-response-timing-token", receipt.encode("ascii"))
+                        (b"x-observation-receipt", receipt.encode("ascii"))
                     ]
             await send(message)
 

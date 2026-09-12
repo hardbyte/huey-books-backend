@@ -106,7 +106,7 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Request-ID", "X-Response-Timing-Token"],
+        expose_headers=["X-Request-ID", "X-Observation-Receipt"],
     )
 
 init_tracing(app, settings)
