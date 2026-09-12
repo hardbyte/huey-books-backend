@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import text
 
 from app.repositories.kpi_usage import read_usage
+from app.repositories.school_insights import query_parameters, read_engagement
 
 
 @pytest.mark.asyncio
@@ -67,6 +68,31 @@ async def test_usage_cohort_distinct_sites_and_milestones(async_session):
     }
     assert [row["active_sites"] for row in rows[:-1]] == [1, 1]
     assert sum(row["sessions"] for row in rows[:-1]) == rows[-1]["sessions"]
+    legacy_id = uuid4()
+    await async_session.execute(text(
+        "INSERT INTO conversation_sessions VALUES (:id, :school, :started)"
+    ), {"id": legacy_id, "school": school, "started": start})
+    for content in [
+        '{"input_type":"carousel"}',
+        '{"messages":[{"type":"text","content":{"text":"book_list"}}]}',
+    ]:
+        await async_session.execute(text(
+            "INSERT INTO conversation_history VALUES (:id, 'MESSAGE', CAST(:content AS jsonb), :created)"
+        ), {"id": legacy_id, "content": content, "created": start})
+    assert (await read_usage(async_session, start, end))[-1]["reached_recommendations"] == 3
+    await async_session.execute(text(
+        """INSERT INTO conversation_history VALUES
+        (:id, 'MESSAGE', '{"messages":[{"type":"book_list","content":{"books":[]}}]}', :created)"""
+    ), {"id": legacy_id, "created": start})
+    assert (await read_usage(async_session, start, end))[-1]["reached_recommendations"] == 4
+    await async_session.execute(text(
+        "ALTER TABLE conversation_sessions ADD COLUMN state jsonb DEFAULT '{}'"
+    ))
+    await async_session.execute(text(
+        "ALTER TABLE conversation_history ADD COLUMN id uuid DEFAULT gen_random_uuid()"
+    ))
+    site_rows = await read_engagement(async_session, query_parameters(school, start, end))
+    assert sum(row["reached"] for row in site_rows) == 3
 
 
 @pytest.mark.asyncio

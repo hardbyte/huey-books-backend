@@ -16,7 +16,8 @@ async def read_usage(db: AsyncSession, start: datetime, end: datetime) -> list[d
                 SELECT DISTINCT h.session_id
                 FROM conversation_history h JOIN cohort c ON c.id = h.session_id
                 WHERE h.interaction_type = 'MESSAGE'
-                  AND h.content ->> 'input_type' = 'book_feedback'
+                  AND (h.content ->> 'input_type' = 'book_feedback'
+                       OR h.content @> '{"messages":[{"type":"book_list"}]}')
                   AND h.created_at < :end
             )
             SELECT date_trunc('week', c.started_at)::date AS week,

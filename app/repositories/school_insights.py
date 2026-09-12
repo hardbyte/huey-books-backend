@@ -43,9 +43,12 @@ def engagement_query() -> str:
         WITH cohort AS ({COHORT}), milestones AS (
             SELECT h.session_id,
                    bool_or(h.interaction_type = 'MESSAGE') AS reached,
-                   bool_or(h.interaction_type = 'INPUT') AS feedback
+                   bool_or(h.interaction_type = 'INPUT' AND
+                           h.content ->> 'input_type' = 'book_feedback') AS feedback
             FROM conversation_history h JOIN cohort s ON s.id = h.session_id
             WHERE h.content ->> 'input_type' = 'book_feedback'
+               OR (h.interaction_type = 'MESSAGE' AND
+                   h.content @> '{{"messages":[{{"type":"book_list"}}]}}')
             GROUP BY h.session_id
         ), latest_feedback AS (
             SELECT DISTINCT ON (h.session_id) h.session_id,

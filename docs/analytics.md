@@ -303,8 +303,10 @@ are cleanup mechanisms, not a substitute for deletion/correction logic.
 
 The staff usage report uses bounded UTC session-start cohorts (up to 26 weeks),
 including a clearly marked current partial week. It counts stored MESSAGE history
-with `input_type=book_feedback` as reaching the recommendation step, once per
-session. This does not prove a book impression, a nonempty result or a read.
+with `input_type=book_feedback`, or a rendered `book_list` message, as reaching
+recommendations, once per session. Both the staff report and educator Insights
+recognise these formats. A reading-ability carousel is not a recommendation.
+This does not prove a book impression, a nonempty result or a read.
 Outcomes are cut off at the report's observation time. Site counts are distinct
 within each week and independently across the whole report; weekly distincts
 must not be summed. Unattributed sessions remain visible.
