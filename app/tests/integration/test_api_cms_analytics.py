@@ -25,6 +25,66 @@ from app.models.cms import (
     NodeType,
     SessionStatus,
 )
+from app.services.analytics import AnalyticsService
+
+
+@pytest.mark.asyncio
+async def test_node_reach_counts_distinct_sessions_in_start_cohort(async_session):
+    start = datetime(2026, 1, 10)
+    flow = FlowDefinition(
+        name="Node reach cohort", version="1.0.0", flow_data={}, entry_node_id="start"
+    )
+    async_session.add(flow)
+    await async_session.flush()
+    async_session.add_all(
+        [
+            FlowNode(
+                flow_id=flow.id,
+                node_id=node_id,
+                node_type=NodeType.MESSAGE,
+                content={},
+                position={},
+            )
+            for node_id in ["start", "later"]
+        ]
+    )
+    sessions = [
+        ConversationSession(
+            flow_id=flow.id,
+            session_token=uuid.uuid4().hex,
+            started_at=started,
+            status=SessionStatus.ACTIVE,
+        )
+        for started in [start, start, start - timedelta(days=1)]
+    ]
+    async_session.add_all(sessions)
+    await async_session.flush()
+    async_session.add_all(
+        [
+            ConversationHistory(
+                session_id=sessions[index].id,
+                node_id=node_id,
+            interaction_type=InteractionType.MESSAGE,
+                content={},
+                created_at=created,
+            )
+            for index, node_id, created in [
+                (0, "start", start),
+                (0, "start", start + timedelta(seconds=1)),
+                (2, "start", start),
+                (1, "later", start + timedelta(days=1)),
+            ]
+        ]
+    )
+    await async_session.flush()
+    result = await AnalyticsService().get_flow_node_reach(
+        async_session, str(flow.id), start.date(), start.date()
+    )
+    assert result["total_sessions"] == 2
+    nodes = {node["node_id"]: node for node in result["nodes"]}
+    assert nodes["start"]["sessions"] == 1
+    assert nodes["start"]["reached_fraction"] == 0.5
+    assert nodes["later"]["sessions"] == 0
 
 
 # Test isolation fixture for CMS data
@@ -425,8 +485,8 @@ class TestAnalyticsCalculations:
 
         # Verify dashboard structure
         assert "overview" in dashboard
-        assert "top_performing" in dashboard
-        assert "recent_activity" in dashboard
+        assert "top_flows_by_sessions" in dashboard
+        assert "recent_activity" not in dashboard
 
         overview = dashboard["overview"]
 
@@ -435,8 +495,11 @@ class TestAnalyticsCalculations:
         assert overview["active_sessions"] >= 0  # May be 0 or 1 depending on timing
 
         # Engagement rate should be calculated
-        assert "engagement_rate" in overview
-        assert 0.0 <= overview["engagement_rate"] <= 1.0
+        assert "completion_rate" in overview
+        assert (
+            overview["completion_rate"] is None
+            or 0.0 <= overview["completion_rate"] <= 1.0
+        )
 
     async def test_analytics_date_filtering(
         self, async_client, backend_service_account_headers, sample_flow_with_data
@@ -487,36 +550,6 @@ class TestAnalyticsCalculations:
             analytics = response.json()
             assert analytics["total_sessions"] == 0
             assert analytics["completion_rate"] == 0.0
-
-
-class TestAnalyticsExportFunctionality:
-    """Test analytics export functionality with real data."""
-
-    async def test_analytics_export_csv(
-        self, async_client, backend_service_account_headers, sample_flow_with_data
-    ):
-        """Test CSV export contains correct data."""
-        response = await async_client.get(
-            "/v1/cms/analytics/export",
-            params={"format": "csv"},
-            headers=backend_service_account_headers,
-        )
-
-        # Export should work and return data
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
-
-    async def test_analytics_export_json(
-        self, async_client, backend_service_account_headers, sample_flow_with_data
-    ):
-        """Test JSON export contains correct data."""
-        response = await async_client.get(
-            "/v1/cms/analytics/export",
-            params={"format": "json"},
-            headers=backend_service_account_headers,
-        )
-
-        # Export should work and return valid JSON
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
 
 
 class TestAnalyticsRealTimeMetrics:

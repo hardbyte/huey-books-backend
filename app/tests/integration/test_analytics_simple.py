@@ -102,5 +102,5 @@ class TestSimpleAnalytics:
 
         # Should have basic structure
         assert "overview" in dashboard
-        assert "top_performing" in dashboard
-        assert "recent_activity" in dashboard
+        assert "top_flows_by_sessions" in dashboard
+        assert "recent_activity" not in dashboard

@@ -79,8 +79,6 @@ class TestAnalyticsService:
                 return_value={
                     "views": 50,
                     "interactions": 35,
-                    "response_times": [1.5, 2.0, 1.8],
-                    "avg_response_time": 1.77,
                 }
             ),
         ):
@@ -94,6 +92,8 @@ class TestAnalyticsService:
             assert result.node_id == node_id
             assert result.visits == 50
             assert result.interactions == 35
+            assert result.average_time_spent is None
+            assert "avg_response_time_seconds" not in result.response_distribution
             assert abs(result.bounce_rate - 0.3) < 0.01  # 1 - (35/50)
 
     async def test_get_flow_analytics_with_date_range(self, analytics_service, mock_db):
@@ -176,8 +176,6 @@ class TestAnalyticsService:
                 return_value={
                     "views": 0,
                     "interactions": 0,
-                    "response_times": [],
-                    "avg_response_time": None,
                 }
             ),
         ):

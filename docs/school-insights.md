@@ -51,7 +51,7 @@ Release gate: after old API revisions drain, run `uv run python scripts/backfill
 
 Before release, benchmark the largest staging cohort/collection under concurrent student traffic and complete an authenticated educator walkthrough with the matching backend. The local browser fixtures demonstrate populated, empty, suppressed and denied states; they are synthetic, not school activity measurements.
 
-See [analytics-proposal.md](analytics-proposal.md) for application-wide metric
+See [analytics.md](analytics.md) for application-wide metric
 definitions and the separately gated daily-aggregate/DuckDB design, and
 [observability-architecture.md](observability-architecture.md) for OTel signals and
 Google Cloud operations. Neither changes this endpoint's cohort/privacy contract.
