@@ -521,58 +521,6 @@ class TestAnalyticsWorkflow:
             # Unexpected error, should fail
             assert flow_analytics_response.status_code == status.HTTP_200_OK
 
-    async def test_analytics_export_workflow(
-        self, async_client, backend_service_account_headers
-    ):
-        """Test analytics export workflow."""
-        # Create some data first
-        flow_data = {
-            "name": "Export Test Flow",
-            "description": "Flow for export testing",
-            "version": "1.0.0",
-            "flow_data": {"nodes": [], "connections": []},
-            "entry_node_id": "start",
-        }
-
-        flow_response = await async_client.post(
-            "/v1/cms/flows", json=flow_data, headers=backend_service_account_headers
-        )
-        flow_id = flow_response.json()["id"]
-
-        # Request analytics export
-        from datetime import date, timedelta
-
-        export_request = {
-            "export_type": "flow_analytics",
-            "flow_id": flow_id,
-            "format": "json",
-            "date_range": {
-                "start_date": (date.today() - timedelta(days=30)).isoformat(),
-                "end_date": date.today().isoformat(),
-            },
-        }
-
-        export_response = await async_client.post(
-            "/v1/cms/analytics/export",
-            json=export_request,
-            headers=backend_service_account_headers,
-        )
-        # Allow analytics service to be optional for testing workflows
-        if export_response.status_code == status.HTTP_200_OK:
-            export_data = export_response.json()
-            # Check for actual response structure (export_id, download_url, etc.)
-            assert any(
-                field in export_data
-                for field in ["export_result", "export_id", "download_url"]
-            )
-        elif export_response.status_code == status.HTTP_404_NOT_FOUND:
-            # Analytics service not fully implemented, skip but don't fail
-            print("   ⚠️ Analytics export service not implemented, skipping export test")
-        else:
-            # Unexpected error, should fail
-            assert export_response.status_code == status.HTTP_200_OK
-
-
 class TestErrorRecoveryWorkflows:
     """Test error scenarios and recovery workflows."""
 

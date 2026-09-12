@@ -231,13 +231,5 @@ class TestNodeAnalyticsShortcuts:
         assert data.get("visits") == 0
         assert data.get("interactions") == 0
 
-        # This is the key test - should be 0.0 with no data, not 30.0
-        average_time = data.get("average_time_spent")
-        if average_time == 30.0:
-            pytest.fail(
-                f"average_time_spent is {average_time} with no conversation data. "
-                "This indicates hardcoded shortcut. Should be 0.0"
-            )
-
-        assert average_time == 0.0, f"Expected 0.0 with no data, got {average_time}"
+        assert data["average_time_spent"] is None
         assert data.get("bounce_rate") == 0.0

@@ -149,10 +149,8 @@ class TestCMSAuthentication:
         response = await async_client.get(f"/v1/cms/flows/{fake_id}/analytics")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-        # Try to export analytics without authentication
-        export_request = {"export_type": "flow_analytics", "format": "json"}
-        response = await async_client.post(
-            "/v1/cms/analytics/export", json=export_request
+        response = await async_client.get(
+            f"/v1/cms/flows/{fake_id}/analytics/node-reach"
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -369,17 +367,11 @@ class TestAuthorizationLevels:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        # Export functionality (might require higher privileges)
-        export_request = {"export_type": "content_analytics", "format": "json"}
-
-        response = await async_client.post(
-            "/v1/cms/analytics/export",
-            json=export_request,
+        response = await async_client.get(
+            "/v1/cms/analytics/real-time",
             headers=backend_service_account_headers,
         )
-        # Should not be unauthorized - might be 200 or other business logic response
-        assert response.status_code != status.HTTP_401_UNAUTHORIZED
-        assert response.status_code != status.HTTP_403_FORBIDDEN
+        assert response.status_code == status.HTTP_200_OK
 
 
 class TestSecurityBoundaries:
