@@ -2,7 +2,7 @@
 
 Status: proposed target architecture, with the implemented baseline identified
 below. Deployment, pricing measurements and rollout evidence belong in the change
-record. [Product analytics](analytics-proposal.md) owns business definitions,
+record. [Product analytics](analytics.md) owns business definitions,
 privacy, retention and optional retained reporting; this document owns operational
 signals, instrumentation and delivery.
 

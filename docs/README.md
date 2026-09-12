@@ -8,7 +8,7 @@ test totals or rollout evidence into architecture descriptions.
 | Where does application logic and data access belong? | [Service architecture](architecture-service-layer.md), [architecture alignment](architecture-alignment.md) |
 | What changes are proposals rather than requirements? | [Architecture roadmap](architecture-roadmap.md) |
 | How should tracing, metrics and logs work? | [Observability architecture](observability-architecture.md): implemented baseline and proposed OTel/Google target |
-| What do usage/UX/business metrics mean, and what may we retain? | [Analytics proposal](analytics-proposal.md) |
+| What do usage/UX/business metrics mean, and what may we retain? | [Analytics architecture](analytics.md) |
 | What does the educator dashboard actually promise? | [School Insights](school-insights.md) |
 | Is session replay the same as distributed tracing? | [Session replay](design-session-replay.md): separate sensitive support feature with capture gaps |
 | Who owns sites, education records and billing? | [Target schema](organisation-target-schema.md), [entitlements](organisation-entitlements.md), [billing](school-billing.md) |
