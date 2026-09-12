@@ -34,7 +34,12 @@ async def test_dashboard_uses_sql_boolean_filters_and_real_completion(
     results[1].scalar.return_value = 3
     results[2].scalar.return_value = 4
     results[3].first.return_value = SimpleNamespace(total=total, completed=completed)
-    results[4].fetchall.return_value = []
+    top_flows = (
+        [SimpleNamespace(id="flow", name="Popular flow", sessions=2, completed=2)]
+        if total
+        else []
+    )
+    results[4].fetchall.return_value = top_flows
     db = SimpleNamespace(execute=AsyncMock(side_effect=results))
     dashboard = await AnalyticsService().get_dashboard_overview(db)
     assert dashboard == {
@@ -44,7 +49,16 @@ async def test_dashboard_uses_sql_boolean_filters_and_real_completion(
             "active_sessions": 4,
             "completion_rate": expected,
         },
-        "top_flows_by_sessions": [],
+        "top_flows_by_sessions": [
+            {
+                "flow_id": "flow",
+                "name": "Popular flow",
+                "sessions": 2,
+                "completion_rate": 1.0,
+            }
+        ]
+        if total
+        else [],
     }
     for index in (0, 1, 4):
         sql = str(

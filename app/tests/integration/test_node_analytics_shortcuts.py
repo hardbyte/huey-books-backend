@@ -56,8 +56,7 @@ class TestNodeAnalyticsShortcuts:
         self, client, backend_service_account_headers
     ):
         """
-        Test that average_time_spent is calculated from actual interaction timestamps,
-        not hardcoded to 30.0 seconds.
+        Test that unavailable node timing is not fabricated as 30 seconds.
         """
 
         # Create a flow with a test node

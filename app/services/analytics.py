@@ -636,7 +636,6 @@ class AnalyticsService:
         if engagement_stats and engagement_stats.total > 0:
             completion_rate = engagement_stats.completed / engagement_stats.total
 
-        # Get top performing flows (simplified)
         top_flows_query = (
             select(
                 FlowDefinition.id,
@@ -666,16 +665,13 @@ class AnalyticsService:
         top_flows_result = await db.execute(top_flows_query)
         top_flows_data = top_flows_result.fetchall()
 
-        top_performing = []
+        top_flows_by_sessions = []
         for flow in top_flows_data:
-            completion_rate = (
-                flow.completed / flow.sessions if flow.sessions > 0 else 0.0
-            )
-            top_performing.append(
+            top_flows_by_sessions.append(
                 {
                     "flow_id": str(flow.id),
                     "name": flow.name,
-                    "completion_rate": completion_rate,
+                    "completion_rate": flow.completed / flow.sessions,
                     "sessions": flow.sessions,
                 }
             )
@@ -687,7 +683,7 @@ class AnalyticsService:
                 "active_sessions": active_sessions,
                 "completion_rate": completion_rate,
             },
-            "top_flows_by_sessions": top_performing,
+            "top_flows_by_sessions": top_flows_by_sessions,
         }
 
     async def get_real_time_metrics(self, db: AsyncSession) -> dict:

@@ -42,7 +42,7 @@ These are implementation entry points, not a claim that every endpoint is sound:
 | Request latency/errors | `app/middleware/request_logging.py`, `app/logging.py` | Route templates, request/trace correlation and traffic classes; do not use raw token-bearing paths |
 | Browser timing | `app/schemas/browser_timing.py`, `app/services/browser_timing.py`, receipt middleware; student `useResponseTiming` | Sampled observations, signed receipts, bounded per-instance deduplication; next-frame timing is not proof of painted pixels |
 | Educator Insights | `app/repositories/school_insights.py`, `app/services/school_insights.py`, `app/schemas/school_insights.py` | Fixed UTC start cohorts, latest available outcomes, current collection snapshot, suppression |
-| Flow analytics | `app/services/analytics.py`, `app/api/analytics.py` | SQL-backed counts; session status is not online presence; node dwell/funnel semantics require care |
+| Flow analytics | `app/services/analytics.py`, `app/api/analytics.py` | SQL-backed counts; session status is not online presence; node reach uses a session-start cohort, and node dwell time is unavailable |
 | Business history/delivery | Domain tables, `app/models/event.py`, `app/models/event_outbox.py` | Editorial/audit events and notification delivery are not a generic page-view store |
 | Monitoring declarations | `hardbyte-iac` monitoring Terraform | Existing traffic-class SLOs, browser distributions and outbox monitoring |
 
