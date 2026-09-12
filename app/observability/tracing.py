@@ -34,7 +34,10 @@ class RequestSampler(Sampler):
     ) -> SamplingResult:
         sampler = self.other
         if kind == trace.SpanKind.SERVER:
-            path = (attributes or {}).get("http.target", "").split("?", 1)[0]
+            attributes = attributes or {}
+            path = attributes.get("url.path", attributes.get("http.target", "")).split(
+                "?", 1
+            )[0]
             if path in ("/v1/version", "/v1/chat/telemetry"):
                 sampler = ALWAYS_OFF
             elif path.startswith("/v1/chat/") and not path.startswith(
@@ -62,6 +65,8 @@ class RedactingSpanProcessor(SpanProcessor):
         is_database = bool(
             (span.attributes or {}).get("db.system")
             or (span.attributes or {}).get("db.statement")
+            or (span.attributes or {}).get("db.system.name")
+            or (span.attributes or {}).get("db.query.text")
         )
         has_database_error = any(
             is_database_exception_type(

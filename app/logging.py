@@ -16,7 +16,6 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.propagate import set_global_textmap
-from opentelemetry.propagators.cloud_trace_propagator import CloudTraceFormatPropagator
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
@@ -26,6 +25,7 @@ from app.middleware.request_body_limit import RequestBodyLimitMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.middleware.sensitive_request_context import SensitiveRequestContextMiddleware
 from app.observability.privacy import redact_database_exception, redact_log_event
+from app.observability.propagation import TraceContextPropagator
 from app.observability.tracing import RedactingSpanProcessor, RequestSampler
 
 
@@ -47,6 +47,7 @@ def create_span_processor(exporter: SpanExporter) -> BatchSpanProcessor:
 
 
 def init_tracing(app, settings: Settings, *, internal: bool = False):
+    set_global_textmap(TraceContextPropagator())
     trace.set_tracer_provider(
         TracerProvider(sampler=RequestSampler(settings.CHAT_TRACE_SAMPLE_RATE))
     )
@@ -71,8 +72,6 @@ def init_tracing(app, settings: Settings, *, internal: bool = False):
                 await asyncio.to_thread(provider.shutdown)
 
         app.router.lifespan_context = tracing_lifespan
-        # Set the X-Cloud-Trace-Context header
-        set_global_textmap(CloudTraceFormatPropagator())
 
     SQLAlchemyInstrumentor().instrument()
     HTTPXClientInstrumentor().instrument()
