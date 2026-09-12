@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -45,3 +45,29 @@ class TrendPoint(BaseModel):
 class KpiTrends(BaseModel):
     weeks: int
     points: list[TrendPoint]
+
+
+class UsageCounts(BaseModel):
+    sessions: int
+    reached_recommendations: int
+    active_sites: int
+    unattributed_sessions: int
+
+
+class UsageWeek(UsageCounts):
+    week: date
+    partial: bool
+
+
+class UsageReport(BaseModel):
+    start: datetime
+    end: datetime
+    totals: UsageCounts
+    points: list[UsageWeek]
+
+
+class DeliverySnapshot(BaseModel):
+    observed_at: datetime
+    pending_count: int
+    disabled_count: int
+    oldest_pending_age_seconds: float

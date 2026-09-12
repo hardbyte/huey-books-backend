@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -19,13 +20,16 @@ from app.models.school import School, SchoolState
 from app.models.student import Student
 from app.models.user import User
 from app.schemas.kpis import (
+    DeliverySnapshot,
     EngagementSummary,
     KpiOverview,
     KpiTrends,
     SchoolFunnel,
     TrendPoint,
+    UsageReport,
     UserCounts,
 )
+from app.services.kpi_usage import get_delivery_snapshot, get_usage
 
 logger = get_logger()
 
@@ -33,6 +37,31 @@ router = APIRouter(
     tags=["KPIs"],
     dependencies=[Depends(get_current_active_superuser_or_backend_service_account)],
 )
+
+
+@router.get("/kpis/usage", response_model=UsageReport)
+async def get_kpi_usage(
+    response: Response,
+    weeks: int = Query(12, ge=1, le=26),
+    session: AsyncSession = Depends(get_async_session),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return await get_usage(session, weeks)
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "57014":
+            raise HTTPException(
+                503, "Usage report took too long. Please try again later."
+            ) from exc
+        raise
+
+
+@router.get("/kpis/delivery", response_model=DeliverySnapshot)
+async def get_kpi_delivery(
+    response: Response, session: AsyncSession = Depends(get_async_session)
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return await get_delivery_snapshot(session)
 
 
 def _enum_value(member) -> str:
