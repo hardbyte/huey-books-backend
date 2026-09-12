@@ -40,6 +40,12 @@ The API is designed for use by Library Management Systems, Wriveted staff (via s
 | **Chatflows** | Flow-based conversation engine powering Huey the Bookbot |
 | **CMS** | Content management for chatflow questions, jokes, facts, messages |
 
+## Engineering documentation
+
+Start with [the documentation index](docs/README.md). Instrumentation and reporting
+are covered by [observability architecture](docs/observability-architecture.md)
+and the [analytics proposal](docs/analytics-proposal.md).
+
 ## Data
 
 The SQLAlchemy models at [`app/models/`](https://github.com/Wriveted/wriveted-api/tree/main/app/models) are the best starting point for understanding the schema. A [scrubbed dataset](https://storage.googleapis.com/wriveted-huey-media/data/huey-books-scrubed-postgres_localhost-2024_07_13_18_14_43-dump.sql) of labelled book data (fits on a free Supabase instance) is available for development.

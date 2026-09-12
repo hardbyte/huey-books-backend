@@ -275,7 +275,7 @@ graph TD
 ### 1. Application Events (Original)
 
 - **Files**: `app/crud/event.py`, `app/services/events.py`, `app/models/event.py`
-- **Purpose**: User activity tracking, monitoring, Slack alerts
+- **Purpose**: Editorial/domain activity and notifications; not high-volume telemetry
 - **Storage**: `events` table
 - **Delivery**: Direct Slack API calls, or via Event Outbox for reliability
 
@@ -295,13 +295,19 @@ The `iterate_over` option creates one event per item in a list variable, useful 
 ### 3. Event Outbox (Reliable Delivery)
 
 - **Files**: `app/models/event_outbox.py`, `app/services/event_outbox_service.py`
-- **Purpose**: Guaranteed delivery to external systems with retry logic
+- **Purpose**: Durable delivery attempts with retries and dead-letter handling; consumers must tolerate duplicates
 - **Storage**: `event_outbox` table with status tracking, retry count, dead letter queue
 - **Delivery**: Background processing with exponential backoff
 - **Channels**: Webhook, Slack, email, internal processing
 - **Usage**: Active in CMS, Flow, and Conversation domains
 
 The Event Outbox writes happen within the same database transaction as business data, ensuring atomicity. NOTIFY/LISTEN is preserved for low-latency dashboard updates where durability is not critical.
+
+Operational instrumentation uses OpenTelemetry; see the
+[observability design](observability-architecture.md). Product observations and
+retained reporting follow the [analytics proposal](analytics-proposal.md).
+Neither telemetry nor sampled traces replace transactional facts. Session replay
+is a separate PostgreSQL support feature, not Cloud Trace data.
 
 ---
 

@@ -816,7 +816,7 @@ Body: {
 
 ### Analytics Endpoints
 
-All analytics endpoints are defined in `app/api/analytics.py` and served under `/v1/cms/`. The service layer (`app/services/analytics.py`) implements real SQL queries for flow-level and dashboard metrics. Content-level analytics (A/B testing, usage patterns) and the export system return placeholder data -- the endpoints and response shapes are stable but the underlying calculations use simulated values.
+Analytics endpoints are defined in `app/api/analytics.py` and served under `/v1/cms/`. The service layer (`app/services/analytics.py`) contains SQL-backed flow metrics alongside synthetic content analytics and export responses. Synthetic responses are not evidence of usage or completed exports and must not power reporting. The [analytics proposal](analytics-proposal.md) defines their end-to-end removal, including callers and controls; the examples below are not a supported analytics contract.
 
 #### Flow Analytics
 

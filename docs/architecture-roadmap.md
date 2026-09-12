@@ -69,7 +69,7 @@ Migrating `app/crud/user.py` requires preserving:
 3. Migrate authentication-related consumers carefully (security-critical code)
 4. Migrate write operations and profile management
 5. Update test fixtures last (they commit explicitly for HTTP request isolation)
-6. Keep `crud/user.py` as deprecated delegation layer during transition
+6. Remove the old implementation and imports once callers migrate; do not retain a deprecated delegation layer
 
 **Key risk**: The joined-table inheritance model means repository methods must handle type-specific queries (e.g., "get all students for school X") alongside generic user queries.
 
@@ -90,7 +90,7 @@ As domains complete their CRUD-to-repository migration, update corresponding API
 ### Current Architecture
 
 Three event systems serve different purposes (see [architecture-service-layer.md](architecture-service-layer.md#event-systems)):
-1. Application events (`events` table) -- user activity, monitoring
+1. Application events (`events` table) -- editorial and domain activity, not a general telemetry sink
 2. Chat flow events (NOTIFY/LISTEN) -- real-time dashboard updates
 3. Event Outbox (`event_outbox` table) -- reliable delivery with retry
 
@@ -105,6 +105,12 @@ Three event systems serve different purposes (see [architecture-service-layer.md
 **Slack delivery**: `handle_event_to_slack_alert` in `app/services/events.py`
 already delegates to reliable delivery through the event outbox. Preserve that
 transaction boundary when migrating remaining callers.
+
+**Observability and analytics**: Use the [OTel-first observability design](observability-architecture.md)
+for operational signals and the [analytics proposal](analytics-proposal.md) for
+product metric definitions and optional retained reporting. Database-backed
+session replay remains a separate support feature. Do not route browser views
+through the business outbox or treat sampled traces as a business ledger.
 
 ## Testing Strategy
 

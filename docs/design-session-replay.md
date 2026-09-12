@@ -1,104 +1,67 @@
-# Session Replay / Execution Tracing
+# Session replay
 
-## Overview
+Session replay is a PostgreSQL-backed support feature, separate from distributed
+OpenTelemetry tracing. It can contain sensitive node state even after masking.
+Do not export that state to Cloud Trace, diagnostic logs or product analytics.
+Operational signals follow [observability architecture](observability-architecture.md).
 
-The execution tracing system captures detailed node-by-node execution data for conversation sessions. This enables debugging ("why did user X get this response?"), QA testing, analytics, and support investigations.
+## Implemented paths and gaps
 
-## Implementation Status
+| Path | Implementation |
+| --- | --- |
+| Models | `FlowExecutionStep`, `TraceAccessAudit` and session tracing fields in `app/models/cms.py` |
+| Direct persistence / retrieval | `ExecutionTraceService.record_step` and read methods in `app/services/execution_trace.py` |
+| Runtime capture | `chat_runtime.py` calls `record_step_async` when enabled; its buffer flush only logs intent and clears the buffer, without persisting or enqueueing work |
+| Masking | `app/services/pii_masker.py` masks state in the direct write path; this is not an anonymity guarantee |
+| Cleanup | `app/services/trace_cleanup.py` has batched trace/audit deletion methods; no mounted cleanup route or production invocation is established by this implementation |
+| Viewer interfaces | Trace endpoints in `app/api/cms.py`, under the staff/backend-only CMS router |
 
-| Component | Status | Location |
-|-----------|--------|----------|
-| `FlowExecutionStep` model | Implemented | `app/models/cms.py` |
-| `TraceAccessAudit` model | Implemented | `app/models/cms.py` |
-| `ExecutionTraceService` | Implemented | `app/services/execution_trace.py` (535 lines) |
-| `TraceAuditService` | Implemented | `app/services/execution_trace.py` |
-| `PIIMasker` | Implemented | `app/services/pii_masker.py` (204 lines) |
-| `TraceCleanupService` | Implemented | `app/services/trace_cleanup.py` (176 lines) |
-| Execution trace schemas | Implemented | `app/schemas/execution_trace.py` |
-| API endpoints | Implemented | `app/api/cms.py` (5 endpoints) |
-| Chat runtime integration | Implemented | `chat_runtime.py` records traces when enabled |
-| ACL access control on traces | Not implemented | `FlowExecutionStep` has no `__acl__` method |
-| Async trace queueing | Partial | Buffered in-process, not yet via Cloud Tasks |
+The models, direct-write tests and viewer do not establish an end-to-end runtime
+recording implementation. Do not describe buffered capture or scheduled expiry
+as operational without verifying those paths.
 
-## Data Model
+## Data and access
 
-### `flow_execution_steps` table
+Execution steps associate a session with node/step identifiers, before/after state,
+execution details, connection decisions, timings and errors. Trace access audit
+records can contain the staff user, session, IP address and user agent. These are
+sensitive support records with different purposes from anonymous UX observations.
 
-Each row captures one node visit during a session:
+The CMS router requires staff/backend authority. Some endpoints also take the
+current actor to record user access; absence of model-level ACLs does not mean
+the router is public. Service-account reads need their own audit policy. Giving
+educators access would require a separate school-scoped authorization design.
 
-- `session_id` (FK to `conversation_sessions`)
-- `node_id`, `node_type` -- which node was visited
-- `step_number` -- execution sequence within the session
-- `state_before`, `state_after` (JSONB) -- PII-masked state snapshots
-- `execution_details` (JSONB) -- node-type-specific details (see typed schemas below)
-- `connection_type`, `next_node_id` -- which connection was taken to the next node
-- `started_at`, `completed_at`, `duration_ms` -- timing
-- `error_message`, `error_details` -- error tracking
+Current mounted paths, relative to `/v1/cms`:
 
-Indexes: session+step_number composite, session+started_at partial (completed only), session+node_id partial (errors only).
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/flows/{flow_id}/sessions` | Session listing |
+| GET | `/sessions/{session_id}/trace` | Stored execution steps; user trace reads create audit entries |
+| GET / POST | `/flows/{flow_id}/tracing` | Tracing configuration |
+| GET | `/flows/{flow_id}/trace-stats` | Stored trace aggregates |
+| GET | `/trace-storage` | Storage statistics |
 
-### `trace_access_audit` table
+The schema distinguishes minimal, standard and verbose levels, but the current
+`get_trace_level` returns `STANDARD`. Test configuration through capture before
+claiming another level affects stored data. Likewise, `retention_days` and cleanup
+methods do not establish enforced expiry: no `/internal/tasks/cleanup-traces`
+route is mounted. Scheduling, failure monitoring and deletion verification remain
+necessary before relying on a retention policy.
 
-Tracks who accesses trace data: `session_id`, `accessed_by` (user FK), `access_type`, `ip_address`, `user_agent`, `data_accessed` (JSONB).
+## Completion or removal decision
 
-### Session fields
+Replay is not required for OTel tracing or aggregate School Insights. Decide its
+support value separately rather than implementing it as part of an exporter change.
 
-`conversation_sessions` has `trace_enabled` (boolean) and `trace_level` (varchar: `minimal`, `standard`, `verbose`). These are set at session start based on the flow's tracing configuration.
+- If retained, replace the non-persisting buffer path with bounded, privacy-tested
+  capture and enforced cleanup. Prove runtime → masked persistence → authorized
+  viewer → expiry, including service-account audit and failure paths.
+- If retired, remove runtime hooks, routes, viewer controls, configuration and
+  unused implementation together. Do not retain deprecated no-op methods. Removal
+  of stored data or tables requires an explicit retention/migration decision;
+  never edit already executed migrations to erase the feature's history.
 
-## Trace Levels
-
-| Level | State Snapshots | Execution Details | Use Case |
-|-------|-----------------|-------------------|----------|
-| `minimal` | No | No | Production monitoring, path analytics |
-| `standard` | Yes (PII-masked) | Summary only | Debugging, support |
-| `verbose` | Yes (PII-masked) | Full details | Development, deep debugging |
-
-Default is `standard` for new sessions. `verbose` can be enabled per-flow.
-
-## Typed Execution Details
-
-Each node type has a Pydantic schema for its `execution_details` field (defined in `app/schemas/execution_trace.py`):
-
-- **ConditionExecutionDetails**: `conditions_evaluated` (list of expression/result pairs), `matched_condition_index`, `connection_taken`
-- **ScriptExecutionDetails**: `language`, `code_preview`, `inputs`, `outputs`, `console_logs`, `execution_time_ms`
-- **QuestionExecutionDetails**: `question_text`, `rendered_question`, `options`, `user_response`, `response_time_ms`
-- **MessageExecutionDetails**: `message_template`, `rendered_message`, `media_urls`
-- **ActionExecutionDetails**: `action_type`, `actions_executed`, `variables_changed` (with old/new values)
-- **WebhookExecutionDetails**: `url` (credentials masked), `method`, `request_headers` (auth redacted), `response_status`, `response_body` (truncated if >1KB)
-
-## PII Masking
-
-`PIIMasker` (`app/services/pii_masker.py`) recursively masks sensitive data before storing state snapshots:
-
-- **Key-based masking**: Fields matching sensitive key names (email, phone, password, token, etc.) are masked
-- **Pattern-based masking**: Email and phone patterns detected and replaced with `[EMAIL]` / `[PHONE]`
-- **Webhook redaction**: Auth headers replaced with `[REDACTED]`, URL credentials masked, large response bodies truncated
-
-## API Endpoints
-
-All mounted under `/v1/cms/`:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/flows/{flow_id}/sessions` | GET | List sessions for a flow (filterable by status, user, date range, errors) |
-| `/sessions/{session_id}/trace` | GET | Full session trace with audit logging |
-| `/flows/{flow_id}/tracing` | POST | Enable/disable tracing and set level for a flow |
-| `/flows/{flow_id}/tracing` | GET | Get current tracing configuration |
-| `/flows/{flow_id}/trace-stats` | GET | Trace statistics for a flow |
-| `/trace-storage` | GET | Storage statistics (total traces, table size, date range) |
-
-## Trace Recording
-
-`ExecutionTraceService.record_step_async()` buffers trace data in-process and flushes in batches. The service is designed to never block the chat flow -- trace recording failures are logged but do not propagate to the user.
-
-The chat runtime calls `record_step` after each node execution when `session.trace_enabled` is true. State snapshots are PII-masked before storage.
-
-## Data Retention
-
-`TraceCleanupService` deletes old traces in batches (default retention: 30 days, configurable per-flow via `retention_days`). Designed to be run as a scheduled job (e.g., Cloud Scheduler hitting `/internal/tasks/cleanup-traces` daily).
-
-## Remaining Work
-
-- **ACL access control**: `FlowExecutionStep` does not implement `__acl__` -- trace access is currently controlled at the API endpoint level, not per-record
-- **Async queueing**: Trace recording is buffered in-process but not yet offloaded to Cloud Tasks for true async processing
-- **Frontend replay viewer**: Implemented in the admin UI (separate repo)
+Any future capture policy must specify who can enable it, allowed fields, maximum
+size/rate, retention, deletion propagation and impact on student chat performance.
+Masking arbitrary conversation state is not sufficient justification to retain it.
