@@ -305,7 +305,7 @@ The Event Outbox writes happen within the same database transaction as business 
 
 Operational instrumentation uses OpenTelemetry; see the
 [observability design](observability-architecture.md). Product observations and
-retained reporting follow the [analytics proposal](analytics-proposal.md).
+retained reporting follow the [analytics architecture](analytics.md).
 Neither telemetry nor sampled traces replace transactional facts. Session replay
 is a separate PostgreSQL support feature, not Cloud Trace data.
 

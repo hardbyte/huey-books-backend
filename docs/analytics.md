@@ -1,6 +1,6 @@
 # Application metrics and analytics
 
-Status: proposal. Covers the student site, educator/admin application, API, jobs,
+Status: agreed architecture; implementation is incremental. Covers the student site, educator/admin application, API, jobs,
 billing and school/organisation reporting. This document does not authorize new
 retention, exports, infrastructure or changes to existing deletion behaviour.
 The [operational Insights decision](adr/0001-operational-insights-boundary.md)
@@ -265,7 +265,7 @@ Proposed retention classes, **requiring approval before activation**:
 | Approved coarse product aggregates | 13 months | School-year comparisons; still subject to suppression and deletion assessment |
 | Operational logs/traces and business/audit records | Existing separately governed policies | Do not silently change these with product analytics |
 
-Do not claim these policies are enforced by this proposal. Validate actual bucket
+Do not claim these policies are enforced by this design. Validate actual bucket
 retention, exclusions, access and backup/version behaviour before rollout. Durable
 records linked to sessions remain pseudonymous, not anonymous. Lifecycle rules
 are cleanup mechanisms, not a substitute for deletion/correction logic.
@@ -320,4 +320,4 @@ complimentary and inactive customers without redefining usage around billing.
 
 Review gates: retention/deletion policy and budget require product-owner approval;
 metric contracts, privacy tests and load measurements require engineering review.
-This proposal chooses a direction, not permission to ship all five stages at once.
+This architecture defines the direction, not permission to ship all five stages at once.

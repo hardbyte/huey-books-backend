@@ -44,7 +44,7 @@ The API is designed for use by Library Management Systems, Wriveted staff (via s
 
 Start with [the documentation index](docs/README.md). Instrumentation and reporting
 are covered by [observability architecture](docs/observability-architecture.md)
-and the [analytics proposal](docs/analytics-proposal.md).
+and the [analytics architecture](docs/analytics.md).
 
 ## Data
 

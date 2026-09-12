@@ -107,7 +107,7 @@ already delegates to reliable delivery through the event outbox. Preserve that
 transaction boundary when migrating remaining callers.
 
 **Observability and analytics**: Use the [OTel-first observability design](observability-architecture.md)
-for operational signals and the [analytics proposal](analytics-proposal.md) for
+for operational signals and the [analytics architecture](analytics.md) for
 product metric definitions and optional retained reporting. Database-backed
 session replay remains a separate support feature. Do not route browser views
 through the business outbox or treat sampled traces as a business ledger.
