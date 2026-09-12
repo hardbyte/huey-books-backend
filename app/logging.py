@@ -77,10 +77,10 @@ def init_tracing(app, settings: Settings, *, internal: bool = False):
     HTTPXClientInstrumentor().instrument()
     app.add_middleware(
         RequestBodyLimitMiddleware,
-        paths={f"{settings.API_V1_STR}/chat/telemetry"},
+        paths={f"{settings.API_V1_STR}/observations"},
         max_bytes=1024,
     )
-    if not internal:
+    if not internal and settings.BROWSER_OBSERVATIONS_ENABLED:
         app.add_middleware(
             BrowserTimingReceiptMiddleware, secret_key=settings.SECRET_KEY
         )

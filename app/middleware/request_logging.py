@@ -10,7 +10,7 @@ logger = structlog.get_logger()
 def traffic_class(route: str, *, internal: bool = False) -> str:
     if route == "/v1/version" or (internal and route == "/"):
         return "health"
-    if route == "/v1/chat/telemetry":
+    if route == "/v1/observations":
         return "telemetry"
     if route == "<unmatched>":
         return "other"

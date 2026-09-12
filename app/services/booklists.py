@@ -9,6 +9,7 @@ from app.models.booklist import BookList, ListSharingType, ListType
 from app.models.event import EventLevel, EventSlackChannel
 from app.repositories.booklist_repository import booklist_repository
 from app.schemas.booklist import (
+    AlternativeBookCover,
     BookListCreateIn,
     BookListDetail,
     BookListDetailEnriched,
@@ -21,6 +22,7 @@ from app.schemas.edition import EditionDetail
 from app.schemas.pagination import Pagination
 from app.schemas.users.huey_attributes import HueyAttributes
 from app.services.background_tasks import queue_background_task
+from app.services.browser_observations import create_cover_receipt
 from app.services.editions import get_definitive_isbn
 
 # Local import to avoid circular dependency
@@ -275,6 +277,14 @@ def populate_booklist_object(
         editions = booklist_repository.get_detail_editions(
             session, [item.work_id for item in booklist_items], requested_isbns
         )
+        alternative_covers = booklist_repository.get_alternative_covers(
+            session,
+            [
+                edition.work_id
+                for edition in editions.values()
+                if not (edition.cover_url or "").strip()
+            ],
+        )
         for item in booklist_items:
             edition = editions.get(item.work_id)
             if edition is None:
@@ -292,11 +302,28 @@ def populate_booklist_object(
                 # Skip this item
                 continue
 
-            edition_detail = EditionDetail.model_validate(
-                edition,
-            )
+            edition_detail = EditionDetail.model_validate(edition)
+            alternative_cover = None
+            if not edition_detail.cover_url and edition.work_id in alternative_covers:
+                source_isbn, url = alternative_covers[edition.work_id]
+                alternative_cover = AlternativeBookCover(
+                    url=url,
+                    source_isbn=source_isbn,
+                )
             enriched_item = BookListItemEnriched(
-                **item.__dict__, edition=edition_detail
+                **item.__dict__,
+                edition=edition_detail,
+                alternative_cover=alternative_cover,
+                observation_receipt=create_cover_receipt(
+                    "exact"
+                    if edition_detail.cover_url
+                    else "alternative"
+                    if alternative_cover
+                    else "placeholder",
+                    settings.SECRET_KEY,
+                )
+                if settings.BROWSER_OBSERVATIONS_ENABLED
+                else None,
             )
             enriched_booklist_items.append(enriched_item)
 

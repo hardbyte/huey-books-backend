@@ -157,7 +157,7 @@ def test_no_trace_fields_outside_request():
         ("/v1/chat/admin/sessions", False),
         ("/v1/schools", False),
         ("/v1/version", False),
-        ("/v1/chat/telemetry", False),
+        ("/v1/observations", False),
     ],
 )
 @pytest.mark.parametrize("path_attribute", ["http.target", "url.path"])
@@ -231,6 +231,25 @@ def test_disabled_access_logging_and_application_debug_overrides(capsys):
         "No webhooks configured"
     )
     assert capsys.readouterr().err == ""
+
+
+def test_observation_receipts_are_redacted_in_headers_and_response_payloads():
+    from app.observability.privacy import redact, request_secrets
+
+    assert redact(
+        {
+            "headers": {"X-Observation-Receipt": "secret"},
+            "data": [{"observation_receipt": "secret"}],
+        }
+    ) == {
+        "headers": {"X-Observation-Receipt": "[redacted]"},
+        "data": [{"observation_receipt": "[redacted]"}],
+    }
+    context = request_secrets.set(("receipt-secret",))
+    try:
+        assert redact("failure: receipt-secret") == "failure: [redacted]"
+    finally:
+        request_secrets.reset(context)
 
 
 @pytest.mark.parametrize("json_logging", [True, False])
@@ -494,7 +513,7 @@ async def test_stream_failure_is_not_a_success_and_duplicate_uvicorn_exception_i
         ("/v1/process-stripe-event", True, "webhook"),
         ("/v1/process-outbox-events", True, "background"),
         ("/v1/version", True, "health"),
-        ("/v1/chat/telemetry", False, "telemetry"),
+        ("/v1/observations", False, "telemetry"),
         ("<unmatched>", False, "other"),
     ],
 )

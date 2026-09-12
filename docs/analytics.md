@@ -40,7 +40,7 @@ These are implementation entry points, not a claim that every endpoint is sound:
 | Area | Source | Relevant constraint |
 | --- | --- | --- |
 | Request latency/errors | `app/middleware/request_logging.py`, `app/logging.py` | Route templates, request/trace correlation and traffic classes; do not use raw token-bearing paths |
-| Browser timing | `app/schemas/browser_timing.py`, `app/services/browser_timing.py`, receipt middleware; student `useResponseTiming` | Sampled observations, signed receipts, bounded per-instance deduplication; next-frame timing is not proof of painted pixels |
+| Browser observations | `app/schemas/browser_observations.py`, `app/services/browser_observations.py`, receipt middleware; student `browserObservations` helper | Typed timing and cover events, signed receipts, bounded per-instance deduplication; next-frame timing is not proof of painted pixels |
 | Educator Insights | `app/repositories/school_insights.py`, `app/services/school_insights.py`, `app/schemas/school_insights.py` | Fixed UTC start cohorts, latest available outcomes, current collection snapshot, suppression |
 | Flow analytics | `app/services/analytics.py`, `app/api/analytics.py` | SQL-backed counts; session status is not online presence; node reach uses a session-start cohort, and node dwell time is unavailable |
 | Business history/delivery | Domain tables, `app/models/event.py`, `app/models/event_outbox.py` | Editorial/audit events and notification delivery are not a generic page-view store |
@@ -143,11 +143,12 @@ separately so older clients cannot silently display borrowed artwork as exact.
 No cover yields a placeholder. Broken-image handling happens in the browser,
 not a remote HTTP probe in the recommendation request.
 
-Define a measured presentation as at least 50% of the displayed cover visible for
+Define a measured presentation as the first qualifying exposure of a returned
+book-list item: at least 50% of the displayed cover visible for
 one continuous second while the document is visible, after image load (or after
 placeholder rendering). Use that same rule for every cover kind. Measure the
 alternative-cover disclosure separately when its text is also visible for one
-continuous second. This is a visibility proxy, not proof of attention or reading;
+continuous second after the cover qualifies. This is a visibility proxy, not proof of attention or reading;
 overlay occlusion is not reliably captured by ordinary intersection observation.
 
 Emit the application-defined event `huey.book.cover.presented` with
@@ -155,12 +156,12 @@ Emit the application-defined event `huey.book.cover.presented` with
 and allowlisted `huey.ui.surface`. These are Huey conventions, not standard OTel
 attributes. Record the `huey.book.cover.presentations` counter from accepted
 observations. The shared cover UI owns measurement and deduplicates
-rerenders for the same presentation. Carousel navigation to a new presentation
-can count again; repeated observer callbacks cannot. Emit
+rerenders and reopening the same returned item using its receipt. A new API
+response issues new receipts and can count again; this is not a count of unique
+books, people or every modal opening. Emit
 `huey.book.cover.disclosure_viewed` / counter `huey.book.cover.disclosure.views`
 at most once for a measured alternative presentation whose notice qualifies.
-Keep failed image loads as a separate bounded diagnostic. If an alternative
-fails, show a placeholder and do not count a disclosure impression.
+If an alternative fails, show a placeholder and do not count a disclosure impression.
 
 Start with the same sampling policy for all cover kinds. The alternative fraction
 is `alternative presentations / all measured presentations` for matching surfaces
@@ -173,6 +174,33 @@ identity. If only alternative
 notices are initially instrumented, show their count only: it has no valid
 percentage denominator and is not a count of people. Ad blockers, offline clients,
 expiry and deduplication limits mean even unsampled telemetry is incomplete.
+
+### Runtime collection controls
+
+`POST /v1/observations` accepts the versioned timing/cover union with an
+`X-Observation-Receipt` header, not application credentials. Receipts expire after
+15 minutes, are purpose-bound and contain no book or user identifiers. Requests
+are limited to 1 KiB and 20 per second per instance before signature processing;
+the replay cache holds at most 10,000 accepted receipt/event pairs. This is a
+best-effort per-instance limit, not a fleet-wide spending cap or exactly-once delivery.
+`BROWSER_OBSERVATIONS_ENABLED=false` stops issuance and acceptance independently
+of reading/recommendation UX.
+
+The browser samples receipts at 10%, shares the decision across cover/disclosure,
+and sends at most one report of each kind per receipt without retries. Its caches
+are bounded and timing also has a ten-report page cap. No receipt is stored in
+persistent browser storage. The server cannot verify a browser's visibility claim.
+
+Cover counters use the OTel API, with bounded Huey attributes. Current Cloud Run
+Monitoring charts use structured-log-derived metrics; OTel metric export is not
+yet enabled. Keep one authoritative counter pipeline when export is introduced,
+and compare parity before removing the log bridge. Dashboard counts are observed
+samples by receipt time, not extrapolated totals. Do not divide independently
+received disclosure and presentation counts into a conversion rate.
+
+The shared endpoint replaces the timing-only endpoint. Deploy server and client
+in close succession: cached old clients temporarily lose timing observations,
+not chat functionality. Sensitive-header redaction also covers cached old clients.
 
 ## Storage and reporting architecture
 

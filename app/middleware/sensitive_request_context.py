@@ -20,6 +20,7 @@ class SensitiveRequestContextMiddleware:
                 b"authorization",
                 b"x-chat-session",
                 b"x-csrf-token",
+                b"x-observation-receipt",
                 b"x-response-timing-token",
             )
             if key in headers

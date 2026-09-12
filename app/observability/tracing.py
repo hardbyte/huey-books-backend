@@ -38,7 +38,7 @@ class RequestSampler(Sampler):
             path = attributes.get("url.path", attributes.get("http.target", "")).split(
                 "?", 1
             )[0]
-            if path in ("/v1/version", "/v1/chat/telemetry"):
+            if path in ("/v1/version", "/v1/observations"):
                 sampler = ALWAYS_OFF
             elif path.startswith("/v1/chat/") and not path.startswith(
                 "/v1/chat/admin/"

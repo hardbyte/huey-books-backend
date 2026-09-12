@@ -191,13 +191,34 @@ class BooklistRepositoryImpl(BooklistRepository):
                 .distinct(Edition.work_id)
                 .order_by(
                     Edition.work_id,
-                    Edition.cover_url.desc().nulls_last(),
-                    Edition.date_published.desc(),
+                    func.nullif(func.btrim(Edition.cover_url), "").is_not(None).desc(),
+                    Edition.date_published.desc().nulls_last(),
+                    Edition.isbn,
                 )
                 .options(*edition_options)
             ).all()
             result.update({edition.work_id: edition for edition in fallback})
         return result
+
+    def get_alternative_covers(
+        self, db: Session, work_ids: Sequence[int]
+    ) -> dict[int, tuple[str, str]]:
+        if not work_ids:
+            return {}
+        rows = db.execute(
+            select(Edition.work_id, Edition.isbn, Edition.cover_url)
+            .where(
+                Edition.work_id.in_(set(work_ids)),
+                func.nullif(func.btrim(Edition.cover_url), "").is_not(None),
+            )
+            .distinct(Edition.work_id)
+            .order_by(
+                Edition.work_id,
+                Edition.date_published.desc().nulls_last(),
+                Edition.isbn,
+            )
+        )
+        return {work_id: (isbn, url.strip()) for work_id, isbn, url in rows}
 
     def get_by_id(self, db: Session, booklist_id: int) -> Optional[BookList]:
         """Get a booklist by its ID."""

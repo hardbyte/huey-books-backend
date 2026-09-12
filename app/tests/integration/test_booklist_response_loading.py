@@ -224,7 +224,9 @@ def test_explicit_other_work_and_missing_isbn_fallback(session, detail_fixture):
 
 
 @pytest.mark.parametrize("null_field", ["cover_url", "date_published"])
-def test_fallback_preserves_postgres_null_ordering(session, detail_fixture, null_field):
+def test_fallback_prefers_cover_and_known_publication_date(
+    session, detail_fixture, null_field
+):
     first = session.scalar(
         select(Edition).where(Edition.isbn == detail_fixture["isbns"][0][0])
     )
@@ -234,13 +236,98 @@ def test_fallback_preserves_postgres_null_ordering(session, detail_fixture, null
     setattr(first, null_field, None)
     detail_fixture["items"][0].info = None
     session.commit()
-    expected_isbn = second.isbn if null_field == "cover_url" else first.isbn
+    expected_isbn = second.isbn
     with Session(session.bind) as cold:
         booklist = booklist_repository.get_or_404(cold, detail_fixture["id"])
         result = populate_booklist_object(
             booklist, cold, PaginatedQueryParams(skip=0, limit=1), True
         )
         assert result.data[0].edition.isbn == expected_isbn
+
+
+@pytest.mark.parametrize("missing_cover", [None, "", "   "])
+def test_pinned_metadata_kept_with_alternative_cover(
+    session, detail_fixture, missing_cover
+):
+    pinned = session.scalar(
+        select(Edition).where(Edition.isbn == detail_fixture["isbns"][0][0])
+    )
+    pinned.cover_url = missing_cover
+    session.commit()
+    statements = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    event.listen(session.bind, "after_cursor_execute", capture)
+    try:
+        with Session(session.bind) as cold:
+            booklist = booklist_repository.get_or_404(cold, detail_fixture["id"])
+            item = populate_booklist_object(
+                booklist, cold, PaginatedQueryParams(skip=0, limit=1), True
+            ).data[0]
+            assert item.edition.isbn == detail_fixture["isbns"][0][0]
+            assert item.edition.title == "Edition 0/0"
+            assert item.edition.date_published == 2000
+            assert item.edition.cover_url is None
+            assert item.alternative_cover.source_isbn == detail_fixture["isbns"][0][1]
+            assert str(item.alternative_cover.url) == "https://example.com/cover.jpg"
+            assert item.observation_receipt
+            assert len(statements) <= 10
+    finally:
+        event.remove(session.bind, "after_cursor_execute", capture)
+
+
+@pytest.mark.parametrize(
+    "covers",
+    [
+        ("https://example.com/z.jpg", "https://example.com/a.jpg"),
+        (None, ""),
+        (" ", None),
+    ],
+)
+def test_fallback_orders_by_date_not_url(session, detail_fixture, covers):
+    for isbn, cover in zip(detail_fixture["isbns"][0], covers):
+        session.scalar(select(Edition).where(Edition.isbn == isbn)).cover_url = cover
+    detail_fixture["items"][0].info = None
+    session.commit()
+    with Session(session.bind) as cold:
+        booklist = booklist_repository.get_or_404(cold, detail_fixture["id"])
+        item = populate_booklist_object(
+            booklist, cold, PaginatedQueryParams(skip=0, limit=1), True
+        ).data[0]
+        assert item.edition.isbn == detail_fixture["isbns"][0][1]
+        assert item.alternative_cover is None
+
+
+def test_fallback_ties_are_stable(session, detail_fixture):
+    for isbn in detail_fixture["isbns"][0]:
+        session.scalar(
+            select(Edition).where(Edition.isbn == isbn)
+        ).date_published = None
+    session.commit()
+    with Session(session.bind) as cold:
+        editions = booklist_repository.get_detail_editions(
+            cold, [detail_fixture["works"][0]], {}
+        )
+        assert editions[detail_fixture["works"][0]].isbn == min(
+            detail_fixture["isbns"][0]
+        )
+
+
+def test_foreign_pin_cover_comes_from_its_actual_work(session, detail_fixture):
+    isbn = detail_fixture["isbns"][1][0]
+    session.scalar(select(Edition).where(Edition.isbn == isbn)).cover_url = None
+    detail_fixture["items"][0].info = {"edition": isbn}
+    session.commit()
+    with Session(session.bind) as cold:
+        booklist = booklist_repository.get_or_404(cold, detail_fixture["id"])
+        item = populate_booklist_object(
+            booklist, cold, PaginatedQueryParams(skip=0, limit=1), True
+        ).data[0]
+        assert item.edition.isbn == isbn
+        assert item.alternative_cover.source_isbn == detail_fixture["isbns"][1][1]
 
 
 @pytest.mark.parametrize("enriched", [False, True])

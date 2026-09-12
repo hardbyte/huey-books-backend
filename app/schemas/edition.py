@@ -69,6 +69,11 @@ class EditionBrief(BaseModel):
     isbn: str
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("cover_url", mode="before")
+    @classmethod
+    def normalize_cover_url(cls, value):
+        return value.strip() or None if isinstance(value, str) else value
+
 
 class EditionDetail(EditionBrief):
     series_name: Optional[str] = None
