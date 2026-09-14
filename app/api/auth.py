@@ -7,6 +7,7 @@ import requests.exceptions
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi_cloudauth.firebase import FirebaseClaims, FirebaseCurrentUser
 from pydantic import BaseModel
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.orm import Session
 from starlette import status
 from structlog import get_logger
@@ -108,7 +109,10 @@ def secure_user_endpoint(
 
     # If we have gotten this far the user has a valid firebase token
     logger.debug("Auth with firebase endpoint called", firebase_user=firebase_user)
-    assert raw_data["email_verified"], "Firebase hasn't checked the email address"
+    if raw_data.get("email_verified") is not True:
+        raise HTTPException(
+            status_code=401, detail="Sign in with a verified email address"
+        )
     # Note firebase credentials may not include the users name
 
     email = firebase_user.email
@@ -127,9 +131,21 @@ def secure_user_endpoint(
                 picture=picture,
             ),
         )
-        user, was_created = crud.user.get_or_create(session, user_data)
+        try:
+            user, was_created = crud.user.get_or_create(session, user_data)
+        except MultipleResultsFound as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Multiple accounts match this email. Contact Huey Books staff.",
+            ) from exc
     else:
-        user = crud.user.get_by_account_email(session, email)
+        try:
+            user = crud.user.get_by_account_email(session, email)
+        except MultipleResultsFound as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Multiple accounts match this email. Contact Huey Books staff.",
+            ) from exc
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="No account"

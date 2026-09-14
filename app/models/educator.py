@@ -29,13 +29,13 @@ class Educator(User):
 
     __mapper_args__ = {"polymorphic_identity": UserAccountType.EDUCATOR}
 
-    school_id: Mapped[int] = mapped_column(
+    school_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("schools.id", name="fk_educator_school", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
-    school: Mapped["School"] = relationship(
+    school: Mapped[Optional["School"]] = relationship(
         "School", backref="educators", foreign_keys=[school_id]
     )
 
@@ -53,7 +53,8 @@ class Educator(User):
     async def get_principals(self) -> List[str]:
         principals = await super().get_principals()
 
-        principals.extend(["role:educator", f"educator:{self.school_id}"])
+        if self.school_id is not None:
+            principals.extend(["role:educator", f"educator:{self.school_id}"])
 
         return principals
 

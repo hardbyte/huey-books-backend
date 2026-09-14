@@ -272,6 +272,14 @@ async def get_active_principals(
         # list of principals.
         # i.e. a student will have calculated principals of a user, a reader, and a student
         principals.extend(await user.get_principals())
+        if (
+            user.type in (UserAccountType.EDUCATOR, UserAccountType.SCHOOL_ADMIN)
+            and getattr(user, "school_id", None) is None
+        ):
+            from app.services.review_access import can_review
+
+            if can_review(db, user):
+                principals.append("role:educator")
 
     elif maybe_service_account is not None and maybe_service_account.is_active:
         service_account = maybe_service_account
