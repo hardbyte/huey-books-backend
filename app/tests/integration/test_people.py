@@ -2,7 +2,8 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import create_engine, delete, select
+from sqlalchemy.pool import NullPool
 
 from app.models import Educator, School, User
 from app.models.event_outbox import EventOutbox
@@ -14,7 +15,14 @@ from app.models.organisation import (
 from app.services.security import create_access_token
 
 
-def test_concurrent_admin_departures_keep_one_admin(session, people_setup):
+@pytest.fixture
+def people_connections(session):
+    engine = create_engine(session.get_bind().url, poolclass=NullPool)
+    yield engine
+    engine.dispose()
+
+
+def test_concurrent_admin_departures_keep_one_admin(session, people_setup, people_connections):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
@@ -41,7 +49,7 @@ def test_concurrent_admin_departures_keep_one_admin(session, people_setup):
     barrier = Barrier(2)
 
     def deactivate(user_id):
-        with Session(session.get_bind()) as connection:
+        with Session(people_connections) as connection:
             user = connection.get(SchoolAdmin, user_id)
             barrier.wait(timeout=5)
             try:
@@ -59,7 +67,7 @@ def test_concurrent_admin_departures_keep_one_admin(session, people_setup):
         assert sorted(workers.map(deactivate, user_ids)) == ["changed", "protected"]
 
 
-def test_stale_home_assignment_is_rejected(session, people_setup, test_school):
+def test_stale_home_assignment_is_rejected(session, people_setup, test_school, people_connections):
     from sqlalchemy import update
     from sqlalchemy.orm import Session
 
@@ -74,9 +82,9 @@ def test_stale_home_assignment_is_rejected(session, people_setup, test_school):
     )
     session.add(user)
     session.commit()
-    with Session(session.get_bind()) as stale:
+    with Session(people_connections) as stale:
         account = stale.get(SchoolAdmin, user.id)
-        with Session(session.get_bind()) as moving:
+        with Session(people_connections) as moving:
             moving.execute(
                 update(Educator.__table__)
                 .where(Educator.__table__.c.id == user.id)
