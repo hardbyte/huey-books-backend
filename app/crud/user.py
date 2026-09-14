@@ -222,7 +222,14 @@ class CRUDUser(CRUDBase[User, UserCreateIn, UserUpdateIn]):
         """
         Get a user by email, creating a new user if required.
         """
-        q = select(User).where(User.email == user_data.email)
+        db.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    func.hashtextextended(user_data.email.lower(), 0)
+                )
+            )
+        )
+        q = select(User).where(func.lower(User.email) == user_data.email.lower())
         try:
             user = db.execute(q).scalar_one()
             return user, False
@@ -233,7 +240,9 @@ class CRUDUser(CRUDBase[User, UserCreateIn, UserUpdateIn]):
 
     def get_by_account_email(self, db: Session, email: str) -> Optional[User]:
         """return User with given email (or account identifier) or None"""
-        return db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        return db.execute(
+            select(User).where(func.lower(User.email) == email.lower())
+        ).scalar_one_or_none()
 
     def get_all_with_optional_filters_query(
         self,

@@ -41,5 +41,6 @@ class SchoolAdmin(Educator):
 
     async def get_principals(self) -> List[str]:
         principals = await super().get_principals()
-        principals.append(f"schooladmin:{self.school_id}")
+        if self.school_id is not None:
+            principals.append(f"schooladmin:{self.school_id}")
         return principals

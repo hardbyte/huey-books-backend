@@ -9,7 +9,7 @@ from app.schemas.users.user_identity import UserBrief
 
 class EducatorBrief(UserBrief):
     type: Literal[UserAccountType.EDUCATOR]
-    school: UsersSchool
+    school: UsersSchool | None
     # class_group: ClassGroupBrief | None
 
 

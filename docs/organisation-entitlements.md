@@ -14,6 +14,12 @@ Free organisations can have one library; paid organisations retain the technical
 
 ## Interface
 
+People management is scoped to a school/library or organisation. The People API lists home-school, direct library and inherited organisation access together. Removing one source preserves the account and all other sources. School administrators can manage their school's educator roles; library managers can grant catalogue/review roles but cannot grant school administration. Ordinary school team management does not require a multi-library subscription.
+
+New colleagues receive access immediately and a queued sign-in email; verified email authentication links them to that account. This is not an invitation-acceptance workflow. Last-login status does not prove email delivery. Resends are throttled, and delivery uses the existing transactional outbox. Access changes and their audit events commit together. The last active home-school administrator cannot be removed, demoted, moved or deactivated until another administrator exists.
+
+Educator accounts may have no home school: library-only colleagues and offboarded users retain their identity without retaining school permissions. Their REST review authority requires a live reviewer/manager grant. MCP school selection still requires its separately scoped OAuth grant; adding library access does not expand an existing OAuth connection.
+
 Organisation list/detail responses contain only entitlement status, reason, library count and limit. There are no subscription IDs or billing controls in the library workspace. The billing-library endpoint and attachment sponsorship option have been removed.
 
 For verified migration/support assignments, an operator with database credentials can run:

@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
-from pydantic import UUID4, BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict
 
 from app.models.user import UserAccountType
 
 
 class UserBase(BaseModel):
-    id: UUID4
+    id: UUID
     type: UserAccountType
     model_config = ConfigDict(from_attributes=True)
 

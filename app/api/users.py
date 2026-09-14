@@ -27,8 +27,10 @@ from app.schemas.pagination import Pagination
 from app.schemas.users.user_create import UserCreateIn
 from app.schemas.users.user_list import UserListsResponse
 from app.schemas.users.user_update import InternalUserUpdateIn, UserUpdateIn
+from app.services.account_access import validate_account_access_change
 from app.services.email_notification import trigger_email_delivery_async
 from app.services.users import handle_user_creation
+from app.services.workspace_errors import WorkspaceConflict, WorkspaceForbidden
 
 logger = get_logger()
 
@@ -125,6 +127,14 @@ async def update_user(
     user: User = Permission("update", get_user_from_id),
     principals=Depends(get_active_principals),
 ):
+    try:
+        validate_account_access_change(
+            session, user, user_update, is_staff="role:admin" in principals
+        )
+    except WorkspaceForbidden as error:
+        raise HTTPException(status_code=403, detail=error.detail) from error
+    except WorkspaceConflict as error:
+        raise HTTPException(status_code=409, detail=error.detail) from error
     if user_update.type == UserAccountType.WRIVETED and "role:admin" not in principals:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -187,6 +197,14 @@ async def deactivate_user(
     Note the user can then sign up again and a purge will delete all associated events.
     """
     user = crud.user.get(db=session, id=uuid)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        validate_account_access_change(
+            session, user, UserUpdateIn(is_active=False), is_staff=True
+        )
+    except WorkspaceConflict as error:
+        raise HTTPException(status_code=409, detail=error.detail) from error
     logger.info("Request to delete a user", user_to_delete=user, account=account)
 
     crud.event.create(
@@ -194,6 +212,7 @@ async def deactivate_user(
         description=f"User {user.name} marked inactive by {account}",
         account=account,
         session=session,
+        commit=False,
     )
     user.is_active = False
     session.flush()

@@ -12,6 +12,7 @@ from app.repositories.review_repository import ReviewRepositoryImpl, review_repo
 from app.schemas.labelset import LabelSetCreateIn
 from app.schemas.review import LabelSetReviewIn
 from app.services.exceptions import ServiceException
+from app.services.review_access import can_review
 
 
 class InvalidReviewError(ServiceException):
@@ -38,11 +39,7 @@ class ReviewService:
     def submit(
         self, session: Session, work: Work, account: User, review_data: LabelSetReviewIn
     ) -> Review:
-        if account.type not in (
-            UserAccountType.WRIVETED,
-            UserAccountType.EDUCATOR,
-            UserAccountType.SCHOOL_ADMIN,
-        ):
+        if not can_review(session, account):
             raise ReviewNotAllowedError("Only staff and educators can submit reviews")
         try:
             labelset, current = self.labelsets.get_for_review(session, work)
