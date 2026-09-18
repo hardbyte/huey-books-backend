@@ -89,6 +89,9 @@ async def test_usage_cohort_distinct_sites_and_milestones(async_session):
         "ALTER TABLE conversation_sessions ADD COLUMN state jsonb DEFAULT '{}'"
     ))
     await async_session.execute(text(
+        "ALTER TABLE conversation_sessions ADD COLUMN library_id uuid"
+    ))
+    await async_session.execute(text(
         "ALTER TABLE conversation_history ADD COLUMN id uuid DEFAULT gen_random_uuid()"
     ))
     site_rows = await read_engagement(async_session, query_parameters(school, start, end))
