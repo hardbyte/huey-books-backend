@@ -1,5 +1,4 @@
 import secrets
-from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -33,7 +32,6 @@ from app.api.dependencies.security import (
 from app.config import get_settings
 from app.crud.cms import CRUDConversationSession
 from app.models import User
-from app.models.campaign import Campaign
 from app.models.cms import ChatTheme, SessionStatus
 from app.models.school import School
 from app.repositories.chat_repository import chat_repo
@@ -48,8 +46,9 @@ from app.schemas.cms import (
 )
 from app.schemas.pagination import Pagination
 from app.security.csrf import generate_csrf_token, set_secure_session_cookie
-from app.services.campaigns import CampaignContext, resolve_campaign
+from app.services import library_chat
 from app.services.chat_runtime import FlowNotFoundError, chat_runtime
+from app.services.workspace_errors import WorkspaceForbidden, WorkspaceNotFound
 
 logger = get_logger()
 
@@ -91,29 +90,6 @@ async def _resolve_school_for_context(
     return None
 
 
-async def _resolve_campaign_for_start(
-    session: DBSessionDep,
-    school: Optional[School],
-) -> Optional[Campaign]:
-    """Best-effort campaign resolution for a starting session. Never raises."""
-    try:
-        region_state = None
-        if school and isinstance(school.info, dict):
-            location = school.info.get("location")
-            if isinstance(location, dict):
-                region_state = location.get("state")
-        context = CampaignContext(
-            now=datetime.utcnow(),
-            school_id=school.id if school else None,
-            country_code=school.country_code if school else None,
-            region_state=region_state,
-        )
-        return await resolve_campaign(session, context)
-    except Exception as exc:
-        logger.warning("Campaign resolution failed; using default flow", error=str(exc))
-        return None
-
-
 @router.post(
     "/start", response_model=SessionStartResponse, status_code=status.HTTP_201_CREATED
 )
@@ -151,40 +127,31 @@ async def start_conversation(
                 )
             user_id_for_session = None  # Explicitly anonymous
 
-        # Resolve a campaign when no explicit flow_id was supplied — transparent
-        # per-school / per-region / seasonal flow selection. An explicit flow_id
-        # always overrides (testing / deep-links).
-        effective_flow_id = session_data.flow_id
-        resolved_campaign: Optional[Campaign] = None
         initial_state = dict(session_data.initial_state or {})
         context = initial_state.get("context", {})
         if not isinstance(context, dict):
             raise HTTPException(status_code=422, detail="context must be an object")
         school = await _resolve_school_for_context(session, current_user, initial_state)
-        if school is not None:
-            initial_state["context"] = {
-                **context,
-                "school_wriveted_id": str(school.wriveted_identifier),
-                "school_name": school.name,
-            }
-        if effective_flow_id is None:
-            resolved_campaign = await _resolve_campaign_for_start(session, school)
-            if resolved_campaign and resolved_campaign.flow_id:
-                effective_flow_id = resolved_campaign.flow_id
 
+        try:
+            selection = await library_chat.resolve_start(
+                session,
+                library_uuid=session_data.library_uuid,
+                flow_id=session_data.flow_id,
+                school=school,
+                initial_state=initial_state,
+            )
+        except WorkspaceNotFound as exc:
+            raise HTTPException(404, detail=exc.detail) from exc
+        except WorkspaceForbidden as exc:
+            raise HTTPException(403, detail=exc.detail) from exc
+        effective_flow_id = selection.flow_id
+        resolved_campaign = selection.campaign
         if effective_flow_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No flow_id provided and no campaign matched this context.",
             )
-
-        # Stash the resolved campaign so downstream nodes can apply its book bias.
-        if resolved_campaign is not None:
-            ctx_state = dict(initial_state.get("context", {}) or {})
-            ctx_state["campaign_id"] = str(resolved_campaign.id)
-            if resolved_campaign.booklist_id:
-                ctx_state["campaign_booklist_id"] = str(resolved_campaign.booklist_id)
-            initial_state["context"] = ctx_state
 
         # Create session using runtime
         conversation_session = await chat_runtime.start_session(
@@ -192,8 +159,9 @@ async def start_conversation(
             flow_id=effective_flow_id,
             user_id=user_id_for_session,
             session_token=session_token,
-            initial_state=initial_state,
-            school_id=school.wriveted_identifier if school is not None else None,
+            initial_state=selection.initial_state,
+            school_id=selection.school_id,
+            library_chat_snapshot=selection.library_chat_snapshot,
         )
 
         # Get initial node

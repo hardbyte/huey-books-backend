@@ -261,6 +261,36 @@ async def test_library_only_recommendations_union_own_collections_not_organisati
         )
         assert {work.id for work, _, _ in own} == {labelled[0][0].id, labelled[1][0].id}
         assert {work.id for work, _, _ in sibling} == {labelled[2][0].id}
+        from app.services.internal_api_handlers import handle_recommend
+
+        response = await handle_recommend(
+            async_session,
+            {"wriveted_identifier": str(libraries[0].school_uuid), "fallback": True},
+            {"limit": 10},
+            {
+                "library_chat": {
+                    "library_uuid": str(libraries[1].school_uuid),
+                    "catalogue_policy": "library_only",
+                }
+            },
+        )
+        assert {book["work_id"] for book in response["books"]} == {labelled[2][0].id}
+        async_session.expunge_all()
+        session.delete(holdings[2])
+        session.commit()
+        empty = await handle_recommend(
+            async_session,
+            {"fallback": True},
+            {"limit": 10},
+            {
+                "library_chat": {
+                    "library_uuid": str(libraries[1].school_uuid),
+                    "catalogue_policy": "library_only",
+                }
+            },
+        )
+        assert empty["books"] == []
+        holdings.pop()
     finally:
         await async_session.rollback()
         for holding in holdings:

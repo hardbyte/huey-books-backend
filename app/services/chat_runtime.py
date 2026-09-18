@@ -998,6 +998,7 @@ class ChatRuntime:
         session_token: Optional[str] = None,
         initial_state: Optional[Dict[str, Any]] = None,
         school_id: Optional[UUID] = None,
+        library_chat_snapshot: Optional[dict] = None,
     ) -> ConversationSession:
         """Start a new conversation session."""
         # Get flow definition
@@ -1022,11 +1023,17 @@ class ChatRuntime:
             flow_id=flow_id,
             user_id=user_id,
             school_id=school_id,
+            library_id=UUID(library_chat_snapshot["library_uuid"])
+            if library_chat_snapshot
+            else None,
             session_token=session_token,
             initial_state=initial_state,
             flow_version=flow.version,
             trace_enabled=trace_enabled,
             trace_level=trace_level,
+            meta_data={"library_chat": library_chat_snapshot}
+            if library_chat_snapshot
+            else None,
         )
 
         return session

@@ -54,6 +54,7 @@ class ChatRepository:
         flow_id: UUID,
         user_id: Optional[UUID] = None,
         school_id: Optional[UUID] = None,
+        library_id: Optional[UUID] = None,
         session_token: str,
         initial_state: Optional[Dict[str, Any]] = None,
         meta_data: Optional[Dict[str, Any]] = None,
@@ -78,6 +79,7 @@ class ChatRepository:
             flow_id=flow_id,
             user_id=user_id,
             school_id=school_id,
+            library_id=library_id,
             session_token=session_token,
             state=state,
             info={**(meta_data or {}), "school_attribution_version": 1},
@@ -129,6 +131,11 @@ class ChatRepository:
         # Create a copy to avoid modifying the original
         current_state = dict(session.state or {})
         self._deep_merge_state(current_state, state_updates)
+        from app.schemas.library_chat import pinned_context
+
+        current_state = pinned_context(
+            current_state, (session.info or {}).get("library_chat")
+        )
 
         # Calculate new state hash
         new_state_hash = self._calculate_state_hash(current_state)

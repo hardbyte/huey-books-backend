@@ -618,6 +618,9 @@ class ConversationSession(Base):
             "school_id",
             "started_at",
         ),
+        Index(
+            "ix_conversation_sessions_library_id_started", "library_id", "started_at"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -636,6 +639,15 @@ class ConversationSession(Base):
     school_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey(
             "schools.wriveted_identifier", name="fk_session_school", ondelete="SET NULL"
+        ),
+        nullable=True,
+    )
+
+    library_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey(
+            "schools.wriveted_identifier",
+            name="fk_session_library",
+            ondelete="SET NULL",
         ),
         nullable=True,
     )

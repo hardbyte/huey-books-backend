@@ -8,7 +8,8 @@ from app.schemas.school_insights import PRIVACY_THRESHOLD
 
 COHORT = """
 SELECT id, started_at, state FROM conversation_sessions
-WHERE school_id = CAST(:school_uuid AS uuid)
+WHERE (library_id = CAST(:school_uuid AS uuid)
+       OR (library_id IS NULL AND school_id = CAST(:school_uuid AS uuid)))
   AND started_at >= :start AND started_at < :end
 """
 

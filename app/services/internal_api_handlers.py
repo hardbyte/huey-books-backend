@@ -46,6 +46,9 @@ async def handle_recommend(
     from app.repositories.school_repository import school_repository
     from app.schemas.recommendations import HueyRecommendationFilter
 
+    snapshot = (context or {}).get("library_chat")
+    if snapshot:
+        body = {**body, "wriveted_identifier": snapshot["library_uuid"]}
     data = HueyRecommendationFilter(**body)
     school = None
     if data.wriveted_identifier:
@@ -71,6 +74,7 @@ async def handle_recommend(
         background_tasks=None,
         limit=limit,
         boost_work_ids=boost_work_ids,
+        school_only=bool(snapshot and snapshot["catalogue_policy"] == "library_only"),
     )
 
     return {

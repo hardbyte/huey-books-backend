@@ -7,6 +7,7 @@ from app.api.common.workspace_errors import WorkspaceRoute
 from app.api.dependencies.async_db_dep import DBSessionDep
 from app.api.dependencies.security import get_current_active_user
 from app.models.user import User
+from app.schemas.library_chat import LibraryChatDetail, LibraryChatUpdate
 from app.schemas.organisation import (
     CollectionCreate,
     CollectionImport,
@@ -20,10 +21,22 @@ from app.schemas.organisation import (
     OrganisationList,
     WorkspaceMemberList,
 )
-from app.services import organisation_management
+from app.services import library_chat, organisation_management
 
 router = APIRouter(tags=["Organisation workspaces"], route_class=WorkspaceRoute)
 Actor = Annotated[User, Depends(get_current_active_user)]
+
+
+@router.get("/libraries/{library_uuid}/chat-settings", response_model=LibraryChatDetail)
+async def get_chat_settings(library_uuid: UUID, session: DBSessionDep, actor: Actor):
+    return await library_chat.read_settings(session, actor, library_uuid)
+
+
+@router.put("/libraries/{library_uuid}/chat-settings", response_model=LibraryChatDetail)
+async def put_chat_settings(
+    library_uuid: UUID, data: LibraryChatUpdate, session: DBSessionDep, actor: Actor
+):
+    return await library_chat.update_settings(session, actor, library_uuid, data)
 
 
 @router.get("/organisations", response_model=OrganisationList)

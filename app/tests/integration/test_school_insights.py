@@ -21,6 +21,40 @@ async def test_catalogue_lookup_has_covering_index(async_session):
     assert "USING btree (isbn) INCLUDE (work_id)" in definition
 
 
+async def test_library_cohort_does_not_confuse_student_home_school(async_session):
+    from app.repositories.school_insights import COHORT
+
+    await async_session.execute(
+        text(
+            "CREATE TEMP TABLE conversation_sessions (id uuid, started_at timestamp, state jsonb, school_id uuid, library_id uuid) ON COMMIT DROP"
+        )
+    )
+    home, senior = uuid4(), uuid4()
+    started = datetime(2026, 8, 3)
+    await async_session.execute(
+        text(
+            "INSERT INTO conversation_sessions VALUES (:id, :started, '{}'::jsonb, :home, :senior)"
+        ),
+        {"id": uuid4(), "started": started, "home": home, "senior": senior},
+    )
+    assert (
+        len(
+            (
+                await async_session.execute(
+                    text(COHORT),
+                    query_parameters(senior, started, started + timedelta(days=7)),
+                )
+            ).all()
+        )
+        == 1
+    )
+    assert (
+        await async_session.execute(
+            text(COHORT), query_parameters(home, started, started + timedelta(days=7))
+        )
+    ).all() == []
+
+
 @pytest.mark.asyncio
 async def test_school_insights_http_contract(
     async_client,
@@ -46,7 +80,7 @@ async def test_school_insights_http_contract(
 async def test_school_aggregate_queries(async_session):
     # Temporary tables shadow production schema within this test transaction.
     definitions = {
-        "conversation_sessions": "id uuid, started_at timestamp, state jsonb, school_id uuid",
+        "conversation_sessions": "id uuid, started_at timestamp, state jsonb, school_id uuid, library_id uuid",
         "conversation_history": "session_id uuid, interaction_type text, content jsonb, created_at timestamp, id uuid DEFAULT gen_random_uuid()",
         "collections": "id uuid, school_id uuid",
         "collection_items": "collection_id uuid, edition_isbn text",
@@ -75,7 +109,7 @@ async def test_school_aggregate_queries(async_session):
         }
         await async_session.execute(
             text(
-                "INSERT INTO conversation_sessions VALUES (:id, :started, CAST(:state AS jsonb), :school)"
+                "INSERT INTO conversation_sessions VALUES (:id, :started, CAST(:state AS jsonb), :school, NULL)"
             ),
             {
                 "id": session_id,
@@ -99,7 +133,7 @@ async def test_school_aggregate_queries(async_session):
     # Future and malformed/unattributed sessions must not enter the cohort.
     await async_session.execute(
         text(
-            "INSERT INTO conversation_sessions VALUES (:id, :started, :state, :school)"
+            "INSERT INTO conversation_sessions VALUES (:id, :started, :state, :school, NULL)"
         ),
         {
             "id": uuid4(),

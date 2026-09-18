@@ -186,6 +186,7 @@ class ActionNodeProcessor(NodeProcessor):
 
         # Inject db session and user ID for internal API calls
         context = {**context, "db": db}
+        context["library_chat"] = (session.info or {}).get("library_chat")
         if session.user_id:
             context["session_user_id"] = str(session.user_id)
 
