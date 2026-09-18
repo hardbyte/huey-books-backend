@@ -111,6 +111,7 @@ def test_flow_with_nodes(client, backend_service_account_headers):
     flow_data = {
         "name": "Test Chat Flow",
         "version": "1.0",
+        "info": {"seed_key": "huey-bookbot"},
         "flow_data": {
             "variables": {"user": {"name": {"type": "string", "default": "Guest"}}}
         },
@@ -259,6 +260,165 @@ def test_start_conversation_with_invalid_flow(client):
     response = client.post("v1/chat/start", json=session_data)
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.parametrize("legacy_context", [False, True])
+def test_library_chat_cannot_start_disabled_jokes_as_root_flow(
+    client,
+    test_flow_with_nodes,
+    create_unique_flow,
+    test_school,
+    session,
+    legacy_context,
+):
+    from app.models.cms import FlowDefinition
+    from app.models.library_chat import LibraryChatSettings
+
+    jokes_flow_id = create_unique_flow("Jokes flow")
+    jokes_flow = session.get(FlowDefinition, uuid.UUID(jokes_flow_id))
+    jokes_flow.info = {"seed_key": "huey-jokes"}
+    policy = LibraryChatSettings(
+        library_uuid=test_school.school_uuid,
+        enabled=True,
+        catalogue_policy="library_only",
+        jokes_enabled=False,
+        spelling_enabled=False,
+        revision=1,
+    )
+    session.add(policy)
+    session.commit()
+    targeting = (
+        {
+            "initial_state": {
+                "context": {"school_wriveted_id": str(test_school.school_uuid)}
+            }
+        }
+        if legacy_context
+        else {"library_uuid": str(test_school.school_uuid)}
+    )
+    try:
+        response = client.post(
+            "/v1/chat/start", json={"flow_id": jokes_flow_id, **targeting}
+        )
+        assert response.status_code == 201, response.text
+        persisted = session.execute(
+            text("SELECT flow_id, info FROM conversation_sessions WHERE id = :id"),
+            {"id": response.json()["session_id"]},
+        ).one()
+        assert persisted.flow_id == uuid.UUID(test_flow_with_nodes["flow_id"])
+        assert persisted.info["library_chat"]["jokes_enabled"] is False
+
+        untargeted = client.post("/v1/chat/start", json={"flow_id": jokes_flow_id})
+        assert untargeted.status_code == 201, untargeted.text
+        untargeted_flow_id = session.execute(
+            text("SELECT flow_id FROM conversation_sessions WHERE id = :id"),
+            {"id": untargeted.json()["session_id"]},
+        ).scalar_one()
+        assert untargeted_flow_id == uuid.UUID(jokes_flow_id)
+    finally:
+        session.rollback()
+        session.delete(policy)
+        session.commit()
+
+
+def test_library_chat_pins_catalogue_without_changing_student_school(
+    client,
+    test_flow_with_nodes,
+    test_school,
+    test_student_user_account_headers,
+    session,
+):
+    from app.models import School, SchoolState
+    from app.models.cms import FlowDefinition
+    from app.models.library_chat import LibraryChatSettings
+
+    flow = session.get(FlowDefinition, uuid.UUID(test_flow_with_nodes["flow_id"]))
+    flow.info = {**flow.info, "seed_key": "huey-bookbot"}
+    senior = School(
+        name="Senior library",
+        country_code=test_school.country_code,
+        state=SchoolState.ACTIVE,
+        info={},
+    )
+    session.add(senior)
+    session.flush()
+    policy = LibraryChatSettings(
+        library_uuid=senior.school_uuid,
+        enabled=True,
+        catalogue_policy="library_only",
+        jokes_enabled=False,
+        spelling_enabled=False,
+        revision=1,
+    )
+    session.add(policy)
+    session.commit()
+    try:
+        response = client.post(
+            "/v1/chat/start",
+            headers=test_student_user_account_headers,
+            json={
+                "library_uuid": str(senior.school_uuid),
+                "initial_state": {
+                    "context": {
+                        "school_wriveted_id": str(test_school.school_uuid),
+                        "experiments": {"no_jokes": False},
+                    }
+                },
+            },
+        )
+        assert response.status_code == 201, response.text
+        persisted = session.execute(
+            text(
+                "SELECT school_id, state, info FROM conversation_sessions WHERE id = :id"
+            ),
+            {"id": response.json()["session_id"]},
+        ).one()
+        assert persisted.school_id == test_school.school_uuid
+        assert persisted.state["context"]["library_uuid"] == str(senior.school_uuid)
+        assert persisted.info["library_chat"]["catalogue_policy"] == "library_only"
+        assert persisted.state["context"]["experiments"]["no_jokes"] is True
+        policy.jokes_enabled = True
+        policy.revision = 2
+        session.commit()
+        client.cookies.update(response.cookies)
+        updated = client.patch(
+            f"/v1/chat/sessions/{response.json()['session_token']}/state",
+            headers={"X-CSRF-Token": response.cookies["csrf_token"]},
+            json={
+                "updates": {
+                    "context": {
+                        "library_uuid": str(test_school.school_uuid),
+                        "school_wriveted_id": str(test_school.school_uuid),
+                        "experiments": {"no_jokes": False},
+                    }
+                }
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["state"]["context"]["library_uuid"] == str(
+            senior.school_uuid
+        )
+        assert updated.json()["state"]["context"]["experiments"]["no_jokes"] is True
+        policy.enabled = False
+        session.commit()
+        disabled = client.post(
+            "/v1/chat/start", json={"library_uuid": str(senior.school_uuid)}
+        )
+        assert disabled.status_code == 404, disabled.text
+        legacy = client.post(
+            "/v1/chat/start",
+            json={
+                "flow_id": str(flow.id),
+                "initial_state": {
+                    "context": {"school_wriveted_id": str(senior.school_uuid)}
+                },
+            },
+        )
+        assert legacy.status_code == 404, legacy.text
+    finally:
+        session.rollback()
+        session.delete(senior)
+        session.commit()
 
 
 def test_start_conversation_pins_school(

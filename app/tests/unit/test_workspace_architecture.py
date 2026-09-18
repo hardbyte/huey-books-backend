@@ -13,6 +13,7 @@ APP = Path(__file__).resolve().parents[2]
         "services/organisation_workspace.py",
         "services/organisation_entitlements.py",
         "services/review_queues.py",
+        "services/library_chat.py",
     ],
 )
 def test_workspace_services_do_not_construct_sql_or_depend_on_http(module):
@@ -53,8 +54,12 @@ def test_workspace_http_adapter_does_not_access_persistence(module):
             }
 
 
-def test_workspace_repository_does_not_own_transaction_or_http_policy():
-    tree = ast.parse((APP / "repositories/organisation_repository.py").read_text())
+@pytest.mark.parametrize(
+    "module",
+    ["repositories/organisation_repository.py", "repositories/library_chat.py"],
+)
+def test_workspace_repository_does_not_own_transaction_or_http_policy(module):
+    tree = ast.parse((APP / module).read_text())
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             assert not (node.module or "").startswith(
@@ -68,12 +73,20 @@ def test_collection_service_conflicts_are_transport_independent():
     tree = ast.parse((APP / "services/collection_service.py").read_text())
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            assert not (node.module or "").startswith(("fastapi", "starlette", "app.api"))
+            assert not (node.module or "").startswith(
+                ("fastapi", "starlette", "app.api")
+            )
     service = next(node for node in tree.body if isinstance(node, ast.ClassDef))
     for method in service.body:
         if isinstance(method, ast.FunctionDef) and method.name in {
-            "replace_collection", "delete_collection"
+            "replace_collection",
+            "delete_collection",
         }:
             for node in ast.walk(method):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                    assert node.func.attr not in {"execute", "scalar", "scalars", "query"}
+                    assert node.func.attr not in {
+                        "execute",
+                        "scalar",
+                        "scalars",
+                        "query",
+                    }

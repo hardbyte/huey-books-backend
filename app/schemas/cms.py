@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
+from uuid import UUID
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
 
@@ -441,6 +442,7 @@ class ConnectionResponse(PaginatedResponse):
 
 # Conversation Session Schemas
 class SessionCreate(BaseModel):
+    library_uuid: Optional[UUID] = None
     # Optional: when omitted, the server resolves a campaign for the session
     # context (school/region/season) and uses its flow. An explicit flow_id
     # always overrides.

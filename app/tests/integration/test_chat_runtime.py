@@ -196,6 +196,127 @@ def test_interact_returns_input_request_for_chained_question(
     assert payload["input_request"]["variable"] == "age"
 
 
+@pytest.mark.parametrize(
+    "jokes,spelling,expected",
+    [
+        (False, False, "All done"),
+        (True, False, "Joke time?"),
+        (False, True, "Spelling time?"),
+    ],
+)
+def test_library_policy_skips_optional_subflows_after_books(
+    client, session, cleanup_flow, test_school, jokes, spelling, expected
+):
+    from app.models.library_chat import LibraryChatSettings
+
+    created_flows, _ = cleanup_flow
+    children = []
+    for key, question in [
+        ("huey-jokes", "Joke time?"),
+        ("huey-spelling", "Spelling time?"),
+    ]:
+        child = _create_flow(
+            session,
+            name=key,
+            entry_node_id="question",
+            flow_data={},
+            nodes=[
+                {
+                    "node_id": "question",
+                    "node_type": NodeType.QUESTION,
+                    "content": {
+                        "question": {"text": question},
+                        "input_type": "text",
+                        "variable": "temp.answer",
+                    },
+                }
+            ],
+            connections=[],
+        )
+        child.info = {"seed_key": key}
+        children.append(child)
+    parent = _create_flow(
+        session,
+        name="Scoped Bookbot",
+        entry_node_id="books",
+        flow_data={},
+        nodes=[
+            {
+                "node_id": "books",
+                "node_type": NodeType.QUESTION,
+                "content": {
+                    "question": {"text": "Review books"},
+                    "input_type": "book_feedback",
+                    "variable": "temp.feedback",
+                    "book_source": "temp.books",
+                },
+            },
+            {
+                "node_id": "jokes",
+                "node_type": NodeType.COMPOSITE,
+                "content": {"composite_flow_id": str(children[0].id)},
+            },
+            {
+                "node_id": "spelling",
+                "node_type": NodeType.COMPOSITE,
+                "content": {"composite_flow_id": str(children[1].id)},
+            },
+            {
+                "node_id": "done",
+                "node_type": NodeType.QUESTION,
+                "content": {
+                    "question": {"text": "All done"},
+                    "input_type": "text",
+                    "variable": "temp.done",
+                },
+            },
+        ],
+        connections=[
+            {"source": "books", "target": "jokes"},
+            {"source": "jokes", "target": "spelling"},
+            {"source": "spelling", "target": "done"},
+        ],
+    )
+    parent.info = {"seed_key": "huey-bookbot"}
+    created_flows.extend([parent.id, *(child.id for child in children)])
+    policy = LibraryChatSettings(
+        library_uuid=test_school.school_uuid,
+        enabled=True,
+        catalogue_policy="library_only",
+        jokes_enabled=jokes,
+        spelling_enabled=spelling,
+        revision=1,
+    )
+    session.add(policy)
+    session.commit()
+    try:
+        started = client.post(
+            "/v1/chat/start",
+            json={
+                "library_uuid": str(test_school.school_uuid),
+                "initial_state": {
+                    "temp": {"books": [{"isbn": "9780140328721", "title": "Held book"}]}
+                },
+            },
+        )
+        assert started.status_code == 201, started.text
+        start = started.json()
+        assert start["next_node"]["input_type"] == "book_feedback"
+        response = client.post(
+            f"/v1/chat/sessions/{start['session_token']}/interact",
+            headers={"X-CSRF-Token": start["csrf_token"]},
+            json={
+                "input_type": "book_feedback",
+                "input": json.dumps({"liked": [], "disliked": [], "read": []}),
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["input_request"]["question"]["text"] == expected
+    finally:
+        session.delete(policy)
+        session.commit()
+
+
 @pytest.mark.parametrize("enter_via_question", [False, True])
 @pytest.mark.parametrize("child_intro", [False, True])
 def test_terminal_book_feedback_returns_to_parent_question(

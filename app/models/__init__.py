@@ -36,6 +36,7 @@ from .labelset import LabelSet
 from .labelset_hue_association import LabelSetHue
 from .labelset_reading_ability_association import LabelSetReadingAbility
 from .library import EducationUnit, EducationUnitLibrary, Library
+from .library_chat import LibraryChatSettings
 from .mcp import MCPOAuthState
 from .oauth import OAuthAuthorizationCode, OAuthGrant, OAuthRefreshToken
 from .organisation import (

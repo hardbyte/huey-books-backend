@@ -687,6 +687,86 @@ def workspace(session, test_school, test_product):
     session.commit()
 
 
+async def test_library_chat_policy_scope_revision_and_activation(
+    async_client,
+    workspace,
+    session,
+    test_schooladmin_account,
+    test_schooladmin_account_headers,
+    test_wrivetedadmin_account_headers,
+):
+    organisation, libraries, _ = workspace
+    library, sibling = libraries
+    staff = test_wrivetedadmin_account_headers
+    librarian = test_schooladmin_account_headers
+    path = f"/v1/libraries/{library}/chat-settings"
+    grant = f"/v1/libraries/{library}/members/{test_schooladmin_account.id}"
+    assert (await async_client.get(path, headers=librarian)).status_code == 404
+    assert (
+        await async_client.put(grant, headers=staff, json={"role": "manager"})
+    ).status_code == 200
+    initial = await async_client.get(path, headers=librarian)
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["enabled"] is False
+    assert initial.json()["catalogue_policy"] == "library_only"
+    assert (
+        await async_client.get(
+            f"/v1/libraries/{sibling}/chat-settings", headers=librarian
+        )
+    ).status_code == 404
+    policy = {
+        "enabled": True,
+        "catalogue_policy": "library_only",
+        "jokes_enabled": False,
+        "spelling_enabled": False,
+        "expected_revision": 0,
+    }
+    updated = await async_client.put(path, headers=librarian, json=policy)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["revision"] == 1
+    assert updated.json()["enabled"] is True
+    assert updated.json()["jokes_enabled"] is False
+    view = await async_client.post(
+        f"/v1/auth/view-as/{test_schooladmin_account.id}", headers=staff
+    )
+    assert view.status_code == 200, view.text
+    assert (
+        await async_client.put(
+            path,
+            headers={**staff, "X-View-As": view.json()["context"]},
+            json={**policy, "expected_revision": 1},
+        )
+    ).status_code == 403
+    assert (
+        await async_client.put(path, headers=librarian, json=policy)
+    ).status_code == 409
+    assert (
+        await async_client.put(grant, headers=staff, json={"role": "reviewer"})
+    ).status_code == 200
+    assert (await async_client.get(path, headers=librarian)).status_code == 200
+    assert (
+        await async_client.put(
+            path, headers=librarian, json={**policy, "expected_revision": 1}
+        )
+    ).status_code == 403
+    subscription = session.get(Subscription, f"sub_workspace_{organisation}")
+    subscription.expiration = datetime.utcnow() - timedelta(days=1)
+    session.commit()
+    unavailable = await async_client.get(path, headers=staff)
+    assert unavailable.status_code == 200, unavailable.text
+    assert unavailable.json()["enabled"] is True
+    assert unavailable.json()["available"] is False
+    assert unavailable.json()["unavailable_reason"] == "subscription_required"
+    assert (
+        await async_client.post("/v1/chat/start", json={"library_uuid": library})
+    ).status_code == 403
+    assert (
+        await async_client.put(
+            path, headers=staff, json={**policy, "expected_revision": 1}
+        )
+    ).status_code == 403
+
+
 async def test_manager_membership_is_live_and_does_not_expand_legacy_authority(
     async_client,
     workspace,

@@ -28,6 +28,7 @@ class MockSession:
         self.session_token = "test_token"
         self.current_node_id = "test_node"
         self.state = state or {}
+        self.info = {}
         self.revision = 1
         self.status = SessionStatus.ACTIVE
 

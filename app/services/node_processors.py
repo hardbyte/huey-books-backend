@@ -581,6 +581,40 @@ class CompositeNodeProcessor:
             sub_flow_id = UUID(composite_flow_id)
             sub_flow = await crud.flow.aget(db, sub_flow_id)
 
+            policy = (session.info or {}).get("library_chat")
+            feature = (
+                {
+                    "huey-jokes": "jokes_enabled",
+                    "huey-spelling": "spelling_enabled",
+                }.get((sub_flow.info or {}).get("seed_key"))
+                if sub_flow
+                else None
+            )
+            if policy and feature and not policy[feature]:
+                connections = await chat_repo.get_node_connections(
+                    db, flow_id=node.flow_id, source_node_id=node.node_id
+                )
+                connection = next(
+                    (
+                        item
+                        for item in connections
+                        if item.connection_type == ConnectionType.DEFAULT
+                    ),
+                    None,
+                )
+                next_node = (
+                    await chat_repo.get_flow_node(
+                        db, flow_id=node.flow_id, node_id=connection.target_node_id
+                    )
+                    if connection
+                    else None
+                )
+                return {
+                    "type": "action",
+                    "next_node": next_node,
+                    "session_ended": next_node is None,
+                }
+
             if not sub_flow:
                 self.logger.error(
                     "Sub-flow not found",

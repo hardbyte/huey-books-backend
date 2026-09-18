@@ -6,7 +6,7 @@ Multiple-library management is included in every existing paid school/library su
 
 An organisation owns its subscriptions and feature entitlements. Libraries own collections and local access. A subscription can belong to only one organisation; an organisation can have multiple subscriptions during renewal or consolidation.
 
-The internal `organisation_subscriptions` association names the exact existing subscription, not a billing library or a shared Stripe customer. Existing `Subscription.school_id` remains billing/reader compatibility data. Moving or attaching libraries does not assign, transfer or replace subscription ownership. Reader activation, invoice consolidation and payment ownership changes remain separate work.
+The internal `organisation_subscriptions` association names the exact existing subscription, not a billing library or a shared Stripe customer. Existing `Subscription.school_id` remains billing/reader compatibility data. Moving or attaching libraries does not assign, transfer or replace subscription ownership. Student chat activation is an explicit [library Bookbot setting](library-chat.md); invoice consolidation and payment ownership changes remain separate operations.
 
 The `multiple_libraries` entitlement requires a current paid school/library subscription associated with the organisation: active, Stripe customer present, verified `paid_at`, unexpired period. Family, complimentary, unpaid and expired subscriptions do not qualify. Existing webhook updates to the same subscription are reflected immediately; a replacement subscription ID requires a reviewed association.
 
