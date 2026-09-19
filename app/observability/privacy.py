@@ -7,7 +7,7 @@ from typing import Any
 
 request_secrets: ContextVar[tuple[str, ...]] = ContextVar("request_secrets", default=())
 _SESSION_PATH = re.compile(r"(/chat/sessions/)[^/\s?\"'<>]+")
-_URL_TOKEN = re.compile(r"[^\s\"'<>]+")
+_URL_TOKEN = re.compile(r"\S+")
 _PRIVATE_KEYS = frozenset(
     {
         "authorization",

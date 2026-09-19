@@ -18,8 +18,9 @@ from app.observability.tracing import RedactingSpanProcessor, RequestSampler
     "attribute", ["http.target", "url.path", "http.url", "url.full"]
 )
 @pytest.mark.parametrize("prefix", ["", "https://example.com"])
-def test_url_attributes_preserve_path_and_remove_query(attribute, prefix):
-    value = f"{prefix}/v1/search?query=private-search&reader_id=private-reader"
+@pytest.mark.parametrize("query", ["private-search", "O'Reilly-private-search"])
+def test_url_attributes_preserve_path_and_remove_query(attribute, prefix, query):
+    value = f"{prefix}/v1/search?query={query}&reader_id=private-reader"
     assert redact(value, attribute) == f"{prefix}/v1/search?[redacted]"
 
 
@@ -51,8 +52,9 @@ def test_url_embedded_in_diagnostic_preserves_prefix_and_sql_attributes():
 
 
 @pytest.mark.parametrize("path", ["/v1/search", "search", ""])
-def test_relative_url_queries_are_removed_from_all_exported_span_fields(path):
-    private_url = f"{path}?query=private-search&reader_id=private-reader"
+@pytest.mark.parametrize("query", ["private-search", "O'Reilly-private-search"])
+def test_relative_url_queries_are_removed_from_all_exported_span_fields(path, query):
+    private_url = f"{path}?query={query}&reader_id=private-reader"
     processor = MagicMock()
     RedactingSpanProcessor(processor).on_end(
         ReadableSpan(
@@ -80,7 +82,8 @@ def test_question_punctuation_and_sql_operators_remain_usable():
     assert redact(statement, "db.query.text") == statement
 
 
-def test_sampled_read_request_redacts_query_before_export():
+@pytest.mark.parametrize("query", ["private-search", "O'Reilly-private-search"])
+def test_sampled_read_request_redacts_query_before_export(query):
     exporter = InMemorySpanExporter()
     provider = TracerProvider(sampler=RequestSampler(chat_rate=0, read_rate=1))
     provider.add_span_processor(RedactingSpanProcessor(SimpleSpanProcessor(exporter)))
@@ -94,7 +97,7 @@ def test_sampled_read_request_redacts_query_before_export():
     try:
         with TestClient(app) as client:
             response = client.get(
-                "/v1/search?query=private-search&reader_id=private-reader",
+                f"/v1/search?query={query}&reader_id=private-reader",
                 headers={
                     "traceparent": "00-0000000000000000000000000000002a-0000000000000007-00"
                 },
