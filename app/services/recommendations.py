@@ -62,7 +62,7 @@ async def get_recommended_editions_from_mv(
         column("labelset_id"),
         column("min_age"),
         column("max_age"),
-        column("recommend_status"),
+        column("recommend_status", LabelSet.__table__.c.recommend_status.type),
         column("cover_edition_isbn"),
         column("cover_url"),
         column("hue_keys"),
@@ -157,13 +157,8 @@ async def get_recommended_editions_from_mv(
         scored_q = scored_q.where(held_work_exists)
 
     # Hard filters
-    # recommend_status is stored as the PostgreSQL native enum type "recommendstatus"
-    # in the MV.  Cast the column to text so the equality comparison uses the
-    # plain text = text operator rather than the missing enum = varchar operator.
     if recommendable_only:
-        scored_q = scored_q.where(
-            cast(mv.c.recommend_status, VARCHAR) == RecommendStatus.GOOD.value
-        )
+        scored_q = scored_q.where(mv.c.recommend_status == RecommendStatus.GOOD)
 
     if age is not None:
         scored_q = scored_q.where(mv.c.min_age <= age).where(mv.c.max_age >= age)

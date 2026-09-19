@@ -263,3 +263,7 @@ Existing regression entry points: `app/tests/unit/test_observability.py`,
 integration suite. Extend their behavioural assertions instead of treating a green
 exporter startup as proof of delivery. Trace sampling rates, SLO budgets and export
 limits belong in code/Terraform; changes require review and a measured rollout.
+
+## Search and recommendation freshness
+
+See [Search and indexes](search-and-indexes.md) for the internal freshness SLA, committed watermarks, sampling coverage and recovery procedures. The operations dashboard includes observed 28-day freshness compliance and check counts; missing telemetry is handled by a separate absence alert.

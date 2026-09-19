@@ -83,8 +83,20 @@ refresh_search_index = PGFunction(
     definition="""returns void LANGUAGE plpgsql SECURITY DEFINER
       SET search_path = pg_catalog, pg_temp
       AS $function$
+        DECLARE snapshot_at timestamptz := statement_timestamp();
         BEGIN
-          REFRESH MATERIALIZED VIEW public.search_view_v1;
+          REFRESH MATERIALIZED VIEW CONCURRENTLY public.search_view_v1;
+          INSERT INTO public.search_index_refreshes(index_name, source_snapshot_at, refreshed_at)
+          VALUES ('search_view_v1', snapshot_at, clock_timestamp())
+          ON CONFLICT (index_name) DO UPDATE
+          SET source_snapshot_at = EXCLUDED.source_snapshot_at,
+              refreshed_at = EXCLUDED.refreshed_at;
+          REFRESH MATERIALIZED VIEW CONCURRENTLY public.work_collection_frequency;
+          INSERT INTO public.search_index_refreshes(index_name, source_snapshot_at, refreshed_at)
+          VALUES ('work_collection_frequency', snapshot_at, clock_timestamp())
+          ON CONFLICT (index_name) DO UPDATE
+          SET source_snapshot_at = EXCLUDED.source_snapshot_at,
+              refreshed_at = EXCLUDED.refreshed_at;
         END;
       $function$
     """,
@@ -109,15 +121,17 @@ refresh_search_view_v1_function = PGFunction(
 refresh_recommendable_editions_function = PGFunction(
     schema="public",
     signature="refresh_recommendable_editions_function()",
-    # SECURITY DEFINER so the cloudrun runtime role can trigger the refresh: only
-    # the MV owner (the migration role) may REFRESH, and the body is a fixed,
-    # fully-qualified statement, so definer rights carry no injection surface.
-    definition="""returns void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+    definition="""returns void LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path = pg_catalog, pg_temp
       AS $function$
+        DECLARE snapshot_at timestamptz := statement_timestamp();
         BEGIN
-        -- CONCURRENTLY avoids an ACCESS EXCLUSIVE lock so recommendation reads are
-        -- not blocked during the refresh; it requires the unique index on work_id.
-        REFRESH MATERIALIZED VIEW CONCURRENTLY public.recommendable_editions;
+          REFRESH MATERIALIZED VIEW CONCURRENTLY public.recommendable_editions;
+          INSERT INTO public.search_index_refreshes(index_name, source_snapshot_at, refreshed_at)
+          VALUES ('recommendable_editions', snapshot_at, clock_timestamp())
+          ON CONFLICT (index_name) DO UPDATE
+          SET source_snapshot_at = EXCLUDED.source_snapshot_at,
+              refreshed_at = EXCLUDED.refreshed_at;
         END;
       $function$
     """,

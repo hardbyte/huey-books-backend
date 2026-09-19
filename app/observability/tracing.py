@@ -18,8 +18,9 @@ from app.observability.privacy import is_database_exception_type, redact
 
 
 class RequestSampler(Sampler):
-    def __init__(self, chat_rate: float):
+    def __init__(self, chat_rate: float, read_rate: float = 0.0):
         self.chat = TraceIdRatioBased(chat_rate)
+        self.read = TraceIdRatioBased(read_rate)
         self.other = ParentBased(ALWAYS_ON)
 
     def should_sample(
@@ -46,12 +47,31 @@ class RequestSampler(Sampler):
                 # Cloud Run often supplies an unsampled remote parent. Sample the
                 # complete chat subtree, including slow responses, at a bounded rate.
                 sampler = self.chat
+            elif path in {
+                "/v1/search",
+                "/v1/recommend",
+                "/v1/works",
+                "/v1/editions",
+                "/v1/authors",
+                "/v1/schools",
+                "/v1/libraries",
+                "/v1/lists",
+            } or path.startswith(
+                (
+                    "/v1/library/",
+                    "/v1/libraries/",
+                    "/v1/collection/",
+                    "/v1/list/",
+                    "/v1/public-list/",
+                )
+            ):
+                sampler = self.read
         return sampler.should_sample(
             parent_context, trace_id, name, kind, attributes, links, trace_state
         )
 
     def get_description(self) -> str:
-        return f"RequestSampler(chat={self.chat.get_description()})"
+        return f"RequestSampler(chat={self.chat.get_description()}, read={self.read.get_description()})"
 
 
 class RedactingSpanProcessor(SpanProcessor):

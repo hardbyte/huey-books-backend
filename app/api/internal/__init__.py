@@ -308,13 +308,20 @@ async def handle_cleanup_abandoned_sessions(
     return {"msg": "ok", "abandoned": count, "inactive_hours": inactive_hours}
 
 
+@router.post("/maintenance/check-search-freshness")
+async def handle_check_search_freshness(session: DBSessionDep):
+    from app.services.search_freshness import check_search_freshness
+
+    return {"indexes": await check_search_freshness(session)}
+
+
 @router.post("/maintenance/refresh-recommendations")
 async def handle_refresh_recommendations(session: DBSessionDep):
     """
     Refresh the recommendable_editions materialized view.
 
     Uses REFRESH MATERIALIZED VIEW CONCURRENTLY so reads are not blocked during
-    the refresh.  Intended to be called on a weekly Cloud Scheduler job (OIDC
+    the refresh.  Intended to be called on a 15-minute Cloud Scheduler job (OIDC
     auth via the background-tasks service account) so that newly labelled or
     updated works become visible to the recommendation engine without a deploy.
 
@@ -323,7 +330,12 @@ async def handle_refresh_recommendations(session: DBSessionDep):
     app/services/recommendations.py:enqueue_debounced_mv_refresh).
     """
     logger.info("Refreshing recommendable_editions materialized view")
-    await session.execute(text("SELECT refresh_recommendable_editions_function()"))
+    await session.execute(text("SET LOCAL lock_timeout = '5s'"))
+    await session.execute(text("SET LOCAL statement_timeout = '120s'"))
+    await session.execute(
+        text("SELECT public.refresh_recommendable_editions_function()")
+    )
+    await session.commit()
     logger.info("Refreshed recommendable_editions materialized view")
     return {"msg": "ok"}
 

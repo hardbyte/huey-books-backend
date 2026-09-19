@@ -176,7 +176,7 @@ class AuthorRepositoryImpl(AuthorRepository):
                 func.lower(Author.name_key).contains(query_string.lower())
             )
 
-        query = query.offset(skip).limit(limit)
+        query = query.order_by(Author.id).offset(skip).limit(limit)
         return list(db.scalars(query).all())
 
     def remove(self, db: Session, id: int) -> Author:

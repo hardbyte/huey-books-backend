@@ -100,7 +100,7 @@ class OrganisationRepository:
         if not scope.unrestricted:
             query = query.where(self._library_scope(scope))
         if q:
-            query = query.where(School.name.ilike(f"%{q}%"))
+            query = query.where(func.lower(School.name).like(func.lower(f"%{q}%")))
         if organisation_uuid is not None:
             query = query.where(School.organisation_id == organisation_uuid)
         if standalone:

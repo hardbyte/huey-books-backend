@@ -135,8 +135,6 @@ async def book_search(
     stmt = stmt.offset(pagination.skip).limit(pagination.limit)
     res = (await session.execute(stmt)).fetchall()
 
-    logger.info("Result of search", res=res)
-
     return [
         WorkBrief(
             id=str(row[0]),
@@ -154,6 +152,8 @@ async def book_search(
 
 async def update_search_view_v1(session: AsyncSession):
     logger.info("Refreshing search view v1")
+    await session.execute(text("SET LOCAL lock_timeout = '5s'"))
+    await session.execute(text("SET LOCAL statement_timeout = '120s'"))
     stmt = text("SELECT public.refresh_search_index()")
     await session.execute(stmt)
     await session.commit()
