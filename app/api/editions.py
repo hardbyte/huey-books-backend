@@ -1,8 +1,9 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer, load_only, raiseload
 from starlette import status
 from structlog import get_logger
 
@@ -10,11 +11,10 @@ from app.api.common.pagination import PaginatedQueryParams
 from app.api.dependencies.editions import get_edition_from_isbn
 from app.api.dependencies.security import get_current_active_user_or_service_account
 from app.db.session import get_session
-from app.models import Edition
+from app.models import Edition, Work
 from app.repositories.edition_repository import edition_repository
 from app.repositories.event_repository import event_repository
 from app.repositories.illustrator_repository import illustrator_repository
-from app.repositories.work_repository import work_repository
 from app.schemas import is_url
 from app.schemas.edition import (
     EditionBrief,
@@ -44,18 +44,27 @@ def get_editions(
     pagination: PaginatedQueryParams = Depends(),
     session: Session = Depends(get_session),
 ):
+    statement = select(Edition).options(
+        raiseload("*"),
+        load_only(
+            Edition.isbn,
+            Edition.work_id,
+            Edition.leading_article,
+            Edition.title,
+            Edition.cover_url,
+            raiseload=True,
+        ),
+        defer(Edition.collection_count, raiseload=True),
+    )
     if work_id is not None:
-        work = work_repository.get_or_404(session, id=work_id)
-        return work.editions[pagination.skip : pagination.skip + pagination.limit]
+        if session.scalar(select(Work.id).where(Work.id == work_id)) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Work not found")
+        statement = statement.where(Edition.work_id == work_id)
     elif query is not None:
-        statement = edition_repository.get_all_query(session).where(
-            Edition.title.match(query)
-        )
-        return session.scalars(statement).all()
-    else:
-        return edition_repository.get_all(
-            session, skip=pagination.skip, limit=pagination.limit
-        )
+        statement = statement.where(Edition.title.match(query))
+    return session.scalars(
+        statement.order_by(Edition.id).offset(pagination.skip).limit(pagination.limit)
+    ).all()
 
 
 @router.post("/editions/compare", response_model=KnownAndTaggedEditionCounts)

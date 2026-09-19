@@ -106,7 +106,7 @@ Preserve applied revisions. Necessary historical replay repairs require a separa
 
 ### Performance
 - Bulk operations: use batch create/update for efficiency
-- Full-text search uses PostgreSQL tsvector and GIN indexes
+- For search predicates, indexes, refresh behavior and freshness targets, read [Search and indexes](docs/search-and-indexes.md). Catalogue search uses an English tsvector; work, author and library-name filters use substring matching.
 - Recommendations use the `recommendable_editions` materialized view (see below)
 
 ### Recommendation Engine (`recommendable_editions` MV)
@@ -120,18 +120,19 @@ per work (latest labelset, best cover edition, hue/reading-ability key arrays).
 - `app/services/recommendations.py` — `get_recommended_editions_from_mv` (scored query)
 - `app/api/recommendations.py` — single-pass scored API, replacing the old 4-level fallback
 
-**Scoring** (higher wins): school-collection match (4), reading-ability overlap (2), hue overlap (1).
+**Scoring** (higher wins): school-collection match (4), campaign/booklist boost (3), reading-ability overlap (2), hue overlap (1).
 Results ordered by score DESC then random() within each tier.
 
 **Refresh**:
-- Weekly via Cloud Scheduler → `POST /maintenance/refresh-recommendations` (internal API)
+- Every 15 minutes via Cloud Scheduler → `POST /v1/maintenance/refresh-recommendations` (internal API)
 - Debounced on label writes (`PATCH /labelsets`, `PATCH /work/{id}` label edits,
   and promoted reviews) via Cloud Tasks named task `refresh-recommendable-editions`
-  (deduplicates within ~4-hour GCP window; fires ~60 s after the last write)
+  (best effort; fixed-name deduplication can suppress later writes; not a trailing-edge debounce)
 
 After adding or modifying labelsets in bulk, force a refresh locally with:
 ```sql
-REFRESH MATERIALIZED VIEW CONCURRENTLY recommendable_editions;
+SELECT public.refresh_recommendable_editions_function();
+COMMIT;
 ```
 
 ### REST Conventions

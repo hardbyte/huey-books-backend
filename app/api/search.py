@@ -1,3 +1,4 @@
+from time import perf_counter
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -28,11 +29,17 @@ async def get_book_search(
     # type: Optional[WorkType] = Query(WorkType.BOOK),
     pagination: PaginatedQueryParams = Depends(),
 ):
-    logger.info("Searching for books", query=query)
+    started = perf_counter()
     results = await book_search(
         session, query_param=query, pagination=pagination, author_id=author_id
     )
-    logger.info("Search results", results=results)
+    logger.info(
+        "Search query completed",
+        duration_ms=round((perf_counter() - started) * 1000, 2),
+        result_count=len(results),
+        query_present=query is not None,
+        limit=pagination.limit,
+    )
     return SearchResults(
         input=SearchQueryInput(query=query, author_id=author_id),
         books=results,

@@ -207,6 +207,7 @@ single query over the MV with a scoring expression:
 | Criterion | Weight | Notes |
 |-----------|--------|-------|
 | School-collection membership | 4 | EXISTS sub-query against `collection_items` |
+| Campaign/booklist boost | 3 | Work in active campaign booklist |
 | Reading-ability overlap | 2 | `reading_ability_keys && :ra_arr` |
 | Hue overlap | 1 | `hue_keys && :hue_arr` |
 
@@ -227,7 +228,7 @@ skipped, allowing for a materialized view that has not yet refreshed.
 
 ### Refresh Strategy
 
-**Weekly**: `POST /v1/maintenance/refresh-recommendations` on the internal API,
+**Every 15 minutes**: `POST /v1/maintenance/refresh-recommendations` on the internal API,
 invoked by Cloud Scheduler (OIDC auth via the background-tasks service account).
 The endpoint calls `SELECT refresh_recommendable_editions_function()` which runs
 `REFRESH MATERIALIZED VIEW CONCURRENTLY recommendable_editions`. CONCURRENTLY
@@ -397,3 +398,5 @@ These principles guide architectural decisions:
 5. **CQRS-Lite**: Read services use database transactions without a write/commit workflow; write services coordinate atomic changes
 6. **Repository Focus**: Domain-oriented methods with clear business meaning, not generic query variations
 7. **Testability**: Repository interfaces (ABC/Protocol) enable mocking for isolated unit tests
+
+For query contracts, refresh guarantees and recovery, see [Search and indexes](search-and-indexes.md).

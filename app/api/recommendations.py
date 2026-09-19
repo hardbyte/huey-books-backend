@@ -1,5 +1,5 @@
 import json
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +29,7 @@ async def get_recommendations(
     asession: DBSessionDep,
     data: HueyRecommendationFilter,
     background_tasks: BackgroundTasks,
-    limit: Optional[int] = Query(5, description="Maximum number of items to return"),
+    limit: int = Query(5, ge=1, le=50, description="Maximum number of items to return"),
     account=Depends(get_current_active_user_or_service_account),
 ):
     """

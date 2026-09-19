@@ -386,6 +386,7 @@ class Settings(BaseSettings):
 
     ENABLE_OTEL_GOOGLE_EXPORTER: bool = False
     CHAT_TRACE_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
+    READ_TRACE_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
 
     # E2E Test configuration - when set, enables test auth endpoints
     # This should NEVER be set in production

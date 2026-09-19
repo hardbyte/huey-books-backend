@@ -49,7 +49,11 @@ def create_span_processor(exporter: SpanExporter) -> BatchSpanProcessor:
 def init_tracing(app, settings: Settings, *, internal: bool = False):
     set_global_textmap(TraceContextPropagator())
     trace.set_tracer_provider(
-        TracerProvider(sampler=RequestSampler(settings.CHAT_TRACE_SAMPLE_RATE))
+        TracerProvider(
+            sampler=RequestSampler(
+                settings.CHAT_TRACE_SAMPLE_RATE, settings.READ_TRACE_SAMPLE_RATE
+            )
+        )
     )
 
     if settings.ENABLE_OTEL_GOOGLE_EXPORTER:

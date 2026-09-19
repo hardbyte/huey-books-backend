@@ -91,7 +91,9 @@ def get_works(
     works = (
         session.execute(
             work_repository.apply_pagination(
-                works_query, skip=pagination.skip, limit=pagination.limit
+                works_query.order_by(Work.id),
+                skip=pagination.skip,
+                limit=pagination.limit,
             )
         )
         .scalars()

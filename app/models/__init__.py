@@ -61,6 +61,7 @@ from .school_billing import (
     StripeEventReceipt,
 )
 from .school_invitation import SchoolInvitation, SchoolInvitationStatus
+from .search_index_refresh import SearchIndexRefresh
 from .series import Series
 from .service_account import ServiceAccount, ServiceAccountType
 from .stripe_contribution import StripeContributionReceipt
