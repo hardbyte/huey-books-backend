@@ -85,7 +85,7 @@ refresh_search_index = PGFunction(
       AS $function$
         DECLARE snapshot_at timestamptz := statement_timestamp();
         BEGIN
-          REFRESH MATERIALIZED VIEW public.search_view_v1;
+          REFRESH MATERIALIZED VIEW CONCURRENTLY public.search_view_v1;
           INSERT INTO public.search_index_refreshes(index_name, source_snapshot_at, refreshed_at)
           VALUES ('search_view_v1', snapshot_at, clock_timestamp())
           ON CONFLICT (index_name) DO UPDATE

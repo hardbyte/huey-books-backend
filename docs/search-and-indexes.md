@@ -27,7 +27,7 @@ Recommendation label writes also request a best-effort debounced Cloud Task. Its
 The internal endpoints are:
 
 - `POST /v1/maintenance/refresh-recommendations`: concurrent recommendation refresh and explicit commit.
-- `POST /v1/update-search-index`: search and popularity refresh with explicit commit. Popularity refresh is concurrent; search still requires an exclusive lock because its rows are not unique per work.
+- `POST /v1/update-search-index`: search and popularity refresh with explicit commit. Both refreshes are concurrent. A full unique index on `(work_id, series_id) NULLS NOT DISTINCT` preserves the current grouped rows while allowing readers to continue. PostgreSQL may delete/reinsert unchanged null-series rows during concurrent refresh; monitor duration and table churn.
 - `POST /v1/maintenance/check-search-freshness`: read committed timestamps and emit bounded per-index observations plus a completed-check heartbeat.
 
 Refresh callers set a five-second lock timeout and 120-second statement timeout. A busy or failed refresh is retried by the scheduler; stale data remains readable after rollback. Investigate persistent failures rather than increasing timeouts blindly.

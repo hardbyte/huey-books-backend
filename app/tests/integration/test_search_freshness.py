@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.common.pagination import PaginatedQueryParams
 from app.api.editions import get_editions
-from app.models import Edition, SearchIndexRefresh, Work
+from app.models import Author, Edition, SearchIndexRefresh, Series, Work
 from app.schemas.edition import EditionBrief
 from app.services.search import update_search_view_v1
 
@@ -104,9 +104,9 @@ async def test_blocked_refresh_times_out_without_advancing_freshness(
             SearchIndexRefresh.index_name == "search_view_v1"
         )
     )
-    # Retain an ACCESS SHARE lock in a separate transaction.
+    # Retain a conflicting maintenance lock in a separate transaction.
     with session.bind.connect() as blocker:
-        blocker.execute(text("SELECT 1 FROM public.search_view_v1 LIMIT 1"))
+        blocker.execute(text("REFRESH MATERIALIZED VIEW public.search_view_v1"))
         with pytest.raises(DBAPIError, match="lock timeout"):
             await update_search_view_v1(async_session)
         await async_session.rollback()
@@ -116,3 +116,62 @@ async def test_blocked_refresh_times_out_without_advancing_freshness(
         )
     )
     assert after == before
+
+
+async def test_concurrent_search_refresh_preserves_null_and_multiple_series(
+    async_session: AsyncSession, session: Session
+):
+    author = Author(first_name="Freshness", last_name="Fixture")
+    series = [Series(title=f"Freshness Fixture Series {n}") for n in range(2)]
+    standalone = Work(title="Freshness standalone", authors=[author])
+    multiseries = Work(
+        title="Freshness multiple series", authors=[author], series=series
+    )
+    session.add_all([standalone, multiseries])
+    session.commit()
+    standalone_id, multi_id = standalone.id, multiseries.id
+    series_ids, author_id = [item.id for item in series], author.id
+    session.rollback()
+    rows_sql = text(
+        "SELECT work_id, series_id, document::text FROM search_view_v1 WHERE work_id IN (:standalone, :multi) ORDER BY work_id, series_id"
+    )
+    parameters = {"standalone": standalone_id, "multi": multi_id}
+    try:
+        await update_search_view_v1(async_session)
+        before = (await async_session.execute(rows_sql, parameters)).all()
+        assert len(before) == 3
+        assert [(row.work_id, row.series_id) for row in before] == [
+            (standalone_id, None)
+        ] + [(multi_id, value) for value in series_ids]
+        with session.bind.connect() as reader:
+            reader.execute(text("SELECT 1 FROM search_view_v1 LIMIT 1"))
+            await update_search_view_v1(async_session)
+        assert (await async_session.execute(rows_sql, parameters)).all() == before
+        session.execute(
+            text("UPDATE works SET title = 'Changed freshness title' WHERE id = :id"),
+            {"id": standalone_id},
+        )
+        session.commit()
+        await update_search_view_v1(async_session)
+        after = (await async_session.execute(rows_sql, parameters)).all()
+        assert len(after) == 3
+        assert after[0].document != before[0].document
+    finally:
+        await async_session.rollback()
+        session.execute(
+            text(
+                "DELETE FROM series_works_association WHERE work_id IN (:standalone, :multi)"
+            ),
+            parameters,
+        )
+        session.execute(
+            text(
+                "DELETE FROM author_work_association WHERE work_id IN (:standalone, :multi)"
+            ),
+            parameters,
+        )
+        session.execute(delete(Work).where(Work.id.in_([standalone_id, multi_id])))
+        session.execute(delete(Series).where(Series.id.in_(series_ids)))
+        session.execute(delete(Author).where(Author.id == author_id))
+        session.commit()
+        await update_search_view_v1(async_session)
