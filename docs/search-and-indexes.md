@@ -44,8 +44,10 @@ After a change, verify snapshot timestamps advance only after successful commit,
 
 `READ_TRACE_SAMPLE_RATE` defaults to 1.0 for the selected search/list/recommendation routes, including library collections and booklists. It makes a new server sampling decision even when Cloud Run supplies an unsampled parent. Child spans inherit that decision; existing privacy filtering still applies. `CHAT_TRACE_SAMPLE_RATE` independently controls chat. Health checks remain excluded.
 
-A trace ID in a log proves context propagation, not export. Inspect the log entry's `traceSampled` flag before treating a missing trace as data loss. In the September 2026 review, all 27 unavailable traces were unsampled and all five sampled traces were retrievable. Sampled-but-missing traces require separate exporter/quota/retention investigation. Monitor trace volume and cost when changing rates.
+A trace ID in a log proves context propagation, not export. Inspect the log entry's `traceSampled` flag before treating a missing trace as data loss. Sampled-but-missing traces require separate exporter/quota/retention investigation. Monitor trace volume and cost when changing rates.
 
 ## Follow-up search work
+
+[The target result contract](search-result-contract.md) defines coverage, work identity, input handling and ownership filters for the next implementation; the deployed behavior above is unchanged.
 
 [Issue #779](https://github.com/hardbyte/huey-books-backend/issues/779) tracks coverage/cardinality corrections, native pg_trgm tuning and relevance evaluation. [BM25 experiment setup](bm25-experiments.md) describes declarative pg_textsearch enablement for development and production probes. PlanetScale TIN is a separate provider-dependent experiment. Enabling pg_textsearch does not change application search queries or create catalogue BM25 indexes.

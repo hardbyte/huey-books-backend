@@ -1,0 +1,14 @@
+# Private search evaluation
+
+This directory contains evaluation tools, not datasets or measured results. Keep catalogue exports, query judgments, plans, statistics and reports in private storage outside this public repository. Only synthetic fixtures belong in version control.
+
+1. Configure a read-only source connection with standard `PGUSER`, `PGPASSWORD`, and `PGDATABASE` environment variables. Start a loopback database proxy if required. Run `uv run scripts/search_evaluation/export_snapshot.py --port PORT --output /private/snapshot`. The export uses a read-only repeatable-read transaction with bounded statement and lock timeouts and an explicit field allowlist.
+2. Create an empty local database with a `search_eval_` prefix using the repository's PostgreSQL development image at localhost:55530. Run `uv run scripts/search_evaluation/load_snapshot.py --database search_eval_trial --snapshot /private/snapshot`. The loader verifies file hashes and creates experiment tables and indexes; it never drops a database.
+3. Run `uv run scripts/search_evaluation/build_queries.py --database search_eval_trial --output /private/queries.json`. The seed makes selection deterministic on a fixed catalogue. Judgments are metadata-derived targets, not human assessments of thematic relevance.
+4. Run `uv run scripts/search_evaluation/run_benchmark.py --database search_eval_trial --queries /private/queries.json --output /private/run`. Use the **same database** as the loader. The output directory must be new. Optional `--engines` selects disjoint supplemental batches.
+5. Run `uv run scripts/search_evaluation/summarize.py --queries /private/queries.json --runs /private/run --output /private/summary.json`. It validates complete case coverage, unique measurements, SQL success and result identity. BM25 is compared with materialized exhaustive scoring of the same eligible relation, including result ordering.
+6. Run `uv run python -m unittest discover -s scripts/search_evaluation -p 'test_*.py' -v` and `uv run ruff check scripts/search_evaluation`.
+
+The legacy query preserves the old vector and popularity joins, but excludes response hydration. Canonical FTS and BM25 use the same text. Weighted FTS and neutral popularity are separate variants. Title-only trigram must be distinguished from same-content variants. Inspect actual plans before attributing performance to ordered GiST retrieval.
+
+Each ordinary case has a warm-up, five timed queries and a separate JSON plan. The exhaustive correctness reference has one timed execution. Run batches sequentially. Report relevance by query family and library selectivity; local warm SQL timings do not establish production API performance. Empty/no-match inputs are engine diagnostics, and exact ISBN lookup is separate. Keep authorization, available-copy behavior, concurrency, refresh cost and operational rollout checks explicit.

@@ -1,6 +1,7 @@
 # BM25 experiment setup
 
-Cloud SQL's [native BM25 preview](https://cloud.google.com/blog/products/databases/native-bm25-search-in-alloydb-and-cloud-sql) uses `pg_textsearch`. Both Huey databases run PostgreSQL 18. Enabling the extension prepares experiments; application search continues to use the queries described in [Search and indexes](search-and-indexes.md).
+Cloud SQL's [native BM25 preview](https://cloud.google.com/blog/products/databases/native-bm25-search-in-alloydb-and-cloud-sql) uses `pg_textsearch`. Enabling the extension prepares experiments; application search continues to use the queries described in [Search and indexes](search-and-indexes.md).
+
 
 ## Deployment order
 
@@ -14,7 +15,7 @@ Cloud SQL's [native BM25 preview](https://cloud.google.com/blog/products/databas
    SHOW shared_preload_libraries;
    ```
 
-Cloud SQL offered version **1.3.1** when this change was prepared. The migration installs the provider's default version; existing installations are not upgraded by application startup. Review extension upgrades separately and record the actual server version in every benchmark.
+The local development image pins pg_textsearch **1.3.1**. The migration installs the provider's default version; existing installations are not upgraded by application startup. Review extension upgrades separately and record the actual server version in every benchmark.
 
 ## Local development and CI
 
