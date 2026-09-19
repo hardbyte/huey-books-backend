@@ -34,10 +34,14 @@ def test_query_attributes_are_redacted_entirely(attribute):
 
 
 @pytest.mark.timeout(2)
-@pytest.mark.parametrize("suffix", ["", " unrelated?question"])
-def test_queryless_slash_rich_paths_redact_without_repeated_suffix_scans(suffix):
-    value = "/" * 40000 + "path" + suffix
-    assert redact(value) == value
+@pytest.mark.parametrize(
+    "suffix,expected_suffix", [("", ""), (" search?query=private", " search?[redacted]")]
+)
+def test_queryless_slash_rich_paths_redact_without_repeated_suffix_scans(
+    suffix, expected_suffix
+):
+    path = "/" * 40000 + "path"
+    assert redact(path + suffix) == path + expected_suffix
 
 
 def test_url_embedded_in_diagnostic_preserves_prefix_and_sql_attributes():
@@ -46,14 +50,15 @@ def test_url_embedded_in_diagnostic_preserves_prefix_and_sql_attributes():
     assert redact(statement, "db.query.text") == statement
 
 
-def test_relative_url_queries_are_removed_from_all_exported_span_fields():
-    private_url = "/v1/search?query=private-search&reader_id=private-reader"
+@pytest.mark.parametrize("path", ["/v1/search", "search", ""])
+def test_relative_url_queries_are_removed_from_all_exported_span_fields(path):
+    private_url = f"{path}?query=private-search&reader_id=private-reader"
     processor = MagicMock()
     RedactingSpanProcessor(processor).on_end(
         ReadableSpan(
             name=f"GET {private_url}",
             attributes={"http.target": private_url, "url.query": "private-search"},
-            events=[Event("request", {"url.full": private_url})],
+            events=[Event(f"request {private_url}", {"url.full": private_url})],
             links=[
                 Link(
                     SpanContext(trace_id=42, span_id=7, is_remote=True),
@@ -66,7 +71,13 @@ def test_relative_url_queries_are_removed_from_all_exported_span_fields():
     exported = processor.on_end.call_args.args[0]
     assert "private-search" not in exported.to_json()
     assert "private-reader" not in exported.to_json()
-    assert exported.attributes["http.target"] == "/v1/search?[redacted]"
+    assert exported.attributes["http.target"] == f"{path}?[redacted]"
+
+
+def test_question_punctuation_and_sql_operators_remain_usable():
+    assert redact("Request failed? Retry.") == "Request failed? Retry."
+    statement = "SELECT data FROM works WHERE data ? 'key' AND id = $1"
+    assert redact(statement, "db.query.text") == statement
 
 
 def test_sampled_read_request_redacts_query_before_export():

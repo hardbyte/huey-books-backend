@@ -34,8 +34,8 @@ _NORMALIZED_PRIVATE_KEYS = {name.replace("_", "-") for name in _PRIVATE_KEYS}
 
 def _redact_url_query(match: re.Match[str]) -> str:
     token = match.group()
-    path, separator, _ = token.partition("?")
-    if separator and "/" in path:
+    path, separator, query = token.partition("?")
+    if separator and query:
         return f"{path}?[redacted]"
     return token
 
