@@ -168,6 +168,8 @@ See [docs/testing-credentials.md](docs/testing-credentials.md) for test data set
 
 ## Database migrations
 
+The local database image includes PostgreSQL 18 with `pg_textsearch` preloaded. Cloud SQL requires its enablement flag and an instance restart before the extension migration. See [BM25 setup and rollout](docs/bm25-experiments.md).
+
 Uses [Alembic](https://alembic.sqlalchemy.org/) with SQLAlchemy 2.0 models. PostgreSQL functions and triggers are defined declaratively in Python using `alembic_utils` (`app/db/functions.py`, `app/db/triggers.py`).
 
 ```bash

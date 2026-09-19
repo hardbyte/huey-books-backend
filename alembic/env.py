@@ -23,7 +23,7 @@ sys.path.insert(
 )
 
 from app.db.base_class import Base  # noqa
-from app.db.extensions import pg_trgm_ex, pgvector_ex
+from app.db.extensions import pg_textsearch_ex, pg_trgm_ex, pgvector_ex
 from app.db.functions import (
     cms_content_tsvector_update,
     collection_legacy_default,
@@ -56,6 +56,7 @@ register_entities(
         # Extensions
         pgvector_ex,
         pg_trgm_ex,
+        pg_textsearch_ex,
         # Functions
         collection_legacy_default,
         update_edition_title,

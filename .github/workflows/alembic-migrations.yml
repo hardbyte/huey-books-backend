@@ -23,12 +23,11 @@ jobs:
       with:
         python-version: "3.13"
         enable-cache: true
-    - name: 🗄 Set up PostgreSQL
-      uses: danielweller-swp/postgresql-action@v2
-      with:
-        postgresql version: '18'
-        postgresql user: postgres
-        postgresql password: secret
+    - name: 🗄 Set up PostgreSQL with pg_textsearch
+      run: |
+        docker build -f docker/postgres.Dockerfile -t huey-postgres:migration-test .
+        docker run -d --name migration-postgres -p 5432:5432 \
+          -e POSTGRES_PASSWORD=secret huey-postgres:migration-test
     - name: 🔧 Install dependencies
       run: uv sync --frozen
     - name: 🔎 Check connection to PostgreSQL

@@ -5,3 +5,5 @@ pgvector_ex = PGExtension(schema="public", signature="vector")
 
 # Trigram matching for ranked, typo-tolerant search (e.g. school-name search).
 pg_trgm_ex = PGExtension(schema="public", signature="pg_trgm")
+
+pg_textsearch_ex = PGExtension(schema="public", signature="pg_textsearch")
