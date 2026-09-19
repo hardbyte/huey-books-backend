@@ -33,15 +33,19 @@ from app.db.functions import (
     refresh_search_index,
     refresh_search_view_v1_function,
     refresh_work_collection_frequency_view_function,
+    require_education_unit_school,
     update_collections_function,
     update_edition_title,
     update_edition_title_from_work,
 )
 from app.db.triggers import (
+    class_groups_require_education_unit_trigger,
     cms_content_tsvector_trigger,
     collection_legacy_default_trigger,
     conversation_sessions_notify_flow_event_trigger,
     editions_update_edition_title_trigger,
+    educators_require_education_unit_trigger,
+    students_require_education_unit_trigger,
     update_collections_trigger,
     works_update_edition_title_from_work_trigger,
 )
@@ -69,6 +73,7 @@ register_entities(
         public_encode_uri_component,
         cms_content_tsvector_update,
         notify_flow_event_function,
+        require_education_unit_school,
         # Views
         collection_frequency_view,
         search_view_v1,
@@ -80,6 +85,9 @@ register_entities(
         cms_content_tsvector_trigger,
         conversation_sessions_notify_flow_event_trigger,
         update_collections_trigger,
+        class_groups_require_education_unit_trigger,
+        students_require_education_unit_trigger,
+        educators_require_education_unit_trigger,
     ]
 )
 

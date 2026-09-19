@@ -3,7 +3,17 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi_permissions import All, Allow, Deny  # type: ignore[import-untyped]
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.ext.mutable import MutableDict
@@ -30,6 +40,24 @@ if TYPE_CHECKING:
 class SchoolBookbotType(CaseInsensitiveStringEnum):
     SCHOOL_BOOKS = "school_books"
     HUEY_BOOKS = "huey_books"
+
+
+class SchoolKind(CaseInsensitiveStringEnum):
+    """Which domain facets a `schools` row is allowed to carry.
+
+    `schools` is still the physical row behind every library, so a row has to
+    say which parts of the school identity apply to it. A SCHOOL row is also an
+    education unit and may hold students, classes and admission domains. A
+    LIBRARY row is a borrowing and recommendation service only; database
+    triggers reject education records that point at one, so the boundary does
+    not depend on callers remembering it.
+
+    See docs/organisation-target-schema.md: this is the compatibility stand-in
+    for separate `libraries` and `education_units` identities.
+    """
+
+    SCHOOL = "school"
+    LIBRARY = "library"
 
 
 class SchoolState(CaseInsensitiveStringEnum):
@@ -71,6 +99,25 @@ class School(Base):
         index=True,
     )
 
+    # A library row carries no education identity. The trigger-enforced half of
+    # this rule lives in app/db/triggers.py; this half is a plain CHECK because
+    # the columns are on this table.
+    kind: Mapped[SchoolKind] = mapped_column(
+        # Stored as a checked varchar rather than a native enum so the values are
+        # the lowercase strings the CHECK constraints and triggers compare against,
+        # matching organisations.kind.
+        Enum(
+            SchoolKind,
+            native_enum=False,
+            length=20,
+            name="kind",
+            values_callable=lambda members: [member.value for member in members],
+        ),
+        nullable=False,
+        server_default=SchoolKind.SCHOOL.value,
+        default=SchoolKind.SCHOOL,
+    )
+
     __table_args__ = (
         # Composite INDEX combining country code and country specific IDs e.g. (AUS, ACARA ID)
         Index(
@@ -78,6 +125,11 @@ class School(Base):
             country_code,
             official_identifier,
             unique=True,
+        ),
+        CheckConstraint(
+            "kind = 'school' OR (official_identifier IS NULL"
+            " AND student_domain IS NULL AND teacher_domain IS NULL)",
+            name="library_kind_has_no_education_identity",
         ),
         Index(
             "idx_schools_name_trgm",

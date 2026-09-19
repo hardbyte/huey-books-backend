@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.models.school import SchoolKind
 from app.models.user import User, UserAccountType
 from app.repositories import people as repository
 from app.repositories.event_repository import event_repository
@@ -75,9 +76,15 @@ async def context(
         if actor is None or not actor.is_active:
             raise WorkspaceForbidden("Your account no longer has access")
     access = await resolve_library(db, actor, scope_id, "revoke_members")
-    school_management = is_platform_staff(actor) or (
-        actor.type == UserAccountType.SCHOOL_ADMIN
-        and getattr(actor, "school_id", None) == access.library.id
+    # Home roles (educator, school administrator) are education-unit facts, so
+    # they are only offered where the row is one. Library rows reject them in
+    # the database as well; see app/db/triggers.py.
+    school_management = access.library.kind is SchoolKind.SCHOOL and (
+        is_platform_staff(actor)
+        or (
+            actor.type == UserAccountType.SCHOOL_ADMIN
+            and getattr(actor, "school_id", None) == access.library.id
+        )
     )
     return PeopleContext(
         access.library.name,
