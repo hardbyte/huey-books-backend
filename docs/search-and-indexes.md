@@ -48,4 +48,4 @@ A trace ID in a log proves context propagation, not export. Inspect the log entr
 
 ## Follow-up search work
 
-[Issue #779](https://github.com/hardbyte/huey-books-backend/issues/779) tracks coverage/cardinality corrections, native pg_trgm tuning, relevance evaluation and a staging comparison with Cloud SQL's pg_textsearch preview. PlanetScale TIN is a separate provider-dependent experiment. No new search extension is required by the inexpensive query fixes.
+[Issue #779](https://github.com/hardbyte/huey-books-backend/issues/779) tracks coverage/cardinality corrections, native pg_trgm tuning and relevance evaluation. [BM25 experiment setup](bm25-experiments.md) describes declarative pg_textsearch enablement for development and production probes. PlanetScale TIN is a separate provider-dependent experiment. Enabling pg_textsearch does not change application search queries or create catalogue BM25 indexes.
