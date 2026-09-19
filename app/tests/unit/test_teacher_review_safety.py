@@ -25,7 +25,9 @@ def test_teacher_promotion_preserves_unchecked():
     ReviewService(labelsets=labelsets, reviews=MagicMock()).submit(
         session,
         MagicMock(),
-        SimpleNamespace(id=uuid4(), type=UserAccountType.EDUCATOR, is_active=True, school_id=1),
+        SimpleNamespace(
+            id=uuid4(), type=UserAccountType.EDUCATOR, is_active=True, school_id=1
+        ),
         LabelSetReviewIn(min_age=3, max_age=5),
     )
     assert labelsets.patch.call_args.args[2].checked is None

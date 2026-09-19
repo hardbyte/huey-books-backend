@@ -187,9 +187,9 @@ def test_school_admin_cannot_access_cms_endpoints(
                 headers=test_schooladmin_account_headers,
             )
 
-        assert (
-            response.status_code == status.HTTP_403_FORBIDDEN
-        ), f"{method} {endpoint} should return 403 for school admin"
+        assert response.status_code == status.HTTP_403_FORBIDDEN, (
+            f"{method} {endpoint} should return 403 for school admin"
+        )
         error_detail = response.json()["detail"]
         assert "privileges" in error_detail.lower()
 

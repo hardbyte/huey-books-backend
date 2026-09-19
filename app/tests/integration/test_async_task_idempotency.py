@@ -568,12 +568,12 @@ async def test_concurrent_task_processing():
             print(f"Exception during concurrent processing: {exc}")
 
     # Exactly one should succeed, others should fail (including timeouts)
-    assert (
-        len(successful_acquisitions) == 1
-    ), f"Expected 1 successful acquisition, got {len(successful_acquisitions)}"
-    assert (
-        len(failed_acquisitions) + len(timeout_failures) >= 2
-    ), "Expected at least 2 failures (normal or timeout)"
+    assert len(successful_acquisitions) == 1, (
+        f"Expected 1 successful acquisition, got {len(successful_acquisitions)}"
+    )
+    assert len(failed_acquisitions) + len(timeout_failures) >= 2, (
+        "Expected at least 2 failures (normal or timeout)"
+    )
 
     # Verify only one record was created using a separate session
     verification_session = get_async_session_maker()()

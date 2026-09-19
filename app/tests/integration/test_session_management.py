@@ -40,7 +40,7 @@ class TestSessionManagement:
 
     def test_session_cleanup(self, session):
         """Test that sessions are properly cleaned up after use."""
-        session_factory = get_session_maker()
+        get_session_maker()
 
         # Create and use multiple sessions sequentially (reduced from 5 to 3)
         for i in range(3):
@@ -66,7 +66,7 @@ class TestSessionManagement:
         pool = engine.pool
 
         # Get pool info
-        initial_checked_out = pool.checkedout()
+        pool.checkedout()
 
         def use_session(session_id):
             try:
@@ -74,9 +74,7 @@ class TestSessionManagement:
                 session = next(session_gen)
 
                 # Hold the session briefly
-                result = session.execute(
-                    text(f"SELECT {session_id}, pg_sleep(0.1)")
-                ).scalar()
+                session.execute(text(f"SELECT {session_id}, pg_sleep(0.1)")).scalar()
 
                 # Close session
                 try:
@@ -94,9 +92,9 @@ class TestSessionManagement:
             results = [future.result(timeout=5) for future in futures]
 
         success_count = sum(1 for r in results if "OK" in r)
-        assert (
-            success_count == 5
-        ), f"Expected 5 successful sessions, got {success_count}"
+        assert success_count == 5, (
+            f"Expected 5 successful sessions, got {success_count}"
+        )
 
     def test_pool_exhaustion_recovery(self, session):
         """Test behavior when connection pool approaches limits."""
@@ -199,9 +197,9 @@ class TestSessionManagement:
             results = [future.result(timeout=10) for future in futures]
 
         success_count = sum(1 for r in results if "OK" in r)
-        assert (
-            success_count == num_workers
-        ), f"Expected {num_workers} successful workers, got {success_count}"
+        assert success_count == num_workers, (
+            f"Expected {num_workers} successful workers, got {success_count}"
+        )
 
     def test_session_context_manager(self, session):
         """Test that session context manager works correctly."""

@@ -127,9 +127,7 @@ class TestValidateFlowStructure:
 
     def setup_method(self):
         self.repo = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=AsyncMock()
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=AsyncMock())
 
     @pytest.mark.asyncio
     async def test_valid_flow(self):
@@ -189,12 +187,8 @@ class TestValidateFlowStructure:
 
     @pytest.mark.asyncio
     async def test_invalid_variable_scope_warning(self):
-        node = _make_mock_node(
-            "msg", content={"text": "Hello {{ badscope.name }}"}
-        )
-        flow = _make_mock_flow(
-            entry_node_id="msg", nodes=[node], connections=[]
-        )
+        node = _make_mock_node("msg", content={"text": "Hello {{ badscope.name }}"})
+        flow = _make_mock_flow(entry_node_id="msg", nodes=[node], connections=[])
 
         result = await self.service._validate_flow_structure(AsyncMock(), flow)
 
@@ -205,9 +199,7 @@ class TestValidateFlowStructure:
         node = _make_mock_node(
             "msg", content={"text": "Hi {{ user.name }}, you have {{ temp.count }}"}
         )
-        flow = _make_mock_flow(
-            entry_node_id="msg", nodes=[node], connections=[]
-        )
+        flow = _make_mock_flow(entry_node_id="msg", nodes=[node], connections=[])
 
         result = await self.service._validate_flow_structure(AsyncMock(), flow)
 
@@ -216,9 +208,7 @@ class TestValidateFlowStructure:
     @pytest.mark.asyncio
     async def test_unscoped_variable_warning(self):
         node = _make_mock_node("msg", content={"text": "Hi {{ name }}"})
-        flow = _make_mock_flow(
-            entry_node_id="msg", nodes=[node], connections=[]
-        )
+        flow = _make_mock_flow(entry_node_id="msg", nodes=[node], connections=[])
 
         result = await self.service._validate_flow_structure(AsyncMock(), flow)
 
@@ -226,12 +216,8 @@ class TestValidateFlowStructure:
 
     @pytest.mark.asyncio
     async def test_secret_reference_not_flagged(self):
-        node = _make_mock_node(
-            "msg", content={"text": "Key is {{ secret:api_key }}"}
-        )
-        flow = _make_mock_flow(
-            entry_node_id="msg", nodes=[node], connections=[]
-        )
+        node = _make_mock_node("msg", content={"text": "Key is {{ secret:api_key }}"})
+        flow = _make_mock_flow(entry_node_id="msg", nodes=[node], connections=[])
 
         result = await self.service._validate_flow_structure(AsyncMock(), flow)
 
@@ -240,9 +226,7 @@ class TestValidateFlowStructure:
     @pytest.mark.asyncio
     async def test_node_with_no_content_skipped(self):
         node = _make_mock_node("empty", content=None)
-        flow = _make_mock_flow(
-            entry_node_id="empty", nodes=[node], connections=[]
-        )
+        flow = _make_mock_flow(entry_node_id="empty", nodes=[node], connections=[])
 
         result = await self.service._validate_flow_structure(AsyncMock(), flow)
 
@@ -255,9 +239,7 @@ class TestPublishFlowWithValidation:
     def setup_method(self):
         self.repo = AsyncMock()
         self.outbox = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=self.outbox
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=self.outbox)
         self.db = AsyncMock()
         self.flow_id = uuid4()
         self.user_id = uuid4()
@@ -281,7 +263,7 @@ class TestPublishFlowWithValidation:
         self.repo.get_flow_with_nodes.return_value = flow
         self.repo.publish_flow.return_value = flow
 
-        result = await self.service.publish_flow_with_validation(
+        await self.service.publish_flow_with_validation(
             self.db, self.flow_id, self.user_id
         )
 
@@ -290,7 +272,10 @@ class TestPublishFlowWithValidation:
         )
         self.outbox.publish_event.assert_awaited_once()
         call_kwargs = self.outbox.publish_event.call_args
-        assert call_kwargs[1]["event_type"] == "flow.published" or call_kwargs[0][1] == "flow.published"
+        assert (
+            call_kwargs[1]["event_type"] == "flow.published"
+            or call_kwargs[0][1] == "flow.published"
+        )
 
     @pytest.mark.asyncio
     async def test_publish_invalid_flow_raises_validation_error(self):
@@ -351,9 +336,7 @@ class TestValidateFlowComprehensive:
 
     def setup_method(self):
         self.repo = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=AsyncMock()
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=AsyncMock())
 
     @pytest.mark.asyncio
     async def test_flow_not_found_raises(self):
@@ -364,9 +347,7 @@ class TestValidateFlowComprehensive:
 
     @pytest.mark.asyncio
     async def test_delegates_to_validate_structure(self):
-        flow = _make_mock_flow(
-            entry_node_id="start", nodes=[_make_mock_node("start")]
-        )
+        flow = _make_mock_flow(entry_node_id="start", nodes=[_make_mock_node("start")])
         self.repo.get_flow_with_nodes.return_value = flow
 
         result = await self.service.validate_flow_comprehensive(AsyncMock(), uuid4())
@@ -380,9 +361,7 @@ class TestGetRandomContent:
 
     def setup_method(self):
         self.repo = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=AsyncMock()
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=AsyncMock())
 
     @pytest.mark.asyncio
     async def test_invalid_content_type_raises(self):
@@ -415,9 +394,7 @@ class TestCreateContentWithValidation:
         self.repo = AsyncMock()
         self.outbox = AsyncMock()
         self.db = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=self.outbox
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=self.outbox)
 
     @pytest.mark.asyncio
     async def test_missing_type_raises(self):
@@ -429,9 +406,7 @@ class TestCreateContentWithValidation:
     @pytest.mark.asyncio
     async def test_missing_content_body_raises(self):
         with pytest.raises(ContentWorkflowError, match="Content body is required"):
-            await self.service.create_content_with_validation(
-                self.db, {"type": "joke"}
-            )
+            await self.service.create_content_with_validation(self.db, {"type": "joke"})
 
     @pytest.mark.asyncio
     async def test_successful_creation(self):
@@ -465,9 +440,7 @@ class TestUpdateContentWithValidation:
         self.repo = AsyncMock()
         self.outbox = AsyncMock()
         self.db = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=self.outbox
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=self.outbox)
 
     @pytest.mark.asyncio
     async def test_content_not_found_raises(self):
@@ -504,7 +477,11 @@ class TestUpdateContentWithValidation:
         )
 
         call_args = self.outbox.publish_event.call_args
-        payload = call_args[0][3] if len(call_args[0]) > 3 else call_args[1].get("payload", {})
+        payload = (
+            call_args[0][3]
+            if len(call_args[0]) > 3
+            else call_args[1].get("payload", {})
+        )
         assert set(payload.get("changes", [])) == {"tags", "status"}
 
 
@@ -515,9 +492,7 @@ class TestUpdateContentStatus:
         self.repo = AsyncMock()
         self.outbox = AsyncMock()
         self.db = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=self.outbox
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=self.outbox)
 
     @pytest.mark.asyncio
     async def test_content_not_found_raises(self):
@@ -574,9 +549,7 @@ class TestBulkOperations:
     def setup_method(self):
         self.repo = AsyncMock()
         self.db = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=AsyncMock()
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=AsyncMock())
 
     @pytest.mark.asyncio
     async def test_bulk_update_all_succeed(self):
@@ -664,9 +637,7 @@ class TestDeleteContentWithValidation:
         self.repo = AsyncMock()
         self.outbox = AsyncMock()
         self.db = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=self.outbox
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=self.outbox)
 
     @pytest.mark.asyncio
     async def test_content_not_found_raises(self):
@@ -681,9 +652,7 @@ class TestDeleteContentWithValidation:
         self.repo.get_content_by_id.return_value = content
         self.repo.delete_content.return_value = True
 
-        result = await self.service.delete_content_with_validation(
-            self.db, content.id
-        )
+        result = await self.service.delete_content_with_validation(self.db, content.id)
 
         assert result is True
         self.outbox.publish_event.assert_awaited_once()
@@ -694,9 +663,7 @@ class TestDeleteContentWithValidation:
         self.repo.get_content_by_id.return_value = content
         self.repo.delete_content.return_value = False
 
-        result = await self.service.delete_content_with_validation(
-            self.db, content.id
-        )
+        result = await self.service.delete_content_with_validation(self.db, content.id)
 
         assert result is False
         self.outbox.publish_event.assert_not_awaited()
@@ -708,9 +675,7 @@ class TestListContentWithBusinessLogic:
     def setup_method(self):
         self.repo = AsyncMock()
         self.db = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=AsyncMock()
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=AsyncMock())
 
     @pytest.mark.asyncio
     async def test_invalid_content_type_raises(self):
@@ -816,17 +781,13 @@ class TestGetContentWithValidation:
 
     def setup_method(self):
         self.repo = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=AsyncMock()
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=AsyncMock())
 
     @pytest.mark.asyncio
     async def test_returns_none_when_not_found(self):
         self.repo.get_content_by_id.return_value = None
 
-        result = await self.service.get_content_with_validation(
-            AsyncMock(), uuid4()
-        )
+        result = await self.service.get_content_with_validation(AsyncMock(), uuid4())
 
         assert result is None
 
@@ -835,9 +796,7 @@ class TestGetContentWithValidation:
         content = _make_mock_content()
         self.repo.get_content_by_id.return_value = content
 
-        result = await self.service.get_content_with_validation(
-            AsyncMock(), content.id
-        )
+        result = await self.service.get_content_with_validation(AsyncMock(), content.id)
 
         assert result is not None
         assert result["id"] == str(content.id)
@@ -862,9 +821,7 @@ class TestContentVariantOperations:
         self.repo = AsyncMock()
         self.outbox = AsyncMock()
         self.db = AsyncMock()
-        self.service = CMSWorkflowService(
-            cms_repo=self.repo, event_outbox=self.outbox
-        )
+        self.service = CMSWorkflowService(cms_repo=self.repo, event_outbox=self.outbox)
         self.content_id = uuid4()
         self.variant_id = uuid4()
 

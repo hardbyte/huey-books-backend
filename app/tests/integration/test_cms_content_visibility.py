@@ -17,12 +17,9 @@ Visibility filtering is enforced via the /v1/cms/content/random endpoint which a
 """
 
 import secrets
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
-
-from app.models.cms import ContentStatus, ContentType, ContentVisibility
 
 
 @pytest.fixture(autouse=True)

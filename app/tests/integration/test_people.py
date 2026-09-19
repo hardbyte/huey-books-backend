@@ -22,7 +22,9 @@ def people_connections(session):
     engine.dispose()
 
 
-def test_concurrent_admin_departures_keep_one_admin(session, people_setup, people_connections):
+def test_concurrent_admin_departures_keep_one_admin(
+    session, people_setup, people_connections
+):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
@@ -67,7 +69,9 @@ def test_concurrent_admin_departures_keep_one_admin(session, people_setup, peopl
         assert sorted(workers.map(deactivate, user_ids)) == ["changed", "protected"]
 
 
-def test_stale_home_assignment_is_rejected(session, people_setup, test_school, people_connections):
+def test_stale_home_assignment_is_rejected(
+    session, people_setup, test_school, people_connections
+):
     from sqlalchemy import update
     from sqlalchemy.orm import Session
 

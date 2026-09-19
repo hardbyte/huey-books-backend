@@ -206,7 +206,7 @@ class TestContentToChatWorkflow:
             headers=backend_service_account_headers,
         )
         assert content_response.status_code == status.HTTP_201_CREATED
-        content_id = content_response.json()["id"]
+        content_response.json()["id"]
 
         # Create flow using the content
         flow_data = {
@@ -520,6 +520,7 @@ class TestAnalyticsWorkflow:
         else:
             # Unexpected error, should fail
             assert flow_analytics_response.status_code == status.HTTP_200_OK
+
 
 class TestErrorRecoveryWorkflows:
     """Test error scenarios and recovery workflows."""

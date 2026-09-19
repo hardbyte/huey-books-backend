@@ -285,6 +285,7 @@ async def test_concurrent_comp_product_creation_is_atomic(settings, session):
 async def test_lapse_sweep_expires_staff_comp(async_session):
     """A staff comp is expired by the lapse sweep once past its expiration."""
     from app.api.internal import handle_lapse_expired_schools
+
     school = School(
         name=f"Comp Sweep School {uuid4().hex[:8]}",
         wriveted_identifier=uuid4(),

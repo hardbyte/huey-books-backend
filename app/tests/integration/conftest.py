@@ -491,7 +491,7 @@ async def async_session(reset_global_state):
                 f"Pool status before test - Size: {pool.size()}, Checked in: {pool.checkedin()}, Checked out: {pool.checkedout()}, Overflow: {pool.overflow()}"
             )
 
-            result = await asyncio.wait_for(
+            await asyncio.wait_for(
                 session.execute(text("SELECT 1")),
                 timeout=5.0,  # Reduced to 5 second timeout
             )

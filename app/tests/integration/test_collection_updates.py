@@ -408,7 +408,9 @@ def test_collection_management(
     assert (
         len(collection_items["data"])
         == INITIAL_NUMBER_OF_HYDRATED_BOOKS + INITIAL_NUMBER_OF_UNHYDRATED_BOOKS
-    ), f"Expected the collection to contain {INITIAL_NUMBER_OF_HYDRATED_BOOKS} items, but it had {len(collection_items)}"
+    ), (
+        f"Expected the collection to contain {INITIAL_NUMBER_OF_HYDRATED_BOOKS} items, but it had {len(collection_items)}"
+    )
 
     # check collection search
 
@@ -456,7 +458,9 @@ def test_collection_management(
     assert (
         len(collection_items["data"])
         == INITIAL_NUMBER_OF_HYDRATED_BOOKS + INITIAL_NUMBER_OF_UNHYDRATED_BOOKS
-    ), f"Expected the collection to contain {INITIAL_NUMBER_OF_HYDRATED_BOOKS} items, but it had {len(collection_items)}"
+    ), (
+        f"Expected the collection to contain {INITIAL_NUMBER_OF_HYDRATED_BOOKS} items, but it had {len(collection_items)}"
+    )
 
     # ----------------- UPDATE COLLECTION LOAN STATUSES -----------------
 
@@ -502,9 +506,9 @@ def test_collection_management(
         if item["copies_total"] == 99 and item["copies_available"] == 99:
             number_items_with_updated_loan_status += 1
 
-    assert (
-        number_items_with_updated_loan_status == UPDATED_NUMBER_OF_BOOKS
-    ), f"Expected {UPDATED_NUMBER_OF_BOOKS} to have different loan statuses - but found {number_items_with_updated_loan_status}"
+    assert number_items_with_updated_loan_status == UPDATED_NUMBER_OF_BOOKS, (
+        f"Expected {UPDATED_NUMBER_OF_BOOKS} to have different loan statuses - but found {number_items_with_updated_loan_status}"
+    )
     print("Collection loan status has changed")
 
     # user
@@ -535,9 +539,9 @@ def test_collection_management(
         if item["copies_total"] == 99 and item["copies_available"] == 99:
             number_items_with_updated_loan_status += 1
 
-    assert (
-        number_items_with_updated_loan_status == UPDATED_NUMBER_OF_BOOKS
-    ), f"Expected {UPDATED_NUMBER_OF_BOOKS} to have different loan statuses - but found {number_items_with_updated_loan_status}"
+    assert number_items_with_updated_loan_status == UPDATED_NUMBER_OF_BOOKS, (
+        f"Expected {UPDATED_NUMBER_OF_BOOKS} to have different loan statuses - but found {number_items_with_updated_loan_status}"
+    )
     print("Collection loan status has changed")
 
     # ----------------- ADD AND REMOVE FROM COLLECTION -----------------

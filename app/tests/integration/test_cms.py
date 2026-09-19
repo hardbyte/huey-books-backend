@@ -1003,9 +1003,9 @@ def test_unauthorized_access(client):
         else:
             response = client.get(endpoint)
 
-        assert (
-            response.status_code == 401
-        ), f"{method} {endpoint} should require authorization"
+        assert response.status_code == 401, (
+            f"{method} {endpoint} should require authorization"
+        )
 
 
 def test_invalid_content_type(client, backend_service_account_headers):

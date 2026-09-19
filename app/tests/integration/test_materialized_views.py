@@ -164,9 +164,9 @@ class TestSearchViewV1MaterializedView:
             {"work_id": new_work.id},
         )
         pre_refresh_count = pre_refresh_result.scalar()
-        assert (
-            pre_refresh_count == 0
-        ), "Work should not be in materialized view before refresh"
+        assert pre_refresh_count == 0, (
+            "Work should not be in materialized view before refresh"
+        )
 
         # Manually refresh the materialized view
         await async_session.execute(text("REFRESH MATERIALIZED VIEW search_view_v1"))
@@ -335,9 +335,9 @@ class TestSearchViewV1MaterializedView:
             {"work_id": new_work.id},
         )
         work_count = work_search_result.scalar()
-        assert (
-            work_count == 0
-        ), "New work should not be in the materialized view before refresh"
+        assert work_count == 0, (
+            "New work should not be in the materialized view before refresh"
+        )
 
         # Now refresh and verify it appears
         await async_session.execute(text("REFRESH MATERIALIZED VIEW search_view_v1"))
@@ -349,9 +349,9 @@ class TestSearchViewV1MaterializedView:
             {"work_id": new_work.id},
         )
         refreshed_work_count = refreshed_work_result.scalar()
-        assert (
-            refreshed_work_count == 1
-        ), "New work should be in the refreshed materialized view"
+        assert refreshed_work_count == 1, (
+            "New work should be in the refreshed materialized view"
+        )
 
     async def test_search_view_document_weights(
         self, async_session: AsyncSession, cleanup_test_data
@@ -430,9 +430,9 @@ class TestSearchViewV1MaterializedView:
         ranks = [row[1] for row in ranked_results]
 
         # Title match should have highest rank
-        assert (
-            work_ids_by_rank[0] == work1.id
-        ), "Work with search term in title should rank highest"
+        assert work_ids_by_rank[0] == work1.id, (
+            "Work with search term in title should rank highest"
+        )
 
         # All ranks should be positive
         for rank in ranks:
@@ -442,9 +442,9 @@ class TestSearchViewV1MaterializedView:
         title_rank = ranks[0]
         other_ranks = ranks[1:]
         for other_rank in other_ranks:
-            assert (
-                title_rank > other_rank
-            ), "Title match should rank higher than subtitle/author matches"
+            assert title_rank > other_rank, (
+                "Title match should rank higher than subtitle/author matches"
+            )
 
     async def test_search_view_with_multiple_authors(
         self, async_session: AsyncSession, cleanup_test_data
@@ -587,9 +587,9 @@ class TestSearchViewV1MaterializedView:
         assert len(search_rows) > 0, "Should find performance test works"
 
         # Performance assertions (should be reasonably fast)
-        assert (
-            refresh_time < 5.0
-        ), f"Materialized view refresh took too long: {refresh_time}s"
+        assert refresh_time < 5.0, (
+            f"Materialized view refresh took too long: {refresh_time}s"
+        )
         assert search_time < 1.0, f"Search query took too long: {search_time}s"
 
         logger.info(f"Materialized view refresh time: {refresh_time:.3f}s")
