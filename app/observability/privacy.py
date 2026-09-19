@@ -7,7 +7,7 @@ from typing import Any
 
 request_secrets: ContextVar[tuple[str, ...]] = ContextVar("request_secrets", default=())
 _SESSION_PATH = re.compile(r"(/chat/sessions/)[^/\s?\"'<>]+")
-_URL_QUERY = re.compile(r"(https?://[^\s?\"'<>]+)\?[^\s\"'<>]*")
+_URL_TOKEN = re.compile(r"[^\s\"'<>]+")
 _PRIVATE_KEYS = frozenset(
     {
         "authorization",
@@ -25,9 +25,19 @@ _PRIVATE_KEYS = frozenset(
         "full_state",
         "state_updates",
         "initial_state",
+        "query",
+        "query_string",
     }
 )
 _NORMALIZED_PRIVATE_KEYS = {name.replace("_", "-") for name in _PRIVATE_KEYS}
+
+
+def _redact_url_query(match: re.Match[str]) -> str:
+    token = match.group()
+    path, separator, _ = token.partition("?")
+    if separator and "/" in path:
+        return f"{path}?[redacted]"
+    return token
 
 
 def redact(value: Any, key: str = "") -> Any:
@@ -36,7 +46,7 @@ def redact(value: Any, key: str = "") -> Any:
         return "[redacted]"
     if isinstance(value, str):
         value = _SESSION_PATH.sub(r"\1{session_token}", value)
-        value = _URL_QUERY.sub(r"\1?[redacted]", value)
+        value = _URL_TOKEN.sub(_redact_url_query, value)
         for secret in request_secrets.get():
             if secret:
                 value = value.replace(secret, "[redacted]")
