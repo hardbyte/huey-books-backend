@@ -39,9 +39,9 @@ update_edition_title = PGFunction(
     definition="""returns trigger LANGUAGE plpgsql
     AS $function$
     BEGIN
-    UPDATE editions SET title = COALESCE(editions.edition_title, works.title)
-    FROM works
-    WHERE editions.id = NEW.id AND (NEW.edition_title IS NOT NULL OR NEW.work_id IS NOT NULL);
+    UPDATE public.editions
+    SET title = COALESCE(NEW.edition_title, (SELECT title FROM public.works WHERE id = NEW.work_id))
+    WHERE id = NEW.id;
     RETURN NULL;
     END;
     $function$
@@ -54,9 +54,8 @@ update_edition_title_from_work = PGFunction(
     definition="""returns trigger LANGUAGE plpgsql
     AS $function$
     BEGIN
-        UPDATE editions SET title = COALESCE(editions.edition_title, works.title)
-        FROM works
-        WHERE editions.work_id = NEW.id AND (NEW.title IS NOT NULL);
+        UPDATE public.editions SET title = COALESCE(edition_title, NEW.title)
+        WHERE work_id = NEW.id;
         RETURN NULL;
     END;
     $function$""",

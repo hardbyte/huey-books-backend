@@ -73,24 +73,27 @@ search_view_v1 = PGMaterializedView(
     signature="search_view_v1",
     definition="""
 SELECT w.id AS work_id,
-       jsonb_agg(a.id) AS author_ids,
-       s.id as series_id,
+       coalesce(authors.author_ids, '[]'::jsonb) AS author_ids,
+       NULL::integer AS series_id,
        setweight(to_tsvector('english', coalesce(w.title, '')), 'A') ||
        setweight(to_tsvector('english', coalesce(w.subtitle, '')), 'C') ||
-       setweight(to_tsvector('english', (SELECT string_agg(coalesce(first_name || ' ' || last_name, ''), ' ') FROM public.authors WHERE id IN (SELECT author_id FROM public.author_work_association WHERE work_id = w.id))), 'C') ||
-       setweight(to_tsvector('english', coalesce(s.title, '')), 'B')
-                                          AS document
+       setweight(to_tsvector('english', coalesce(authors.names, '')), 'C') ||
+       setweight(to_tsvector('english', coalesce(series.titles, '')), 'B') AS document
 FROM public.works w
-         JOIN
-     public.author_work_association awa ON awa.work_id = w.id
-         JOIN
-     public.authors a ON a.id = awa.author_id
-LEFT JOIN
-    public.series_works_association swa ON swa.work_id = w.id
-LEFT JOIN
-    public.series s ON s.id = swa.series_id
-GROUP BY
-    w.id, s.id
+LEFT JOIN (
+    SELECT awa.work_id,
+           jsonb_agg(a.id ORDER BY a.id) AS author_ids,
+           string_agg(concat_ws(' ', a.first_name, a.last_name), ' ' ORDER BY a.id) AS names
+    FROM public.author_work_association awa
+    JOIN public.authors a ON a.id = awa.author_id
+    GROUP BY awa.work_id
+) authors ON authors.work_id = w.id
+LEFT JOIN (
+    SELECT swa.work_id, string_agg(s.title, ' ' ORDER BY s.id) AS titles
+    FROM public.series_works_association swa
+    JOIN public.series s ON s.id = swa.series_id
+    GROUP BY swa.work_id
+) series ON series.work_id = w.id
     """,
     with_data=True,
 )

@@ -1,6 +1,6 @@
 # Catalogue search result contract
 
-This document defines the target search contract. Implementation and migration changes must preserve authorization and response compatibility.
+This document defines the search contract and explicitly marked targets. See [search and indexes](search-and-indexes.md) for current endpoint behavior, refresh operations and observability. Implementation and migration changes must preserve authorization and response compatibility.
 
 ## Identity and coverage
 
@@ -12,7 +12,7 @@ Do not merge work IDs by normalized title. Different authors, editions grouped i
 
 Construct author names with `concat_ws` so a missing first or last name does not erase the other component. Use the same field text for native and BM25 comparisons. Native field weights and popularity are separate ranking experiments, not evidence about the index access method.
 
-## Input intent
+## Input intent (remaining targets)
 
 - An ISBN-shaped input uses normalized exact ISBN lookup first. It must not depend on token ranking or popularity, and must preserve edition identity where the API returns editions.
 - Complete title, author and series queries use lexical retrieval. Keep existing Boolean/phrase syntax on the existing endpoint; a BM25 replacement must preserve it with an eligibility predicate or make a separately reviewed API change.
@@ -20,7 +20,7 @@ Construct author names with `concat_ws` so a missing first or last name does not
 - Empty and stopword-only inputs browse eligible works by popularity descending, then work ID. A nonempty unmatched query returns no lexical results. Do not fill a lexical result page with zero-score unrelated works.
 - Scores use deterministic `work_id` tie-breaking. Counts are distinct eligible work counts, not candidate caps or raw join rows.
 
-## Library scope
+## Library scope (evaluation target)
 
 A scope is resolved and authorized by the application before retrieval. Use the collection ownership relationships defined by the application schema. Keep customer holdings and identifiers in private evaluation storage.
 
