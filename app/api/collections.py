@@ -1,3 +1,4 @@
+from time import perf_counter
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Security
@@ -127,11 +128,15 @@ async def get_collection_items(
         items_matching_query=matching_count,
         items_returned=len(items),
     )
-    # Note the serializing is fast
-    return CollectionItemsResponse(
+    started = perf_counter()
+    response = CollectionItemsResponse(
         data=items,
         pagination=Pagination(**pagination.to_dict(), total=matching_count),
     )
+    logger.info(
+        "Holdings response phase", response_ms=(perf_counter() - started) * 1000
+    )
+    return response
 
 
 @router.get(

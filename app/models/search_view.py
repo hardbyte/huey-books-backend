@@ -10,11 +10,5 @@ search_view_v1 = Table(
     Column("author_ids", JSONB),
     Column("series_id", Integer),
     Column("document", TSVECTOR),
-    Index(
-        "uix_search_view_work_series",
-        "work_id",
-        "series_id",
-        unique=True,
-        postgresql_nulls_not_distinct=True,
-    ),
+    Index("uix_search_view_work_id", "work_id", unique=True),
 )

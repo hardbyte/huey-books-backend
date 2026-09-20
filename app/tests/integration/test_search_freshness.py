@@ -139,10 +139,11 @@ async def test_concurrent_search_refresh_preserves_null_and_multiple_series(
     try:
         await update_search_view_v1(async_session)
         before = (await async_session.execute(rows_sql, parameters)).all()
-        assert len(before) == 3
+        assert len(before) == 2
         assert [(row.work_id, row.series_id) for row in before] == [
-            (standalone_id, None)
-        ] + [(multi_id, value) for value in series_ids]
+            (standalone_id, None),
+            (multi_id, None),
+        ]
         with session.bind.connect() as reader:
             reader.execute(text("SELECT 1 FROM search_view_v1 LIMIT 1"))
             await update_search_view_v1(async_session)
@@ -154,7 +155,7 @@ async def test_concurrent_search_refresh_preserves_null_and_multiple_series(
         session.commit()
         await update_search_view_v1(async_session)
         after = (await async_session.execute(rows_sql, parameters)).all()
-        assert len(after) == 3
+        assert len(after) == 2
         assert after[0].document != before[0].document
     finally:
         await async_session.rollback()

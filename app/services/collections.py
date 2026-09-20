@@ -1,3 +1,4 @@
+from time import perf_counter
 from typing import List
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from sqlalchemy import (
     func,
     select,
     text,
+    true,
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -27,7 +29,8 @@ from app.models import BookListItem, CollectionItem
 from app.models.collection import Collection
 from app.models.edition import Edition
 from app.models.labelset import LabelSet, RecommendStatus
-from app.models.work import Work
+from app.models.labelset_hue_association import LabelSetHue
+from app.models.labelset_reading_ability_association import LabelSetReadingAbility
 from app.repositories.edition_repository import edition_repository
 from app.schemas.collection import (
     CollectionAndItemsUpdateIn,
@@ -277,67 +280,65 @@ async def bulk_update_editions_in_collection_by_isbn(
 async def get_collection_info_with_criteria(
     session: AsyncSession,
     collection_id: UUID,
-    # is_hydrated: bool = False,
-    # is_labelled: bool = False,
-    # is_recommendable: bool = False,
-    # cte_label: str = "latestlabelset",
 ):
-    """
-    Return a (complicated) select query for labelsets, editions, and works filtering by
-    collection, hydration status, labelling status, and recommendability.
-
-    Can raise sqlalchemy.exc.NoResultFound if for example an invalid reading_ability key
-    is passed.
-    """
-
-    query = (
-        select(
-            func.count().label("total"),
-            func.count()
-            .filter(and_(Edition.title.is_not(None), Edition.cover_url.is_not(None)))
-            .label("hydrated"),
-            func.count()
-            .filter(
-                and_(
-                    Edition.title.is_not(None),
-                    Edition.cover_url.is_not(None),
-                    LabelSet.hues.any(),
-                    LabelSet.reading_abilities.any(),
-                    LabelSet.min_age >= 0,
-                    LabelSet.max_age > 0,
-                    LabelSet.huey_summary.is_not(None),
-                )
-            )
-            .label("labelled"),
-            func.count()
-            .filter(
-                and_(
-                    Edition.title.is_not(None),
-                    Edition.cover_url.is_not(None),
-                    LabelSet.hues.any(),
-                    LabelSet.reading_abilities.any(),
-                    LabelSet.min_age >= 0,
-                    LabelSet.max_age > 0,
-                    LabelSet.huey_summary.is_not(None),
-                    LabelSet.recommend_status == RecommendStatus.GOOD,
-                )
-            )
-            .label("recommendable"),
-        )
-        .select_from(Work)
-        .join(Edition, Edition.work_id == Work.id)
-        .join(CollectionItem, CollectionItem.edition_isbn == Edition.isbn)
-        .join(LabelSet, LabelSet.work_id == Work.id, isouter=True)
-        .where(CollectionItem.collection_id == collection_id)
+    """Count scoped holdings using only each work's latest labelset."""
+    started = perf_counter()
+    edition = (
+        select(Edition.work_id, Edition.title, Edition.cover_url)
+        .where(Edition.isbn == CollectionItem.edition_isbn)
+        .limit(1)
+        .lateral("holding_edition")
     )
+    hydrated = and_(edition.c.title.is_not(None), edition.c.cover_url.is_not(None))
+    latest = (
+        select(
+            LabelSet.id,
+            LabelSet.min_age,
+            LabelSet.max_age,
+            LabelSet.huey_summary,
+            LabelSet.recommend_status,
+        )
+        .where(LabelSet.work_id == edition.c.work_id, hydrated)
+        .order_by(LabelSet.id.desc())
+        .limit(1)
+        .lateral("latest_labelset")
+    )
+    labelled = and_(
+        hydrated,
+        select(1).where(LabelSetHue.labelset_id == latest.c.id).exists(),
+        select(1).where(LabelSetReadingAbility.labelset_id == latest.c.id).exists(),
+        latest.c.min_age >= 0,
+        latest.c.max_age > 0,
+        latest.c.huey_summary.is_not(None),
+    )
+    flags = (
+        select(
+            hydrated.label("hydrated"),
+            labelled.label("labelled"),
+            latest.c.recommend_status.label("recommend_status"),
+        )
+        .select_from(CollectionItem)
+        .outerjoin(edition, true())
+        .outerjoin(latest, true())
+        .where(CollectionItem.collection_id == collection_id)
+        .cte("holding_flags")
+        .prefix_with("MATERIALIZED")
+    )
+    query = select(
+        func.count().label("total"),
+        func.count().filter(flags.c.hydrated).label("hydrated"),
+        func.count().filter(flags.c.labelled).label("labelled"),
+        func.count()
+        .filter(
+            and_(flags.c.labelled, flags.c.recommend_status == RecommendStatus.GOOD)
+        )
+        .label("recommendable"),
+    ).select_from(flags)
 
-    # if config.DEBUG:
-    #     explain_results = (await session.execute(explain(query, analyze=True))).scalars().all()
-    #     logger.info("Query plan")
-    #     for entry in explain_results:
-    #         logger.info(entry)
-
-    result = (await session.execute(query)).fetchone()
+    result = (await session.execute(query)).one()
+    logger.info(
+        "Collection info phases", aggregate_ms=(perf_counter() - started) * 1000
+    )
     return {
         "total_editions": result.total,
         "hydrated": result.hydrated,

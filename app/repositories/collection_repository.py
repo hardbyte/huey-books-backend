@@ -5,11 +5,12 @@ Replaces the generic CRUDCollection class with proper repository pattern.
 """
 
 from abc import ABC, abstractmethod
+from time import perf_counter
 from typing import Optional, Sequence, Tuple
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import asc, delete, func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_upsert
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.orm import Session, aliased, contains_eager, raiseload
@@ -703,14 +704,95 @@ class CollectionRepositoryImpl(CollectionRepository):
         limit: int = 1000,
     ) -> Tuple[int, Sequence[CollectionItem]]:
         """Get filtered collection items with total count."""
+        started = perf_counter()
+        edition_sort = (
+            select(Edition.title)
+            .where(Edition.isbn == CollectionItem.edition_isbn)
+            .limit(1)
+            .lateral("edition_sort")
+        )
+        candidates = (
+            select(CollectionItem.id, edition_sort.c.title)
+            .outerjoin(edition_sort, true())
+            .where(CollectionItem.collection_id == collection_id)
+        )
+        if query_string is not None:
+            candidates = candidates.where(edition_sort.c.title.match(query_string))
+        if reader_id is not None or read_status is not None:
+            activity = aliased(CollectionItemActivity)
+            matching_activity = select(1).where(
+                activity.collection_item_id == CollectionItem.id
+            )
+            if reader_id is not None:
+                matching_activity = matching_activity.where(
+                    activity.reader_id == reader_id
+                )
+            if read_status is not None:
+                newer_activity = aliased(CollectionItemActivity)
+                newer_exists = (
+                    select(1)
+                    .where(
+                        newer_activity.collection_item_id
+                        == activity.collection_item_id,
+                        newer_activity.reader_id == activity.reader_id,
+                        or_(
+                            newer_activity.timestamp > activity.timestamp,
+                            (newer_activity.timestamp == activity.timestamp)
+                            & (newer_activity.id > activity.id),
+                        ),
+                    )
+                    .correlate(activity)
+                    .exists()
+                )
+                matching_activity = matching_activity.where(
+                    activity.status == read_status, ~newer_exists
+                )
+            candidates = candidates.where(
+                matching_activity.correlate(CollectionItem).exists()
+            )
+
+        count_query = (
+            select(func.count())
+            .select_from(CollectionItem)
+            .where(candidates.whereclause)
+        )
+        if query_string is not None:
+            count_query = count_query.outerjoin(edition_sort, true())
+        matching_count = db.scalar(count_query)
+        counted = perf_counter()
+        page = (
+            candidates.order_by(
+                edition_sort.c.title.asc().nulls_last(), CollectionItem.id
+            )
+            .offset(skip)
+            .limit(limit)
+            .cte("holding_page")
+        )
         statement = (
             select(CollectionItem)
-            .join(CollectionItem.edition, isouter=True)
-            .join(Edition.work, isouter=True)
+            .join(page, page.c.id == CollectionItem.id)
+            .outerjoin(CollectionItem.edition)
+            .outerjoin(Edition.work)
             .options(
-                contains_eager(CollectionItem.edition).lazyload(Edition.illustrators),
-                contains_eager(CollectionItem.edition).lazyload(Edition.collections),
+                contains_eager(CollectionItem.edition).load_only(
+                    Edition.isbn,
+                    Edition.work_id,
+                    Edition.leading_article,
+                    Edition.title,
+                    Edition.cover_url,
+                ),
+                contains_eager(CollectionItem.edition).raiseload(Edition.illustrators),
+                contains_eager(CollectionItem.edition).raiseload(Edition.collections),
                 contains_eager(CollectionItem.edition).defer(Edition.collection_count),
+                contains_eager(CollectionItem.edition)
+                .contains_eager(Edition.work)
+                .load_only(
+                    Work.id,
+                    Work.type,
+                    Work.leading_article,
+                    Work.title,
+                    Work.subtitle,
+                ),
                 contains_eager(CollectionItem.edition)
                 .contains_eager(Edition.work)
                 .raiseload(Work.labelset),
@@ -723,64 +805,20 @@ class CollectionRepositoryImpl(CollectionRepository):
                 contains_eager(CollectionItem.edition)
                 .contains_eager(Edition.work)
                 .selectinload(Work.authors)
+                .load_only(Author.id, Author.first_name, Author.last_name)
                 .raiseload(Author.books),
                 raiseload(CollectionItem.collection),
                 raiseload(CollectionItem.activity_log),
             )
-            .where(CollectionItem.collection_id == collection_id)
-            .order_by(asc(Edition.title))
+            .order_by(page.c.title.asc().nulls_last(), page.c.id)
         )
-
-        if query_string is not None:
-            statement = statement.where(Edition.title.match(query_string))
-
-        if reader_id is not None or read_status is not None:
-            statement = statement.join(CollectionItemActivity)
-
-            if reader_id is not None:
-                statement = statement.where(
-                    CollectionItemActivity.reader_id == reader_id
-                )
-
-            if read_status is not None:
-                most_recent_timestamps = (
-                    select(
-                        CollectionItemActivity.collection_item_id,
-                        CollectionItemActivity.reader_id,
-                        func.max(CollectionItemActivity.timestamp).label(
-                            "most_recent_timestamp"
-                        ),
-                    )
-                    .group_by(
-                        CollectionItemActivity.collection_item_id,
-                        CollectionItemActivity.reader_id,
-                    )
-                    .alias("most_recent_timestamps")
-                )
-
-                statement = (
-                    statement.where(
-                        CollectionItem.id == CollectionItemActivity.collection_item_id
-                    )
-                    .where(
-                        most_recent_timestamps.c.most_recent_timestamp
-                        == CollectionItemActivity.timestamp
-                    )
-                    .where(
-                        CollectionItemActivity.reader_id
-                        == most_recent_timestamps.c.reader_id
-                    )
-                    .where(CollectionItemActivity.status == read_status)
-                )
-
-        cte = statement.cte()
-        aliased_model = aliased(CollectionItem, cte)
-        count_query = select(func.count(aliased_model.id))
-        matching_count = db.scalar(count_query)
-
-        paginated_items_query = self.apply_pagination(statement, skip=skip, limit=limit)
-
-        return matching_count, db.scalars(paginated_items_query).all()
+        items = db.scalars(statement).all()
+        logger.info(
+            "Holdings list phases",
+            count_ms=(counted - started) * 1000,
+            page_load_ms=(perf_counter() - counted) * 1000,
+        )
+        return matching_count, items
 
     def apply_pagination(self, query, skip: int = 0, limit: int = 100):
         """Apply pagination to a query."""

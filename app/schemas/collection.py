@@ -28,13 +28,14 @@ class CollectionBrief(BaseModel):
 
 class CollectionInfo(BaseModel):
     """
-    Count editions in each state in a collection.
+    Count holdings in each state in a collection.
 
     Note this doesn't count additional copies of the same book.
     """
 
     total_editions: int = Field(
-        ..., description="Count of unique editions in this collection"
+        ...,
+        description="Count of holdings in this collection, including unresolved items; additional copies are not counted",
     )
 
     hydrated: int = Field(

@@ -64,6 +64,14 @@ class CollectionItemActivity(Base):
         DateTime, nullable=False, default=datetime.utcnow
     )
 
+    Index(
+        "ix_collection_activity_latest",
+        collection_item_id,
+        reader_id,
+        timestamp.desc(),
+        id.desc(),
+    )
+
     # index the timestamp and reader_id together to allow for fast "current status" lookups
     Index(
         "ix_collectionitemactivitys_timestamp_reader_id",
