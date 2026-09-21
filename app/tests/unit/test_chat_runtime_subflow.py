@@ -243,17 +243,20 @@ class TestTryReturnToParentFlow:
             {"label": "Find more books!", "value": "restart"},
             {"label": "I'm done, thanks!", "value": "done"},
         ]
-        runtime._resolve_question_node = AsyncMock(
-            return_value=(
-                {
-                    "input_type": "choice",
-                    "options": question_options,
-                    "question": {"text": "What would you like to do?"},
-                    "variable": "temp.restart_choice",
-                },
-                question_options,
-                popped,
-            )
+        runtime.process_node.side_effect = [
+            runtime.process_node.return_value,
+            {
+                "type": "question",
+                "input_type": "choice",
+                "options": question_options,
+                "question": {"text": "What would you like to do?"},
+                "variable": "temp.restart_choice",
+            },
+        ]
+        from itertools import chain, repeat
+
+        mock_chat_repo.get_session_by_id = AsyncMock(
+            side_effect=chain([session], repeat(popped))
         )
 
         result = await runtime._try_return_to_parent_flow(

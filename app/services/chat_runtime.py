@@ -24,6 +24,7 @@ from app.repositories.chat_repository import chat_repo
 from app.repositories.cms_repository import CMSRepositoryImpl
 from app.services.book_feedback import book_identifier, normalize_feedback
 from app.services.execution_trace import execution_trace_service
+from app.services.question_contract import validate_question
 from app.services.variable_resolver import create_session_resolver
 
 
@@ -312,14 +313,36 @@ class QuestionNodeProcessor(NodeProcessor):
             fetched_content = await self._fetch_random_content(
                 db, node_content, session_state
             )
+            if fetched_content is None and node_content.get("on_empty"):
+                target_id = node_content["on_empty"]
+                if not isinstance(target_id, str) or target_id == node.node_id:
+                    raise ValueError("Invalid empty-question route")
+                target = await chat_repo.get_flow_node(
+                    db, flow_id=node.flow_id, node_id=target_id
+                )
+                if target is None:
+                    raise ValueError("Empty-question route target does not exist")
+                await chat_repo.update_session_state(
+                    db,
+                    session_id=session.id,
+                    state_updates={"system": {"_current_options": []}},
+                )
+                self.logger.info(
+                    "CMS question skipped",
+                    outcome="empty",
+                    input_type=node_content.get("input_type", "text"),
+                )
+                return {
+                    "type": "messages",
+                    "messages": [],
+                    "next_node": target,
+                    "node_id": node.node_id,
+                    "question_skipped": True,
+                }
             if fetched_content:
                 content_id = str(fetched_content.id)
                 question_message = await self._render_question_message(
                     fetched_content, session_state
-                )
-                # Track shown content ID if configured
-                await self._track_shown_content(
-                    db, session, node_content, fetched_content.id
                 )
         else:
             # Handle both CMS content references and inline content
@@ -340,6 +363,7 @@ class QuestionNodeProcessor(NodeProcessor):
                 try:
                     content = await crud.content.aget(db, UUID(content_id))
                     if content and content.is_active:
+                        fetched_content = content
                         question_message = await self._render_question_message(
                             content, session_state
                         )
@@ -389,21 +413,6 @@ class QuestionNodeProcessor(NodeProcessor):
                     }
                 )
 
-        # Record question in history
-        await chat_repo.add_interaction_history(
-            db,
-            session_id=session.id,
-            node_id=node.node_id,
-            interaction_type=InteractionType.MESSAGE,
-            content={
-                "question": question_message,
-                "content_id": content_id,
-                "input_type": node_content.get("input_type", "text"),
-                "offered_isbns": offered_isbns,
-                "timestamp": datetime.utcnow().isoformat(),
-            },
-        )
-
         # Determine variable for storing response
         variable = node_content.get("variable") or node_content.get("result_variable")
 
@@ -416,7 +425,11 @@ class QuestionNodeProcessor(NodeProcessor):
             )
 
         # Normalize CMS options: ensure label/value fields exist
-        if options:
+        if isinstance(options, list):
+            options = [
+                dict(opt) if isinstance(opt, dict) else {"label": opt, "value": opt}
+                for opt in options
+            ]
             for opt in options:
                 if "label" not in opt and "text" in opt:
                     opt["label"] = opt["text"]
@@ -424,16 +437,6 @@ class QuestionNodeProcessor(NodeProcessor):
                     opt["value"] = opt["text"]
 
         input_type = node_content.get("input_type", "text")
-
-        # Store resolved options in session for process_response() to match against.
-        # Both CMS-sourced and inline options need to be stored so _match_option
-        # can return the full option object (with fields like age_number, hue_map).
-        if options and input_type in ("choice", "image_choice", "button", "carousel"):
-            await chat_repo.update_session_state(
-                db,
-                session_id=session.id,
-                state_updates={"system": {"_current_options": options}},
-            )
 
         result: Dict[str, Any] = {
             "type": "question",
@@ -463,6 +466,36 @@ class QuestionNodeProcessor(NodeProcessor):
                 if books and isinstance(books, list):
                     result["books"] = books
 
+        validate_question(result)
+        if fetched_content:
+            await self._track_shown_content(
+                db, session, node_content, fetched_content.id
+            )
+        # Record question in history
+        await chat_repo.add_interaction_history(
+            db,
+            session_id=session.id,
+            node_id=node.node_id,
+            interaction_type=InteractionType.MESSAGE,
+            content={
+                "question": question_message,
+                "content_id": content_id,
+                "input_type": node_content.get("input_type", "text"),
+                "offered_isbns": offered_isbns,
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        )
+
+        # Store resolved options in session for process_response() to match against.
+        # Both CMS-sourced and inline options need to be stored so _match_option
+        # can return the full option object (with fields like age_number, hue_map).
+        if options and input_type in ("choice", "image_choice", "button", "carousel"):
+            await chat_repo.update_session_state(
+                db,
+                session_id=session.id,
+                state_updates={"system": {"_current_options": options}},
+            )
+
         return result
 
     async def _fetch_random_content(
@@ -482,7 +515,7 @@ class QuestionNodeProcessor(NodeProcessor):
             self.logger.error(
                 "Invalid content type in source_config", content_type=content_type_str
             )
-            return None
+            raise
 
         # Get tags
         tags = source_config.get("tags")
@@ -557,7 +590,7 @@ class QuestionNodeProcessor(NodeProcessor):
                 error=str(e),
                 content_type=content_type.value,
             )
-            return None
+            raise
 
     def _get_state_list(
         self, session_state: Dict[str, Any], variable_path: str
@@ -929,6 +962,12 @@ class QuestionNodeProcessor(NodeProcessor):
             "type": content.type.value,
             "content": self._deep_substitute_variables(content_data, session_state),
         }
+        rendered = message["content"]
+        for key in ("question_text", "text", "question"):
+            prompt = rendered.get(key)
+            if isinstance(prompt, str) and prompt.strip():
+                message["text"] = prompt
+                break
         return message
 
     def _deep_substitute_variables(
@@ -1284,17 +1323,7 @@ class ChatRuntime:
                 chained_next_node = (
                     next_result.get("next_node") if next_result else None
                 )
-                if response["next_node"].node_type == NodeType.QUESTION:
-                    awaiting_input = True
-                    # Use the processed result (has variable substitution and
-                    # normalized options), falling back to raw node content
-                    if next_result and next_result.get("type") == "question":
-                        result["input_request"] = self._build_input_request(next_result)
-                    else:
-                        result["input_request"] = self._build_input_request(
-                            response["next_node"].content or {}
-                        )
-                elif (
+                if (
                     isinstance(next_result, dict)
                     and next_result.get("type") == "question"
                 ):
@@ -1310,15 +1339,19 @@ class ChatRuntime:
                     # Handle FlowNode objects
                     if isinstance(chained_next_node, FlowNode):
                         if chained_next_node.node_type == NodeType.QUESTION:
-                            session_position = chained_next_node.node_id
-                            session_flow_id = chained_next_node.flow_id
-                            awaiting_input = True
                             (
-                                result["input_request"],
-                                _,
+                                chained_next_node,
+                                session_position,
+                                session_flow_id,
+                                awaiting_input,
                                 session,
-                            ) = await self._resolve_question_node(
-                                db, chained_next_node, session
+                            ) = await self._process_chained_node(
+                                db,
+                                chained_next_node,
+                                session,
+                                result,
+                                session_position,
+                                session_flow_id,
                             )
                     # Handle dict results (e.g., from composite node sub-flows)
                     elif isinstance(chained_next_node, dict):
@@ -1382,7 +1415,11 @@ class ChatRuntime:
                 result["current_node_id"] = session_position
 
                 # Check if the flow ended (no more next nodes)
-                if not chained_next_node and not awaiting_input:
+                if (
+                    not chained_next_node
+                    and not awaiting_input
+                    and not result.get("wait_for_acknowledgment")
+                ):
                     result["session_ended"] = True
             else:
                 result["session_ended"] = True
@@ -1413,13 +1450,7 @@ class ChatRuntime:
                     chained_next = next_result.get("next_node") if next_result else None
 
                     # Check if the first processed node is a question
-                    if next_node.node_type == NodeType.QUESTION:
-                        awaiting_input = True
-                        if next_result and next_result.get("type") == "question":
-                            result["input_request"] = self._build_input_request(
-                                next_result
-                            )
-                    elif (
+                    if (
                         isinstance(next_result, dict)
                         and next_result.get("type") == "question"
                     ):
@@ -1468,7 +1499,11 @@ class ChatRuntime:
 
                     result["current_node_id"] = session_position
 
-                    if not chained_next and not awaiting_input:
+                    if (
+                        not chained_next
+                        and not awaiting_input
+                        and not result.get("wait_for_acknowledgment")
+                    ):
                         result["session_ended"] = True
                 else:
                     result["session_ended"] = True
@@ -1625,25 +1660,25 @@ class ChatRuntime:
             while next_node:
                 if isinstance(next_node, FlowNode):
                     if next_node.node_type == NodeType.QUESTION:
-                        # Build input_request and persist options
                         (
-                            result["input_request"],
-                            q_options,
+                            next_node,
+                            position,
+                            flow_id,
+                            awaiting,
                             session,
-                        ) = await self._resolve_question_node(db, next_node, session)
-                        q_state = {"system": {"_current_options": q_options}}
-                        session = await self._refresh_session(db, session)
-                        session = await chat_repo.update_session_state(
+                        ) = await self._process_chained_node(
                             db,
-                            session_id=session.id,
-                            state_updates=q_state,
-                            current_node_id=next_node.node_id,
-                            current_flow_id=next_node.flow_id,
-                            expected_revision=session.revision,
+                            next_node,
+                            session,
+                            result,
+                            next_node.node_id,
+                            next_node.flow_id,
                         )
-                        result["current_node_id"] = next_node.node_id
-                        result["awaiting_input"] = True
-                        break
+                        result["current_node_id"] = position
+                        if awaiting:
+                            result["awaiting_input"] = True
+                            break
+                        continue
                     elif next_node.node_type in (
                         NodeType.MESSAGE,
                         NodeType.ACTION,
@@ -1756,6 +1791,51 @@ class ChatRuntime:
         if entry_node:
             result = await self.process_node(db, entry_node, session)
 
+            if result.get("question_skipped"):
+                collected = {"messages": []}
+                next_node = result["next_node"]
+                position, flow_id = entry_node.node_id, entry_node.flow_id
+                while next_node:
+                    (
+                        next_node,
+                        position,
+                        flow_id,
+                        awaiting,
+                        session,
+                    ) = await self._process_chained_node(
+                        db, next_node, session, collected, position, flow_id
+                    )
+                    if awaiting or collected.get("wait_for_acknowledgment"):
+                        break
+                result = {
+                    "type": "messages",
+                    **collected,
+                    "node_id": result.get("node_id", position),
+                }
+                if collected.get("input_request"):
+                    result["next_node"] = {
+                        "type": "question",
+                        "node_id": position,
+                        **collected["input_request"],
+                    }
+
+            if (
+                result.get("type") != "question"
+                and not result.get("next_node")
+                and not result.get("wait_for_acknowledgment")
+            ):
+                returned = await self._try_return_to_parent_flow(
+                    db, session, {"messages": result.get("messages", [])}
+                )
+                if returned:
+                    result = {"type": "messages", **returned}
+                    if returned.get("input_request"):
+                        result["next_node"] = {
+                            "type": "question",
+                            "node_id": returned["current_node_id"],
+                            **returned["input_request"],
+                        }
+
             # If the entry node leads into a question, process it and advance position
             next_node = result.get("next_node")
             question_result = None
@@ -1779,15 +1859,31 @@ class ChatRuntime:
                 )
             elif next_node and isinstance(next_node, FlowNode):
                 if next_node.node_type == NodeType.QUESTION:
-                    _, options, session = await self._resolve_question_node(
-                        db, next_node, session
-                    )
-                    await chat_repo.update_session_state(
-                        db,
-                        session_id=session.id,
-                        state_updates={"system": {"_current_options": options}},
-                        current_node_id=next_node.node_id,
-                    )
+                    collected = {"messages": result.get("messages", [])}
+                    position, flow_id = next_node.node_id, next_node.flow_id
+                    while next_node:
+                        (
+                            next_node,
+                            position,
+                            flow_id,
+                            awaiting,
+                            session,
+                        ) = await self._process_chained_node(
+                            db, next_node, session, collected, position, flow_id
+                        )
+                        if awaiting or collected.get("wait_for_acknowledgment"):
+                            break
+                    result = {
+                        "type": "messages",
+                        **collected,
+                        "node_id": result.get("node_id", position),
+                    }
+                    if collected.get("input_request"):
+                        result["next_node"] = {
+                            "type": "question",
+                            "node_id": position,
+                            **collected["input_request"],
+                        }
 
             # Ensure any FlowNode objects are serialized
             return self._serialize_node_result(result)
@@ -1813,11 +1909,19 @@ class ChatRuntime:
         if chained_node.node_type == NodeType.QUESTION:
             session_position = chained_node.node_id
             session_flow_id = chained_node.flow_id
-            (
-                result["input_request"],
-                q_options,
-                session,
-            ) = await self._resolve_question_node(db, chained_node, session)
+            session = await self._refresh_session(db, session)
+            question_result = await self.process_node(db, chained_node, session)
+            session = await self._refresh_session(db, session)
+            if question_result.get("question_skipped"):
+                return (
+                    question_result["next_node"],
+                    session_position,
+                    session_flow_id,
+                    False,
+                    session,
+                )
+            result["input_request"] = self._build_input_request(question_result)
+            q_options = result["input_request"]["options"]
             q_state = {"system": {"_current_options": q_options}}
             session = await self._refresh_session(db, session)
             session = await chat_repo.update_session_state(
@@ -1927,6 +2031,7 @@ class ChatRuntime:
     @staticmethod
     def _build_input_request(source: Dict[str, Any]) -> Dict[str, Any]:
         """Build an input_request dict from a question result or raw node content."""
+        validate_question(source)
         ir: Dict[str, Any] = {
             "input_type": source.get("input_type", "text"),
             "variable": source.get("variable", ""),
@@ -1938,20 +2043,6 @@ class ChatRuntime:
         if source.get("books"):
             ir["books"] = source["books"]
         return ir
-
-    async def _resolve_question_node(
-        self, db: AsyncSession, question_node: FlowNode, session: ConversationSession
-    ) -> tuple:
-        """Process a question FlowNode, returning (input_request, options, session).
-
-        Handles CMS content fetching, variable substitution, and option
-        normalization by running the node through process_node().
-        """
-        session = await self._refresh_session(db, session)
-        q_result = await self.process_node(db, question_node, session)
-        session = await self._refresh_session(db, session)
-        input_request = self._build_input_request(q_result or {})
-        return input_request, input_request["options"], session
 
     def _serialize_node_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize node processing result, converting FlowNode objects to dicts."""
