@@ -711,26 +711,8 @@ class CompositeNodeProcessor:
                     # Check if there's a next node to process
                     next_node = result.get("next_node")
                     if next_node:
-                        # If next node is a question, include it and stop
-                        if next_node.node_type == NodeType.QUESTION:
-                            question_result = await self.runtime.process_node(
-                                db, next_node, session
-                            )
-                            final_result = {
-                                "type": "messages",
-                                "messages": all_messages,
-                                "next_node": question_result,
-                            }
-                            break
-                        # If next node is also a message, continue processing
-                        elif next_node.node_type == NodeType.MESSAGE:
-                            current_node = next_node
-                            continue
-                        else:
-                            # For other node types (condition, action, etc.),
-                            # continue processing them automatically
-                            current_node = next_node
-                            continue
+                        current_node = next_node
+                        continue
                     else:
                         # No next node, we're done
                         break

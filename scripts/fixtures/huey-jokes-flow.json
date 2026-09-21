@@ -2,7 +2,7 @@
   "seed_key": "huey-jokes",
   "name": "Huey Jokes",
   "description": "Optional post-recommendation joke loop. Shows age-appropriate jokes from CMS, looping until the user opts out.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "entry_node_id": "joke_intro",
   "visibility": "wriveted",
   "flow_data": {
@@ -67,6 +67,7 @@
         "type": "question",
         "content": {
           "source": "random",
+          "on_empty": "jokes_exhausted",
           "source_config": {
             "type": "joke",
             "tags": ["huey-joke"],
@@ -117,6 +118,22 @@
           ]
         },
         "position": {"x": 500, "y": 450}
+      },
+      {
+        "id": "jokes_exhausted",
+        "type": "message",
+        "content": {
+          "messages": [
+            {
+              "type": "text",
+              "text": "That's all my jokes for now. Let's move on!"
+            }
+          ]
+        },
+        "position": {
+          "x": 1000,
+          "y": 500
+        }
       }
     ],
     "connections": [

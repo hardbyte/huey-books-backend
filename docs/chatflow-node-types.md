@@ -705,3 +705,27 @@ All node types undergo input validation before processing. The validation system
 ```
 
 Validation errors prevent node execution; warnings are logged but execution continues.
+
+### Empty optional CMS questions
+
+A random-source question can declare `content.on_empty` as a node ID in the same
+flow. An empty selection follows that route automatically, clears the previous
+choices, and neither asks a question nor records an answer. The route makes the
+question optional; omit it for required questions. It must lead forward to a
+valid continuation, not back to the empty question.
+
+Selection retains its age, visibility, tag and already-shown filters. Database
+errors and malformed selected content are failures, not empty selections.
+Continuation actions must not read the previous question's answer. Seeded
+preference flows clear the skipped score before proceeding; the joke flow ends
+its activity instead of displaying a stale punchline.
+
+Before awaiting input, the runtime requires a nonblank rendered prompt and
+usable options for choice-based inputs. Incomplete questions emit the structured
+`Chat question incomplete` event and fail instead of returning an empty input
+request. Successful empty-selection routing emits `CMS question skipped`.
+Monitoring counts these outcomes separately from HTTP status, without logging
+question text, answers or identifiers in the outcome events.
+
+The optional-route data migration is forward-only: application rollback retains
+continuation nodes so existing sessions do not lose their current node.

@@ -2,7 +2,7 @@
   "seed_key": "huey-preferences",
   "name": "Huey Preferences",
   "description": "Shows three preference image questions and aggregates hue scores.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "entry_node_id": "pref_intro",
   "visibility": "wriveted",
   "flow_data": {
@@ -23,6 +23,7 @@
         "type": "question",
         "content": {
           "source": "random",
+          "on_empty": "skip_pref_one",
           "source_config": {
             "type": "question",
             "tags": ["huey-preference"],
@@ -53,6 +54,7 @@
         "type": "question",
         "content": {
           "source": "random",
+          "on_empty": "skip_pref_two",
           "source_config": {
             "type": "question",
             "tags": ["huey-preference"],
@@ -83,6 +85,7 @@
         "type": "question",
         "content": {
           "source": "random",
+          "on_empty": "skip_pref_three",
           "source_config": {
             "type": "question",
             "tags": ["huey-preference"],
@@ -130,6 +133,54 @@
           ]
         },
         "position": {"x": 1500, "y": 300}
+      },
+      {
+        "id": "skip_pref_one",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "delete_variable",
+              "variable": "temp.pref_one_hue"
+            }
+          ]
+        },
+        "position": {
+          "x": 500,
+          "y": 500
+        }
+      },
+      {
+        "id": "skip_pref_two",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "delete_variable",
+              "variable": "temp.pref_two_hue"
+            }
+          ]
+        },
+        "position": {
+          "x": 500,
+          "y": 500
+        }
+      },
+      {
+        "id": "skip_pref_three",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "delete_variable",
+              "variable": "temp.pref_three_hue"
+            }
+          ]
+        },
+        "position": {
+          "x": 500,
+          "y": 500
+        }
       }
     ],
     "connections": [
@@ -139,7 +190,10 @@
       {"source": "pref_q_two", "target": "store_pref_two", "type": "default"},
       {"source": "store_pref_two", "target": "pref_q_three", "type": "default"},
       {"source": "pref_q_three", "target": "store_pref_three", "type": "default"},
-      {"source": "store_pref_three", "target": "aggregate_prefs", "type": "default"}
+      {"source": "store_pref_three", "target": "aggregate_prefs", "type": "default"},
+      {"source": "skip_pref_one", "target": "pref_q_two", "type": "default"},
+      {"source": "skip_pref_two", "target": "pref_q_three", "type": "default"},
+      {"source": "skip_pref_three", "target": "aggregate_prefs", "type": "default"}
     ]
   }
 }
