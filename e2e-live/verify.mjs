@@ -1,20 +1,31 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { assertPairTraffic, assertRevision, object, phasePercentage, serviceSpec } from './release-state.mjs';
 
-const project = process.env.DEPLOY_PROJECT;
-const region = process.env.DEPLOY_REGION;
-const target = process.env.CLOUD_DEPLOY_TARGET;
-const release = process.env.EXPECTED_RELEASE;
+/** @param {string} name */
+function requiredEnv(name) {
+  const value = process.env[name];
+  assert.ok(typeof value === 'string' && value.trim(), `${name} is required`);
+  return value;
+}
+
+const project = requiredEnv('DEPLOY_PROJECT');
+const region = requiredEnv('DEPLOY_REGION');
+const target = requiredEnv('CLOUD_DEPLOY_TARGET');
+const release = requiredEnv('EXPECTED_RELEASE');
 assert.equal(process.env.CLOUD_DEPLOY_RELEASE, release, 'Wrong release verification');
-const spec = JSON.parse(process.env.RELEASE_SPEC);
-const own = spec[target];
-assert.ok(own, 'Unknown deployment target');
+const spec = object(JSON.parse(requiredEnv('RELEASE_SPEC')));
+assert.match(target, /^chat-(dev|prod)-(public|internal)$/, 'Unknown deployment target');
+assert.ok(spec[target], 'Unknown deployment target');
 const environment = target.split('-')[1];
-const publicSpec = spec[`chat-${environment}-public`];
-const internalSpec = spec[`chat-${environment}-internal`];
+const publicSpec = serviceSpec(spec[`chat-${environment}-public`]);
+const internalSpec = serviceSpec(spec[`chat-${environment}-internal`]);
+const pair = [publicSpec, internalSpec];
+const percentage = phasePercentage(requiredEnv('CLOUD_DEPLOY_PHASE'));
 const root = `https://run.googleapis.com/v2/projects/${project}/locations/${region}`;
 const servicesRoot = `https://${region}-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/${project}/services`;
+/** @param {number} ms */
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function accessToken() {
@@ -22,9 +33,12 @@ async function accessToken() {
     headers: { 'Metadata-Flavor': 'Google' }, signal: AbortSignal.timeout(10_000),
   });
   assert.ok(tokenResponse.ok, 'Unable to authenticate verification container');
-  return (await tokenResponse.json()).access_token;
+  const token = object(await tokenResponse.json()).access_token;
+  assert.equal(typeof token, 'string', 'Metadata response has no access token');
+  return token;
 }
 
+/** @param {string} url */
 async function api(url) {
   const access_token = await accessToken();
   const response = await fetch(url, {
@@ -35,30 +49,34 @@ async function api(url) {
   return response.json();
 }
 
+/** @param {import('./release-state.mjs').ServiceSpec} expected */
 async function revisionMatches(expected) {
   const revision = await api(`${root}/services/${expected.service}/revisions/${expected.revision}`);
-  assert.equal(revision.labels['huey-release'], release);
-  assert.equal(revision.containers[0].image, expected.image);
-  assert.ok(revision.conditions.some(condition => condition.type === 'Ready' && condition.state === 'CONDITION_SUCCEEDED'));
-  return revision;
+  return assertRevision(revision, expected, release);
+}
+
+async function checkPairTraffic() {
+  const services = await Promise.all(pair.map(expected => api(`${servicesRoot}/${expected.service}`)));
+  assertPairTraffic(services, pair, percentage);
 }
 
 let ready = false;
-for (let attempt = 0; attempt < 90; attempt++) {
-  const services = await Promise.all([publicSpec, internalSpec].map(expected => api(`${servicesRoot}/${expected.service}`)));
-  if (services.every((service, index) => {
-    const expected = [publicSpec, internalSpec][index];
-    return service.status?.traffic?.some(entry => entry.tag === expected.tag && entry.revisionName === expected.revision && entry.url === expected.url);
-  })) {
+let readinessError;
+const deadline = Date.now() + 180_000;
+while (Date.now() < deadline) {
+  try {
+    await checkPairTraffic();
     ready = true;
     break;
+  } catch (error) {
+    readinessError = error;
   }
   await sleep(2000);
 }
-assert.ok(ready, 'Both release revisions must be routable before browser verification');
+assert.ok(ready, `Both services must reach ${percentage}% candidate traffic: ${readinessError}`);
 await revisionMatches(internalSpec);
 const publicRevision = await revisionMatches(publicSpec);
-assert.equal(publicRevision.containers[0].env.find(entry => entry.name === 'WRIVETED_INTERNAL_API')?.value, publicSpec.internalUrl);
+assert.equal(publicRevision.environment.WRIVETED_INTERNAL_API, publicSpec.internalUrl);
 console.log(`Verifying ${release}/${target}/${process.env.CLOUD_DEPLOY_PHASE} through the real reader UI`);
 const result = spawnSync('npm', ['test'], {
   cwd: '/verify', stdio: 'inherit',
@@ -78,10 +96,6 @@ if (existsSync('/verify/test-results')) {
 }
 if (result.error) throw result.error;
 if (result.status === 0) {
-  for (const expected of [publicSpec, internalSpec]) {
-    const service = await api(`${servicesRoot}/${expected.service}`);
-    assert.ok(service.status?.traffic?.some(entry => entry.tag === expected.tag && entry.revisionName === expected.revision),
-      'Native candidate tag changed while browser verification was running');
-  }
+  await checkPairTraffic();
 }
 process.exit(result.status ?? 1);

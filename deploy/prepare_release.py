@@ -4,12 +4,29 @@ import argparse
 import copy
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
+from typing import Any, TypedDict
 
 
-def read_service(project: str, region: str, service: str) -> dict:
-    return json.loads(
+class ExpectedService(TypedDict):
+    service: str
+    revision: str
+    image: str
+    tag: str
+    url: str
+    internalUrl: str
+
+
+def pinned_image(image: str) -> str:
+    if not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", image):
+        raise ValueError("Image must be pinned to a complete SHA-256 digest")
+    return image
+
+
+def read_service(project: str, region: str, service: str) -> dict[str, Any]:
+    result = json.loads(
         subprocess.check_output(
             [
                 "gcloud",
@@ -22,11 +39,18 @@ def read_service(project: str, region: str, service: str) -> dict:
                 "--format=json",
             ],
             text=True,
+            timeout=120,
         )
     )
 
+    if not isinstance(result, dict):
+        raise ValueError("Expected a Cloud Run service object")
+    return result
 
-def prepare_service(source: dict, image: str, release: str, internal_url: str) -> dict:
+
+def prepare_service(
+    source: dict[str, Any], image: str, release: str, internal_url: str
+) -> dict[str, Any]:
     manifest = copy.deepcopy(source)
     manifest.pop("status", None)
     metadata = manifest["metadata"]
@@ -64,10 +88,12 @@ def prepare_service(source: dict, image: str, release: str, internal_url: str) -
         }
     }
     container = template["spec"]["containers"][0]
-    container["image"] = image
-    for entry in container.get("env", []):
-        if entry["name"] == "WRIVETED_INTERNAL_API":
-            entry["value"] = internal_url
+    container["image"] = pinned_image(image)
+    entries = container.setdefault("env", [])
+    entries[:] = [
+        entry for entry in entries if entry["name"] != "WRIVETED_INTERNAL_API"
+    ]
+    entries.append({"name": "WRIVETED_INTERNAL_API", "value": internal_url})
     manifest["spec"].pop("traffic", None)
     return manifest
 
@@ -85,8 +111,11 @@ def main() -> None:
     )
     parser.add_argument("--output", type=Path, default=Path("clouddeploy-release"))
     args = parser.parse_args()
-    if "@sha256:" not in args.image or "@sha256:" not in args.verifier_image:
-        parser.error("Both images must be pinned by digest")
+    try:
+        pinned_image(args.image)
+        pinned_image(args.verifier_image)
+    except ValueError as error:
+        parser.error(str(error))
     sources_by_environment = {
         environment: {
             role: read_service(args.project, args.region, service)
@@ -116,7 +145,7 @@ def main() -> None:
     (chart / "templates/service.yaml").write_text(
         '{{ .Files.Get (printf "services/%s.json" .Values.target) | required "Unknown deployment target" }}\n'
     )
-    expected = {}
+    expected: dict[str, ExpectedService] = {}
     for environment, sources in sources_by_environment.items():
         internal_url = sources["internal"]["status"]["url"]
         for role, source in sources.items():

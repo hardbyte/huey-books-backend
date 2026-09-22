@@ -40,7 +40,8 @@ steps:
   id: AcquireDeploymentLease
   entrypoint: python3
   args:
-  - deploy/lease.py
+  - -m
+  - deploy.lease
   - acquire
   - --project=$PROJECT_ID
   - --owner=$BUILD_ID
@@ -67,7 +68,8 @@ steps:
   id: DeployAndVerifyDevelopment
   entrypoint: python3
   args:
-  - deploy/release.py
+  - -m
+  - deploy.release
   - create
   - --project=$PROJECT_ID
   - --region=$_DEPLOY_REGION
@@ -135,7 +137,8 @@ steps:
   id: PromoteAndVerifyProduction
   entrypoint: python3
   args:
-  - deploy/release.py
+  - -m
+  - deploy.release
   - promote
   - --project=$PROJECT_ID
   - --region=$_DEPLOY_REGION
@@ -146,7 +149,8 @@ steps:
   id: ReleaseDeploymentLease
   entrypoint: python3
   args:
-  - deploy/lease.py
+  - -m
+  - deploy.lease
   - release
   - --project=$PROJECT_ID
   - --owner=$BUILD_ID
