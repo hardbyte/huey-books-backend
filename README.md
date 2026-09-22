@@ -233,6 +233,11 @@ development before production, runs billing reconciliation and deploys both the
 public and internal APIs. Its configuration is the source of truth for image
 names, regions, environment settings and Secret Manager bindings.
 
+The [critical chat release gate](docs/critical-chat-release-gate.md) requires real
+browser reader journeys against the real UI/backend pair before and after
+production deployment. Failed candidate journeys trigger serving-traffic recovery;
+HTTP health checks and API-only tests do not satisfy this gate.
+
 After deployment succeeds, verify the commit label and serving traffic on both
 services, smoke-test `/v1/version` and the changed workflow, then inspect request
 and application logs on the new revisions. A green PR check alone does not prove
