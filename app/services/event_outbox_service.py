@@ -1,9 +1,7 @@
 """
-Event Outbox Service - Reliable event delivery with dual strategy.
+Event Outbox Service - Reliable transactional event delivery.
 
-This service implements the Event Outbox Pattern with dual strategy:
-1. NOTIFY/LISTEN for immediate delivery (dev UX, real-time features)
-2. Event Outbox for reliable delivery (durability, retry logic)
+Events are persisted with business data and delivered by the background processor.
 
 """
 
@@ -12,15 +10,17 @@ import hmac
 import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
-from sqlalchemy import and_, or_, select, text
+from sqlalchemy import and_, or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from structlog import get_logger
 
 from app.config import get_settings
+from app.models.event import Event, EventLevel
 from app.models.event_outbox import EventOutbox, EventPriority, EventStatus
 from app.repositories.outbox import get_outbox_health, slack_destination
 
@@ -56,7 +56,6 @@ class EventOutboxService:
 
     Features:
     - Transactional safety: Events stored in same transaction as business data
-    - Dual delivery: NOTIFY/LISTEN + persistent storage
     - Retry logic: Exponential backoff for failed events
     - Dead letter queue: Permanently failed events for investigation
     - Backpressure handling: Priority-based processing
@@ -113,18 +112,6 @@ class EventOutboxService:
             priority=priority.value,
         )
 
-        # DUAL STRATEGY: Also try immediate delivery via NOTIFY/LISTEN
-        # This provides the best of both worlds - immediate delivery for dev UX
-        # and reliability for production systems
-        try:
-            await self._try_immediate_delivery(db, event)
-        except Exception as e:
-            logger.warning(
-                "Immediate delivery failed, will retry via outbox processor",
-                event_id=event.id,
-                error=str(e),
-            )
-
         return event
 
     def publish_event_sync(
@@ -173,9 +160,6 @@ class EventOutboxService:
             destination=destination,
             priority=priority.value,
         )
-
-        # Note: Immediate delivery via NOTIFY/LISTEN not implemented in sync version
-        # Events will be processed by the background outbox processor
 
         return event
 
@@ -228,10 +212,16 @@ class EventOutboxService:
                 await self._update_event_status(db, event, EventStatus.PROCESSING)
 
                 # Attempt delivery
-                success = await self._deliver_event(event)
+                is_flow_audit = event.destination in {"audit:flow", "flow_events"}
+                if is_flow_audit:
+                    await self._publish_flow_audit(db, event)
+                    success = True
+                else:
+                    success = await self._deliver_event(event)
 
                 if success:
-                    await self._mark_event_published(db, event)
+                    if not is_flow_audit:
+                        await self._mark_event_published(db, event)
                     stats["succeeded"] += 1
                     logger.info("Event delivered successfully", event_id=event.id)
                 else:
@@ -372,46 +362,51 @@ class EventOutboxService:
         result = await db.execute(query)
         return result.scalars().all()
 
-    async def _try_immediate_delivery(self, db: AsyncSession, event: EventOutbox):
-        """Try immediate delivery via NOTIFY/LISTEN for real-time features."""
-        # Simplified immediate delivery - in production would use actual NOTIFY
-        if event.destination == "webhook_immediate":
-            # This would trigger immediate webhook delivery
-            logger.debug("Triggering immediate webhook delivery", event_id=event.id)
-
-            raise NotImplementedError(
-                "TODO: Immediate webhook delivery not implemented"
-            )
-
-        await self._send_postgres_notify(db, event)
-
-    async def _send_postgres_notify(self, db: AsyncSession, event: EventOutbox):
-        """Send PostgreSQL NOTIFY for immediate event delivery."""
+    async def _publish_flow_audit(self, db: AsyncSession, event: EventOutbox) -> None:
+        """Persist an editorial audit record and publication status atomically."""
+        event_types = {
+            "flow_created",
+            "flow_updated",
+            "flow_published",
+            "flow_unpublished",
+            "flow_cloned",
+            "flow_soft_deleted",
+            "flow_node_positions_updated",
+        }
+        if event.event_type not in event_types or not isinstance(event.payload, dict):
+            raise ValueError("Unsupported flow audit event")
+        flow_id = UUID(str(event.payload.get("aggregate_id")))
+        audit_id = uuid5(NAMESPACE_URL, f"urn:wriveted:flow-audit:{event.id}")
+        title = f"Flow audit: {event.event_type}"
+        info = {
+            "flow_id": str(flow_id),
+            "outbox_event_id": str(event.id),
+            "correlation_id": event.correlation_id,
+            "payload": event.payload,
+        }
         try:
-            # Use PostgreSQL NOTIFY/LISTEN for real-time event delivery
-            # This allows immediate delivery for development and testing
-            notify_payload = {
-                "event_id": str(event.id),
-                "event_type": event.event_type,
-                "destination": event.destination,
-            }
-
-            import json
-
-            # Use proper PostgreSQL NOTIFY syntax for asyncpg
-            notify_sql = f"NOTIFY flow_events, '{json.dumps(notify_payload)}'"
-            await db.execute(text(notify_sql))
-
-            logger.debug(
-                "Sent PostgreSQL NOTIFY for immediate delivery",
-                event_id=event.id,
-                destination=event.destination,
-            )
-
-        except Exception as e:
-            logger.warning(
-                "Failed to send PostgreSQL NOTIFY", event_id=event.id, error=str(e)
-            )
+            async with db.begin_nested():
+                await db.execute(
+                    insert(Event)
+                    .values(
+                        id=audit_id,
+                        title=title,
+                        info=info,
+                        level=EventLevel.NORMAL,
+                        timestamp=event.created_at,
+                    )
+                    .on_conflict_do_nothing(index_elements=[Event.id])
+                )
+                audit = await db.get(Event, audit_id, populate_existing=True)
+                if audit.title != title or audit.info != info:
+                    raise ValueError("Flow audit idempotency conflict")
+                await self._mark_event_published(db, event)
+        except Exception as error:
+            # Savepoint rollback expires ORM state; reload before retry accounting.
+            await db.refresh(event)
+            raise RuntimeError(
+                f"Flow audit persistence failed ({type(error).__name__})"
+            ) from None
 
     async def _deliver_event(self, event: EventOutbox) -> bool:
         """

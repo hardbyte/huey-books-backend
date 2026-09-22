@@ -299,10 +299,12 @@ The `iterate_over` option creates one event per item in a list variable, useful 
 - **Purpose**: Durable delivery attempts with retries and dead-letter handling; consumers must tolerate duplicates
 - **Storage**: `event_outbox` table with status tracking, retry count, dead letter queue
 - **Delivery**: Background processing with exponential backoff
-- **Channels**: Webhook, Slack, email, internal processing
+- **Channels**: Webhook, Slack, email, internal processing, editorial audit
 - **Usage**: Active in CMS, Flow, and Conversation domains
 
-The Event Outbox writes happen within the same database transaction as business data, ensuring atomicity. NOTIFY/LISTEN is preserved for low-latency dashboard updates where durability is not critical.
+The Event Outbox writes happen within the same database transaction as business data, ensuring atomicity. Flow-editor mutations use `audit:flow`: the processor persists an `Event` audit record and marks the outbox entry published in one transaction. A deterministic audit ID prevents duplicate history on replay. Legacy `flow_events` destinations use the same audit consumer; failed retained entries can be retried after the consumer is deployed.
+
+Database-triggered session changes retain their `flow_events` NOTIFY/LISTEN channel. Generic outbox envelopes are not session notifications and are not sent to that channel.
 
 Operational instrumentation uses OpenTelemetry; see the
 [observability design](observability-architecture.md). Product observations and
