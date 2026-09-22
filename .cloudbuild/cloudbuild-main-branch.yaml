@@ -1,412 +1,171 @@
-timeout: 1800s
+timeout: 7200s
 steps:
-  - name: gcr.io/cloud-builders/docker
-    args:
-      - build
-      - "--no-cache"
-      - "-t"
-      - "$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
-      - "-t"
-      - "$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:latest"
-      - .
-      - "-f"
-      - Dockerfile
-    id: Build
-  - name: gcr.io/cloud-builders/docker
-    args:
-      - push
-      - "$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
-    id: Push
-  - name: gcr.io/cloud-builders/docker
-    args:
-      - push
-      - "$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:latest"
-    id: PushLatestTag
-  - name: "gcr.io/cloud-builders/docker"
-    id: RunDevelopmentMigration
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        docker run -i \
-        --network=cloudbuild \
-        -e CLOUD_SQL_INSTANCE=wriveted-api:australia-southeast1:wriveted-development \
-        -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
-        -e SENDGRID_API_KEY=foo \
-        -e SHOPIFY_HMAC_SECRET=foo \
-        -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
-        --entrypoint bash \
-        --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
-        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
-        -c '/scripts/database_migrate.sh'
-    secretEnv: ["POSTGRESQL_PASSWORD"]
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-    args:
-      - run
-      - services
-      - update
-      - $_SERVICE_NAME_DEVELOPMENT
-      - "--startup-probe=httpGet.path=/,httpGet.port=8000,initialDelaySeconds=5,timeoutSeconds=4,periodSeconds=8,failureThreshold=10"
-      - "--platform=managed"
-      - "--port=8000"
-      - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
-      - "--region=$_DEPLOY_REGION"
-      - "--concurrency=20"
-      - "--max-instances=3"
-      - "--min-instances=0"
-      - "--quiet"
-      - >-
-        --update-env-vars=
-        POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
-        POSTGRESQL_USER=cloudrun,
-        GCP_CLOUD_SQL_INSTANCE_ID=wriveted-development,
-        LOG_AS_JSON=True,
-        SLACK_NOTIFICATIONS_ENABLED=False,
-        DATABASE_MAX_OVERFLOW=5,
-        GCP_CLOUD_TASKS_NAME=background-tasks,
-        WRIVETED_INTERNAL_API=https://wriveted-api-development-main-branch-internal-lg5ntws4da-ts.a.run.app,
-        ENABLE_OTEL_GOOGLE_EXPORTER=True,
-        NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,
-        NIELSEN_CLIENT_ID=WrivetedWebServices,
-        WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
-        EMAIL_PROVIDER=resend,
-        STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
-        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1UAPlFJn6IrlrOboF4lFDyQv"},
-        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
-        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
-        OTEL_SERVICE_NAME=nonprod-api
-      - >-
-        --update-secrets=
-        POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,
-        SECRET_KEY=wriveted-api-secret-key:latest,
-        SENDGRID_API_KEY=sendgrid-api-key:latest,
-        SHOPIFY_HMAC_SECRET=shopify-hmac-secret:latest,
-        METABASE_SECRET_KEY=metabase-secret-key:latest,
-        STRIPE_SECRET_KEY=stripe-live-secret-key:latest,
-        STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,
-        SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
-        NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
-        RESEND_API_KEY=resend-api-key:latest,
-        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
-        OPENAI_API_KEY=openai-api-key:latest
-      - >-
-        --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
-    id: Deploy-Non-Prod
-    entrypoint: gcloud
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-    args:
-      - run
-      - services
-      - update
-      - "$_SERVICE_NAME_DEVELOPMENT-internal"
-      - "--startup-probe=httpGet.path=/,httpGet.port=8000,initialDelaySeconds=5,timeoutSeconds=4,periodSeconds=8,failureThreshold=10"
-      - "--platform=managed"
-      - "--port=8000"
-      - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
-      - "--region=$_DEPLOY_REGION"
-      - "--concurrency=20"
-      - "--max-instances=3"
-      - "--min-instances=0"
-      - "--quiet"
-      - "--args=app.internal_api:internal_app"
-      - >-
-        --update-env-vars=
-        POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
-        POSTGRESQL_USER=cloudrun,
-        GCP_CLOUD_SQL_INSTANCE_ID=wriveted-development,
-        LOG_AS_JSON=True,
-        SLACK_NOTIFICATIONS_ENABLED=False,
-        DATABASE_MAX_OVERFLOW=5,
-        GCP_CLOUD_TASKS_NAME=background-tasks,
-        WRIVETED_INTERNAL_API=https://wriveted-api-development-main-branch-internal-lg5ntws4da-ts.a.run.app,
-        NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,
-        NIELSEN_CLIENT_ID=WrivetedWebServices,
-        ENABLE_OTEL_GOOGLE_EXPORTER=True,
-        WRIVETED_API_BASE_URL=https://wriveted-api-development-main-branch-lg5ntws4da-ts.a.run.app,
-        EMAIL_PROVIDER=resend,
-        STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
-        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1UAPlFJn6IrlrOboF4lFDyQv"},
-        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
-        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
-        OTEL_SERVICE_NAME=nonprod-api-internal
-      - >-
-        --update-secrets=
-        POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,
-        SECRET_KEY=wriveted-api-secret-key:latest,
-        SENDGRID_API_KEY=sendgrid-api-key:latest,
-        SHOPIFY_HMAC_SECRET=shopify-hmac-secret:latest,
-        STRIPE_SECRET_KEY=stripe-live-secret-key:latest,
-        STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,
-        SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
-        NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
-        RESEND_API_KEY=resend-api-key:latest,
-        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
-        OPENAI_API_KEY=openai-api-key:latest
-      - >-
-        --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
-    id: Deploy-Non-Prod-internal-api
-    entrypoint: gcloud
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    id: CaptureProductionTraffic
-    entrypoint: python3
-    args:
-      - scripts/chat_rollout.py
-      - capture
-      - --project=$PROJECT_ID
-      - --region=$_DEPLOY_REGION
-      - --service=$_SERVICE_NAME
-      - --commit=$COMMIT_SHA
-  - name: mcr.microsoft.com/playwright:v1.57.0-noble
-    id: VerifyPreviousReaderJourney
-    entrypoint: bash
-    args:
-      - -ceu
-      - |
-        cd e2e-live
-        npm ci --ignore-scripts
-        if ! E2E_UI_URL=$_CHAT_UI_URL npm test; then
-          test "$_CHAT_RECOVERY_MODE" = "true"
-          echo "Recovery deployment: baseline is unhealthy; candidate UI verification remains mandatory"
-        fi
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    id: RevalidateBaselineTraffic
-    entrypoint: python3
-    args:
-      - scripts/chat_rollout.py
-      - baseline
-      - --project=$PROJECT_ID
-      - --region=$_DEPLOY_REGION
-      - --service=$_SERVICE_NAME
-      - --commit=$COMMIT_SHA
-  - name: "gcr.io/cloud-builders/docker"
-    id: RunMigration
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        docker run -i \
-        --network=cloudbuild \
-        -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
-        -e SENDGRID_API_KEY=foo \
-        -e SHOPIFY_HMAC_SECRET=foo \
-        -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
-        --entrypoint bash \
-        --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
-        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
-        -c '/scripts/database_migrate.sh'
-    secretEnv: ["POSTGRESQL_PASSWORD"]
-  - name: "gcr.io/cloud-builders/docker"
-    id: ReconcileSchoolBilling
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        docker run -i \
-        --network=cloudbuild \
-        -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
-        -e STRIPE_SECRET_KEY=$$STRIPE_SECRET_KEY \
-        -e SENDGRID_API_KEY=foo \
-        -e SHOPIFY_HMAC_SECRET=foo \
-        -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
-        --entrypoint bash \
-        --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
-        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
-        -c '/scripts/reconcile_school_billing.sh'
-    secretEnv: ["POSTGRESQL_PASSWORD", "STRIPE_SECRET_KEY"]
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-    args:
-      - scripts/chat_rollout.py
-      - deploy
-      - --project=$PROJECT_ID
-      - --region=$_DEPLOY_REGION
-      - --service=$_SERVICE_NAME
-      - --commit=$COMMIT_SHA
-      - --target-service=$_SERVICE_NAME
-      - --
-      - run
-      - services
-      - update
-      - $_SERVICE_NAME
-      - "--startup-probe=httpGet.path=/,httpGet.port=8080,initialDelaySeconds=5,timeoutSeconds=4,periodSeconds=8,failureThreshold=10"
-      - "--platform=managed"
-      - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
-      - "--region=$_DEPLOY_REGION"
-      - "--concurrency=20"
-      - "--max-instances=6"
-      # Full CPU during startup so the ~10s app import + image decompress aren't
-      # CPU-throttled — meaningfully cuts cold-start latency at no idle cost.
-      - "--cpu-boost"
-      - "--quiet"
-      - >-
-        --update-env-vars=
-        POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
-        POSTGRESQL_USER=cloudrun,
-        LOG_AS_JSON=True,
-        SLACK_NOTIFICATIONS_ENABLED=False,
-        DATABASE_POOL_SIZE=5,
-        DATABASE_MAX_OVERFLOW=5,
-        GCP_CLOUD_TASKS_NAME=background-tasks,
-        WRIVETED_INTERNAL_API=https://wriveted-api-internal-lg5ntws4da-ts.a.run.app,
-        NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,
-        NIELSEN_CLIENT_ID=WrivetedWebServices,
-        ENABLE_OTEL_GOOGLE_EXPORTER=True,
-        WRIVETED_API_BASE_URL=https://api.hueybooks.com,
-        EMAIL_PROVIDER=resend,
-        STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
-        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1UAPlFJn6IrlrOboF4lFDyQv"},
-        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
-        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
-        HUEY_BOOKS_APP_URL=https://hueybooks.com,
-        SCHOOL_ADMIN_URL=https://admin.hueybooks.com,
-        OTEL_SERVICE_NAME=wriveted-api
-      - >-
-        --update-secrets=
-        POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,
-        SECRET_KEY=wriveted-api-secret-key:latest,
-        SENDGRID_API_KEY=sendgrid-api-key:latest,
-        SHOPIFY_HMAC_SECRET=shopify-hmac-secret:latest,
-        METABASE_SECRET_KEY=metabase-secret-key:latest,
-        STRIPE_SECRET_KEY=stripe-live-secret-key:latest,
-        STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,
-        SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
-        NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
-        RESEND_API_KEY=resend-api-key:latest,
-        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
-        OPENAI_API_KEY=openai-api-key:latest
-      - >-
-        --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
-    id: Deploy-Prod
-    entrypoint: python3
-    allowFailure: true
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-    args:
-      - scripts/chat_rollout.py
-      - deploy
-      - --project=$PROJECT_ID
-      - --region=$_DEPLOY_REGION
-      - --service=$_SERVICE_NAME
-      - --commit=$COMMIT_SHA
-      - --target-service=$_SERVICE_NAME-internal
-      - --
-      - run
-      - services
-      - update
-      - "$_SERVICE_NAME-internal"
-      - "--startup-probe=httpGet.path=/,httpGet.port=8080,initialDelaySeconds=5,timeoutSeconds=4,periodSeconds=8,failureThreshold=10"
-      - "--platform=managed"
-      - "--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
-      - "--region=$_DEPLOY_REGION"
-      - "--concurrency=8"
-      - "--max-instances=4"
-      - "--quiet"
-      - "--args=app.internal_api:internal_app"
-      - >-
-        --update-env-vars=
-        POSTGRESQL_DATABASE_SOCKET_PATH=/cloudsql,
-        POSTGRESQL_USER=cloudrun,
-        LOG_AS_JSON=True,
-        SLACK_NOTIFICATIONS_ENABLED=False,
-        DATABASE_POOL_SIZE=3,
-        DATABASE_MAX_OVERFLOW=3,
-        GCP_CLOUD_TASKS_NAME=background-tasks,
-        WRIVETED_INTERNAL_API=https://wriveted-api-internal-lg5ntws4da-ts.a.run.app,
-        NIELSEN_API_URL=https://ws.nielsenbookdataonline.com/BDOLRest/RESTwebServices/BDOLrequest,
-        NIELSEN_CLIENT_ID=WrivetedWebServices,
-        ENABLE_OTEL_GOOGLE_EXPORTER=True,
-        WRIVETED_API_BASE_URL=https://api.hueybooks.com,
-        EMAIL_PROVIDER=resend,
-        STRIPE_SCHOOL_PRICE_IDS=price_1TtloSJn6IrlrOboBreHYarj,
-        STRIPE_SCHOOL_PRICE_IDS_BY_COUNTRY={"IND":"price_1UAPlFJn6IrlrOboF4lFDyQv"},
-        STRIPE_SCHOOL_CONTRIBUTION_PRICE_IDS=price_1Ttm0oJn6IrlrOboSQnwyA6D,
-        SCHOOL_CONTRIBUTION_MONTHLY_CENTS=2000,
-        OTEL_SERVICE_NAME=wriveted-api-internal
-      - >-
-        --update-secrets=
-        POSTGRESQL_PASSWORD=wriveted-api-cloud-sql-password:latest,
-        SECRET_KEY=wriveted-api-secret-key:latest,
-        SENDGRID_API_KEY=sendgrid-api-key:latest,
-        SHOPIFY_HMAC_SECRET=shopify-hmac-secret:latest,
-        STRIPE_SECRET_KEY=stripe-live-secret-key:latest,
-        STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,
-        SLACK_BOT_TOKEN=slack-wriveted-api-bot-token:latest,
-        NIELSEN_PASSWORD=wriveted-nielsen-api-secret:latest,
-        RESEND_API_KEY=resend-api-key:latest,
-        STAFF_ALERT_EMAILS=staff-alert-emails:latest,
-        OPENAI_API_KEY=openai-api-key:latest
-      - >-
-        --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
-    id: Deploy-Prod-internal-api
-    entrypoint: python3
-    allowFailure: true
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    id: CaptureCandidateTraffic
-    entrypoint: python3
-    allowFailure: true
-    args:
-      - scripts/chat_rollout.py
-      - candidate
-      - --project=$PROJECT_ID
-      - --region=$_DEPLOY_REGION
-      - --service=$_SERVICE_NAME
-      - --commit=$COMMIT_SHA
-  - name: mcr.microsoft.com/playwright:v1.57.0-noble
-    id: VerifyProductionReaderJourney
-    entrypoint: bash
-    allowFailure: true
-    args:
-      - -ceu
-      - |
-        test -s /workspace/chat-candidate-traffic.json
-        cd e2e-live
-        E2E_UI_URL=$_CHAT_UI_URL npm test
-        touch /workspace/chat-gate-passed
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    id: RestoreTrafficIfReaderJourneyFails
-    entrypoint: python3
-    args:
-      - scripts/chat_rollout.py
-      - finish
-      - --project=$PROJECT_ID
-      - --region=$_DEPLOY_REGION
-      - --service=$_SERVICE_NAME
-      - --commit=$COMMIT_SHA
-  - name: "gcr.io/cloud-builders/docker"
-    id: PgrolesCheck
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        docker run -i \
-        --network=cloudbuild \
-        -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
-        -e CLOUD_SQL_INSTANCE=wriveted-api:australia-southeast1:wriveted \
-        --entrypoint bash \
-        --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
-        --volume $(pwd)/pgroles.yaml:/app/pgroles.yaml \
-        $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
-        -c 'cd /app && /scripts/pgroles-check.sh'
-    secretEnv: ["POSTGRESQL_PASSWORD"]
+- name: gcr.io/cloud-builders/docker
+  args:
+  - build
+  - --no-cache
+  - -t
+  - $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+  - -t
+  - $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:latest
+  - .
+  - -f
+  - Dockerfile
+  id: Build
+- name: gcr.io/cloud-builders/docker
+  args:
+  - push
+  - $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+  id: Push
+- name: gcr.io/cloud-builders/docker
+  args:
+  - push
+  - $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:latest
+  id: PushLatestTag
+- name: gcr.io/cloud-builders/docker
+  id: BuildBrowserVerifier
+  args:
+  - build
+  - -f
+  - e2e-live/Dockerfile
+  - -t
+  - $_GCR_HOSTNAME/$PROJECT_ID/chat-verifier:$COMMIT_SHA
+  - .
+- name: gcr.io/cloud-builders/docker
+  id: PushBrowserVerifier
+  args:
+  - push
+  - $_GCR_HOSTNAME/$PROJECT_ID/chat-verifier:$COMMIT_SHA
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+  id: AcquireDeploymentLease
+  entrypoint: python3
+  args:
+  - deploy/lease.py
+  - acquire
+  - --project=$PROJECT_ID
+  - --owner=$BUILD_ID
+- name: gcr.io/cloud-builders/docker
+  id: RunDevelopmentMigration
+  entrypoint: bash
+  args:
+  - -c
+  - |
+    docker run -i \
+    --network=cloudbuild \
+    -e CLOUD_SQL_INSTANCE=wriveted-api:australia-southeast1:wriveted-development \
+    -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
+    -e SENDGRID_API_KEY=foo \
+    -e SHOPIFY_HMAC_SECRET=foo \
+    -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
+    --entrypoint bash \
+    --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
+    $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
+    -c '/scripts/database_migrate.sh'
+  secretEnv:
+  - POSTGRESQL_PASSWORD
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+  id: DeployAndVerifyDevelopment
+  entrypoint: python3
+  args:
+  - deploy/release.py
+  - create
+  - --project=$PROJECT_ID
+  - --region=$_DEPLOY_REGION
+  - --release=r-$SHORT_SHA-${BUILD_ID}
+  - --image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+  - --verifier-image=$_GCR_HOSTNAME/$PROJECT_ID/chat-verifier:$COMMIT_SHA
+  - --ui-url=$_CHAT_UI_URL
+  - --owner=$BUILD_ID
+- name: gcr.io/cloud-builders/docker
+  id: RunMigration
+  entrypoint: bash
+  args:
+  - -c
+  - |
+    docker run -i \
+    --network=cloudbuild \
+    -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
+    -e SENDGRID_API_KEY=foo \
+    -e SHOPIFY_HMAC_SECRET=foo \
+    -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
+    --entrypoint bash \
+    --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
+    $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
+    -c '/scripts/database_migrate.sh'
+  secretEnv:
+  - POSTGRESQL_PASSWORD
+- name: gcr.io/cloud-builders/docker
+  id: ReconcileSchoolBilling
+  entrypoint: bash
+  args:
+  - -c
+  - |
+    docker run -i \
+    --network=cloudbuild \
+    -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
+    -e STRIPE_SECRET_KEY=$$STRIPE_SECRET_KEY \
+    -e SENDGRID_API_KEY=foo \
+    -e SHOPIFY_HMAC_SECRET=foo \
+    -e SECRET_KEY=CHrUJmNw1haKVSorf3ooW-D6eRooePyo-V8II--We781 \
+    --entrypoint bash \
+    --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
+    $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
+    -c '/scripts/reconcile_school_billing.sh'
+  secretEnv:
+  - POSTGRESQL_PASSWORD
+  - STRIPE_SECRET_KEY
+- name: gcr.io/cloud-builders/docker
+  id: PgrolesCheck
+  entrypoint: bash
+  args:
+  - -c
+  - |
+    docker run -i \
+    --network=cloudbuild \
+    -e POSTGRESQL_PASSWORD=$$POSTGRESQL_PASSWORD \
+    -e CLOUD_SQL_INSTANCE=wriveted-api:australia-southeast1:wriveted \
+    --entrypoint bash \
+    --volume $(pwd)/.cloudbuild/scripts/:/scripts/ \
+    --volume $(pwd)/pgroles.yaml:/app/pgroles.yaml \
+    $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA \
+    -c 'cd /app && /scripts/pgroles-check.sh'
+  secretEnv:
+  - POSTGRESQL_PASSWORD
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+  id: PromoteAndVerifyProduction
+  entrypoint: python3
+  args:
+  - deploy/release.py
+  - promote
+  - --project=$PROJECT_ID
+  - --region=$_DEPLOY_REGION
+  - --release=r-$SHORT_SHA-${BUILD_ID}
+  - --target=chat-prod
+  - --owner=$BUILD_ID
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+  id: ReleaseDeploymentLease
+  entrypoint: python3
+  args:
+  - deploy/lease.py
+  - release
+  - --project=$PROJECT_ID
+  - --owner=$BUILD_ID
 availableSecrets:
   secretManager:
-    - versionName: projects/wriveted-api/secrets/wriveted-api-cloud-sql-root-password/versions/latest
-      env: "POSTGRESQL_PASSWORD"
-    - versionName: projects/wriveted-api/secrets/stripe-live-secret-key/versions/latest
-      env: "STRIPE_SECRET_KEY"
+  - versionName: projects/wriveted-api/secrets/wriveted-api-cloud-sql-root-password/versions/latest
+    env: POSTGRESQL_PASSWORD
+  - versionName: projects/wriveted-api/secrets/stripe-live-secret-key/versions/latest
+    env: STRIPE_SECRET_KEY
 images:
-  - "$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA"
+- $_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
 options:
   substitutionOption: ALLOW_LOOSE
 substitutions:
-  _CHAT_RECOVERY_MODE: "false"
   _CHAT_UI_URL: https://hueybooks.com
-  _LABELS: gcb-trigger-id=d1de14d3-a92a-42fc-bb68-8f84ffed0c46
-  _TRIGGER_ID: d1de14d3-a92a-42fc-bb68-8f84ffed0c46
   _GCR_HOSTNAME: asia.gcr.io
-  _PLATFORM: managed
   _SERVICE_NAME: wriveted-api
-  _SERVICE_NAME_DEVELOPMENT: wriveted-api-development-main-branch
   _DEPLOY_REGION: australia-southeast1
 tags:
-  - gcp-cloud-build-deploy-cloud-run
-  - gcp-cloud-build-deploy-cloud-run-managed
-  - wriveted-api
+- gcp-cloud-build-deploy-cloud-run
+- gcp-cloud-build-deploy-cloud-run-managed
+- wriveted-api

@@ -12,6 +12,7 @@ export default defineConfig({
   workers: 1,
   use: {
     baseURL: process.env.E2E_UI_URL,
+    serviceWorkers: 'block',
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
     video: 'retain-on-failure',
