@@ -142,11 +142,14 @@ class FlowEventListener:
                 flow_event = FlowEvent.model_validate(event_data)
             except Exception as e:
                 logger.error(
-                    "Invalid flow event notification", error_type=type(e).__name__
+                    "Invalid flow event notification",
+                    extra={"error_type": type(e).__name__},
                 )
                 return
 
-            logger.debug("Flow event received", event_type=flow_event.event_type)
+            logger.debug(
+                "Flow event received", extra={"event_type": flow_event.event_type}
+            )
 
             # Dispatch to registered handlers. Build a NEW list — never mutate
             # the stored handler list. `dict.get` returns the live list, so an

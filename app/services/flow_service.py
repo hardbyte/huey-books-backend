@@ -815,7 +815,7 @@ class FlowService:
             await self.event_outbox.publish_event(
                 db=db,
                 event_type=event_type,
-                destination="flow_events",
+                destination="audit:flow",
                 payload=payload_with_id,
             )
 
