@@ -5,6 +5,8 @@ if (!process.env.E2E_UI_URL) throw new Error('E2E_UI_URL must identify the real 
 export default defineConfig({
   testDir: '.',
   timeout: 180_000,
+  globalTimeout: 240_000,
+  maxFailures: 1,
   expect: { timeout: 20_000 },
   retries: 0,
   workers: 1,

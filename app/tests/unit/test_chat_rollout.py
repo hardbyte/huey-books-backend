@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 spec = importlib.util.spec_from_file_location(
-    "chat_rollout", Path(__file__).parents[3] / ".cloudbuild/scripts/chat_rollout.py"
+    "chat_rollout", Path(__file__).parents[3] / "scripts/chat_rollout.py"
 )
 rollout_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rollout_module)
