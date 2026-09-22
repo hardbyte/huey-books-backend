@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { RenderedQuestion } from './rendered-question.js';
 
 for (const scenario of [
   { age: '5 or under', width: 390, height: 844 },
@@ -7,6 +8,7 @@ for (const scenario of [
 ]) {
   test(`real reader journey: age ${scenario.age}, ${scenario.width}px`, async ({ page }) => {
     const failures: string[] = [];
+    const rendered = new RenderedQuestion(page);
     let candidateRequests = 0;
     let candidateResponses = 0;
     const candidate = process.env.E2E_CANDIDATE_API_URL;
@@ -47,16 +49,16 @@ for (const scenario of [
       expect(candidateRequests).toBeGreaterThan(0);
       expect(candidateResponses).toBeGreaterThan(0);
     }
-    await page.getByRole('button', { name: 'Hello Huey! 👋', exact: true }).click();
+    await rendered.answer(page.getByRole('button', { name: 'Hello Huey! 👋', exact: true }));
     const schoolConfirmation = page.getByRole('button', { name: /Yes, find books/ });
     await expect(schoolConfirmation.or(page.getByRole('button', { name: scenario.age, exact: true }))).toBeVisible();
-    if (await schoolConfirmation.isVisible()) await schoolConfirmation.click();
+    if (await schoolConfirmation.isVisible()) await rendered.answer(schoolConfirmation);
     const ageButton = page.getByRole('button', { name: scenario.age, exact: true });
     await ageButton.scrollIntoViewIfNeeded();
     const box = await ageButton.boundingBox();
     expect(box!.y + box!.height).toBeLessThanOrEqual(scenario.height);
-    await ageButton.click();
-    await page.getByRole('button', { name: /^Select "/ }).click();
+    await rendered.answer(ageButton);
+    await rendered.answer(page.getByRole('button', { name: /^Select "/ }));
     const answer = page.getByRole('region', { name: 'Your answer' });
     const done = page.getByRole('button', { name: 'Done with my books', exact: true });
     for (let preference = 0; preference < 3; preference++) {
@@ -64,31 +66,28 @@ for (const scenario of [
       await expect(choices.first().or(done)).toBeVisible();
       if (await done.isVisible()) break;
       await expect(answer.getByText('Choose one picture to continue')).toBeVisible();
-      await choices.first().click();
-      await expect(answer.getByText('Choose one picture to continue')).toBeHidden();
+      await rendered.answer(choices.first());
     }
     await expect(done).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole('heading', { level: 3 }).first()).toHaveText(/\S/);
+    await rendered.assertComplete();
     await page.getByRole('button', { name: /Looks good!/ }).click();
-    await done.click();
+    await rendered.answer(done);
     if (scenario.age === '5 or under') {
-      await answer.getByRole('button', { name: /Yes please!/ }).click();
+      await rendered.answer(answer.getByRole('button', { name: /Yes please!/ }));
       const spelling = page.getByText('Want to try a quick spelling game? 📝', { exact: true });
       for (let turn = 0; turn < 50; turn++) {
         await expect(answer.getByRole('button').first()).toBeVisible();
         if (await spelling.isVisible()) break;
-        await Promise.all([
-          page.waitForResponse(response => response.url().includes('/interact') && response.request().method() === 'POST'),
-          answer.getByRole('button').first().click(),
-        ]);
+        await rendered.answer(answer.getByRole('button').first());
       }
       await expect(page.getByText("That's all my jokes for now. Let's move on!", { exact: true })).toBeVisible();
+      expect(rendered.renderedPunchlines, 'Exercise actual jokes before exhausting the pool').toBeGreaterThan(0);
     } else {
-      await answer.getByRole('button', { name: /No thanks/ }).click();
+      await rendered.answer(answer.getByRole('button', { name: /No thanks/ }));
     }
     await expect(page.getByText('Want to try a quick spelling game? 📝', { exact: true })).toBeVisible();
-    await answer.getByRole('button', { name: 'No thanks', exact: true }).click();
-    await answer.getByRole('button', { name: "I'm done, thanks! 👋", exact: true }).click();
+    await rendered.answer(answer.getByRole('button', { name: 'No thanks', exact: true }));
+    await rendered.answer(answer.getByRole('button', { name: "I'm done, thanks! 👋", exact: true }), { endsSession: true });
     await expect(page.getByRole('button', { name: /Read More Books!/ })).toBeVisible();
     expect(failures).toEqual([]);
   });

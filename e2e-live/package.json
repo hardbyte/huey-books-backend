@@ -1,6 +1,16 @@
 {
   "name": "huey-critical-chat-gate",
   "private": true,
-  "scripts": {"test": "playwright test"},
-  "devDependencies": {"@playwright/test": "1.57.0"}
+  "scripts": {
+    "test": "playwright test",
+    "test:unit": "node --test *.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run test:unit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.57.0",
+    "@types/node": "22.15.17",
+    "typescript": "5.9.3"
+  },
+  "type": "module"
 }

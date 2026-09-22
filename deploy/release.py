@@ -5,15 +5,43 @@ import json
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
-from lease import assert_lease
+from deploy.lease import assert_lease
+from deploy.prepare_release import pinned_image
 
-TERMINAL_FAILURES = {"FAILED", "CANCELLED", "HALTED", "APPROVAL_REJECTED"}
+
+class Target(StrEnum):
+    DEVELOPMENT = "chat-dev"
+    PRODUCTION = "chat-prod"
 
 
-def gcloud(arguments: list[str], project: str, region: str) -> dict | list:
-    return json.loads(
+class RolloutState(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    IN_PROGRESS = "IN_PROGRESS"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    APPROVAL_REJECTED = "APPROVAL_REJECTED"
+    PENDING = "PENDING"
+    PENDING_RELEASE = "PENDING_RELEASE"
+    CANCELLING = "CANCELLING"
+    CANCELLED = "CANCELLED"
+    HALTED = "HALTED"
+
+
+TERMINAL_FAILURES = {
+    RolloutState.FAILED,
+    RolloutState.CANCELLED,
+    RolloutState.HALTED,
+    RolloutState.APPROVAL_REJECTED,
+}
+
+
+def gcloud(arguments: list[str], project: str, region: str) -> dict[str, Any]:
+    result = json.loads(
         subprocess.check_output(
             [
                 "gcloud",
@@ -24,13 +52,17 @@ def gcloud(arguments: list[str], project: str, region: str) -> dict | list:
                 "--quiet",
             ],
             text=True,
+            timeout=120,
         )
     )
+    if not isinstance(result, dict):
+        raise ValueError("Expected a Cloud Deploy resource object")
+    return result
 
 
 def digest(image: str, project: str) -> str:
     if "@sha256:" in image:
-        return image
+        return pinned_image(image)
     result = json.loads(
         subprocess.check_output(
             [
@@ -44,21 +76,91 @@ def digest(image: str, project: str) -> str:
                 "--format=json",
             ],
             text=True,
+            timeout=120,
         )
     )
-    return image.rsplit(":", 1)[0] + "@" + result["image_summary"]["digest"]
+    repository, separator, name = image.rpartition("/")
+    untagged = name.split(":", 1)[0]
+    return pinned_image(
+        repository + separator + untagged + "@" + result["image_summary"]["digest"]
+    )
 
 
-def rollout_state(rollouts: list[dict], target: str) -> str | None:
-    controllers = [rollout for rollout in rollouts if rollout["targetId"] == target]
-    if len(controllers) > 1:
-        raise RuntimeError(
-            f"Multiple rollouts for {target}; inspect Cloud Deploy before continuing"
+@dataclass(frozen=True)
+class Release:
+    project: str
+    region: str
+    name: str
+    pipeline: str = "chat"
+
+    def command(self, arguments: list[str]) -> dict[str, Any]:
+        return gcloud(
+            ["deploy", *arguments, f"--delivery-pipeline={self.pipeline}"],
+            self.project,
+            self.region,
         )
-    return controllers[0]["state"] if controllers else None
+
+    def rollout_state(self, target: Target) -> RolloutState:
+        rollout = self.command(
+            ["rollouts", "describe", target, f"--release={self.name}"]
+        )
+        if rollout.get("targetId") != target or rollout.get("controllerRollout"):
+            raise ValueError("Expected the environment controller rollout")
+        # Rollback creates other controllers for the old release. Observe only
+        # the rollout ID submitted by this build, never its recovery rollout.
+        return RolloutState(rollout["state"])
+
+    def wait_for_render(self, timeout: float = 900) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            release = self.command(["releases", "describe", self.name])
+            state = release["renderState"]
+            if state == "SUCCEEDED":
+                return
+            if state != "IN_PROGRESS":
+                raise RuntimeError(f"Native release rendering did not succeed: {state}")
+            time.sleep(10)
+        raise TimeoutError("Native release rendering did not finish")
+
+    def promote(self, target: Target) -> None:
+        if (
+            target == Target.PRODUCTION
+            and self.rollout_state(Target.DEVELOPMENT) != RolloutState.SUCCEEDED
+        ):
+            raise RuntimeError(
+                "Production requires a successfully verified development rollout"
+            )
+        self.command(
+            [
+                "releases",
+                "promote",
+                f"--release={self.name}",
+                f"--to-target={target}",
+                f"--rollout-id={target}",
+            ]
+        )
+
+    def wait_for_rollout(self, target: Target, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        previous = None
+        while time.monotonic() < deadline:
+            state = self.rollout_state(target)
+            if state != previous:
+                print(f"{self.name}/{target}: {state}", flush=True)
+                previous = state
+            if state == RolloutState.SUCCEEDED:
+                return
+            if state in TERMINAL_FAILURES:
+                raise RuntimeError(
+                    f"Rollout {state}; inspect native repair automation. Do not cancel or override its jobs."
+                )
+            time.sleep(15)
+        raise TimeoutError(
+            "Observation timed out; Cloud Deploy still owns rollout and repair"
+        )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=["create", "wait", "promote"])
     parser.add_argument("--owner", required=True)
@@ -70,22 +172,23 @@ def main() -> None:
     parser.add_argument("--release", required=True)
     parser.add_argument("--pipeline", default="chat")
     parser.add_argument(
-        "--target", choices=["chat-dev", "chat-prod"], default="chat-dev"
+        "--target", type=Target, choices=list(Target), default=Target.DEVELOPMENT
     )
     parser.add_argument("--image")
     parser.add_argument("--verifier-image")
     parser.add_argument("--ui-url", default="https://hueybooks.com")
     parser.add_argument("--timeout", type=int, default=3600)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     assert_lease(args.project, args.owner, args.lease_file)
-    common = [f"--delivery-pipeline={args.pipeline}"]
+    release = Release(args.project, args.region, args.release, args.pipeline)
     if args.action == "create":
         if not args.image or not args.verifier_image:
             parser.error("create requires both images")
         subprocess.run(
             [
                 sys.executable,
-                str(Path(__file__).with_name("prepare_release.py")),
+                "-m",
+                "deploy.prepare_release",
                 f"--project={args.project}",
                 f"--region={args.region}",
                 f"--release={args.release}",
@@ -94,82 +197,23 @@ def main() -> None:
                 f"--ui-url={args.ui_url}",
             ],
             check=True,
+            timeout=600,
         )
-        gcloud(
+        release.command(
             [
-                "deploy",
                 "releases",
                 "create",
                 args.release,
-                *common,
                 "--source=clouddeploy-release",
                 "--disable-initial-rollout",
                 f"--gcs-source-staging-dir=gs://{args.project}-chat-deploy-artifacts/source",
-            ],
-            args.project,
-            args.region,
+            ]
         )
-        deadline = time.monotonic() + 900
-        while time.monotonic() < deadline:
-            release = gcloud(
-                ["deploy", "releases", "describe", args.release, *common],
-                args.project,
-                args.region,
-            )
-            if release["renderState"] == "SUCCEEDED":
-                break
-            if release["renderState"] == "FAILED":
-                raise RuntimeError("Native release rendering failed")
-            time.sleep(10)
-        else:
-            raise TimeoutError("Native release rendering did not finish")
+        release.wait_for_render()
     if args.action in {"create", "promote"}:
         assert_lease(args.project, args.owner, args.lease_file)
-        if args.target == "chat-prod":
-            rollouts = gcloud(
-                ["deploy", "rollouts", "list", f"--release={args.release}", *common],
-                args.project,
-                args.region,
-            )
-            if rollout_state(rollouts, "chat-dev") != "SUCCEEDED":
-                raise RuntimeError(
-                    "Production requires a successfully verified development rollout"
-                )
-        gcloud(
-            [
-                "deploy",
-                "releases",
-                "promote",
-                f"--release={args.release}",
-                f"--to-target={args.target}",
-                f"--rollout-id={args.target}",
-                *common,
-            ],
-            args.project,
-            args.region,
-        )
-    deadline = time.monotonic() + args.timeout
-    previous = None
-    while time.monotonic() < deadline:
-        rollouts = gcloud(
-            ["deploy", "rollouts", "list", f"--release={args.release}", *common],
-            args.project,
-            args.region,
-        )
-        state = rollout_state(rollouts, args.target)
-        if state != previous:
-            print(f"{args.release}/{args.target}: {state}", flush=True)
-            previous = state
-        if state == "SUCCEEDED":
-            return
-        if state in TERMINAL_FAILURES:
-            raise RuntimeError(
-                f"Rollout {state}; inspect native repair automation. Do not cancel or override its jobs."
-            )
-        time.sleep(15)
-    raise TimeoutError(
-        "Observation timed out; Cloud Deploy still owns rollout and repair"
-    )
+        release.promote(args.target)
+    release.wait_for_rollout(args.target, args.timeout)
 
 
 if __name__ == "__main__":

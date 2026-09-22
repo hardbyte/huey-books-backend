@@ -37,6 +37,27 @@ jobs:
       - name: Lint with Ruff
         run: uv run ruff check .
 
+  deployment-gate-checks:
+    name: Deployment gate contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: e2e-live/package-lock.json
+      - run: npm ci
+        working-directory: e2e-live
+      - run: npm run check
+        working-directory: e2e-live
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.13'
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run mypy --strict deploy
+
   integration-tests:
     runs-on: ubuntu-latest
     steps:

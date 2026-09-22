@@ -230,16 +230,19 @@ Deployed to GCP Cloud Run (public + internal services) backed by Cloud SQL. See 
 Merging to `main` triggers the [Cloud Build deployment pipeline](.cloudbuild/cloudbuild-main-branch.yaml).
 Require passing PR checks before merging. The pipeline builds one image, upgrades
 development before production, runs billing reconciliation and deploys both the
-public and internal APIs. Its configuration is the source of truth for image
-names, regions, environment settings and Secret Manager bindings.
+public and internal APIs. Every push to backend `main` triggers this pipeline,
+including documentation-only merges. The infrastructure repository owns Cloud
+Deploy targets, traffic phases and recovery automation; Cloud Build submits and
+observes releases. Runtime configuration and secret references are frozen from
+existing services into private release artifacts.
 
 The [critical chat release gate](docs/critical-chat-release-gate.md) requires real
 browser reader journeys against the real UI/backend pair before and after
 production deployment. Failed candidate journeys trigger serving-traffic recovery;
 HTTP health checks and API-only tests do not satisfy this gate.
 
-After deployment succeeds, verify the commit label and serving traffic on both
-services, smoke-test `/v1/version` and the changed workflow, then inspect request
+After deployment succeeds, verify the release label, image digest and serving
+traffic on both services, smoke-test `/v1/version` and the changed workflow, then inspect request
 and application logs on the new revisions. A green PR check alone does not prove
 production deployment. Organisation/library cutover additionally requires the
 gates in [the migration plan](docs/organisation-schema-migration.md).

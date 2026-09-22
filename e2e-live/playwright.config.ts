@@ -4,6 +4,7 @@ if (!process.env.E2E_UI_URL) throw new Error('E2E_UI_URL must identify the real 
 
 export default defineConfig({
   testDir: '.',
+  testMatch: '**/*.spec.ts',
   timeout: 180_000,
   globalTimeout: 240_000,
   maxFailures: 1,
