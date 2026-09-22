@@ -1,0 +1,17 @@
+import { defineConfig } from '@playwright/test';
+
+if (!process.env.E2E_UI_URL) throw new Error('E2E_UI_URL must identify the real deployed UI');
+
+export default defineConfig({
+  testDir: '.',
+  timeout: 180_000,
+  expect: { timeout: 20_000 },
+  retries: 0,
+  workers: 1,
+  use: {
+    baseURL: process.env.E2E_UI_URL,
+    screenshot: 'only-on-failure',
+    trace: 'retain-on-failure',
+    video: 'retain-on-failure',
+  },
+});

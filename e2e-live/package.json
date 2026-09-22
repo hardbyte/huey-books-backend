@@ -1,0 +1,6 @@
+{
+  "name": "huey-critical-chat-gate",
+  "private": true,
+  "scripts": {"test": "playwright test"},
+  "devDependencies": {"@playwright/test": "1.57.0"}
+}

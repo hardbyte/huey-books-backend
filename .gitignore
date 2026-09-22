@@ -70,3 +70,8 @@ examples/http-client.private.env.json
 
 # AI assistant instructions
 AGENTS.md
+
+/e2e-live/node_modules/
+/e2e-live/test-results/
+/e2e-live/playwright-report/
+!/e2e-live/package-lock.json

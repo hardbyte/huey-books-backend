@@ -145,6 +145,38 @@ steps:
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
     id: Deploy-Non-Prod-internal-api
     entrypoint: gcloud
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: CaptureProductionTraffic
+    entrypoint: python3
+    args:
+      - .cloudbuild/scripts/chat_rollout.py
+      - capture
+      - --project=$PROJECT_ID
+      - --region=$_DEPLOY_REGION
+      - --service=$_SERVICE_NAME
+      - --commit=$COMMIT_SHA
+  - name: mcr.microsoft.com/playwright:v1.57.0-noble
+    id: VerifyPreviousReaderJourney
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        cd e2e-live
+        npm ci --ignore-scripts
+        if ! E2E_UI_URL=$_CHAT_UI_URL npm test; then
+          test "$_CHAT_RECOVERY_MODE" = "true"
+          echo "Recovery deployment: baseline is unhealthy; candidate UI verification remains mandatory"
+        fi
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: RevalidateBaselineTraffic
+    entrypoint: python3
+    args:
+      - .cloudbuild/scripts/chat_rollout.py
+      - baseline
+      - --project=$PROJECT_ID
+      - --region=$_DEPLOY_REGION
+      - --service=$_SERVICE_NAME
+      - --commit=$COMMIT_SHA
   - name: "gcr.io/cloud-builders/docker"
     id: RunMigration
     entrypoint: bash
@@ -182,6 +214,14 @@ steps:
     secretEnv: ["POSTGRESQL_PASSWORD", "STRIPE_SECRET_KEY"]
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
     args:
+      - .cloudbuild/scripts/chat_rollout.py
+      - deploy
+      - --project=$PROJECT_ID
+      - --region=$_DEPLOY_REGION
+      - --service=$_SERVICE_NAME
+      - --commit=$COMMIT_SHA
+      - --target-service=$_SERVICE_NAME
+      - --
       - run
       - services
       - update
@@ -235,9 +275,18 @@ steps:
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
     id: Deploy-Prod
-    entrypoint: gcloud
+    entrypoint: python3
+    allowFailure: true
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
     args:
+      - .cloudbuild/scripts/chat_rollout.py
+      - deploy
+      - --project=$PROJECT_ID
+      - --region=$_DEPLOY_REGION
+      - --service=$_SERVICE_NAME
+      - --commit=$COMMIT_SHA
+      - --target-service=$_SERVICE_NAME-internal
+      - --
       - run
       - services
       - update
@@ -286,7 +335,40 @@ steps:
       - >-
         --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
     id: Deploy-Prod-internal-api
-    entrypoint: gcloud
+    entrypoint: python3
+    allowFailure: true
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: CaptureCandidateTraffic
+    entrypoint: python3
+    allowFailure: true
+    args:
+      - .cloudbuild/scripts/chat_rollout.py
+      - candidate
+      - --project=$PROJECT_ID
+      - --region=$_DEPLOY_REGION
+      - --service=$_SERVICE_NAME
+      - --commit=$COMMIT_SHA
+  - name: mcr.microsoft.com/playwright:v1.57.0-noble
+    id: VerifyProductionReaderJourney
+    entrypoint: bash
+    allowFailure: true
+    args:
+      - -ceu
+      - |
+        test -s /workspace/chat-candidate-traffic.json
+        cd e2e-live
+        E2E_UI_URL=$_CHAT_UI_URL npm test
+        touch /workspace/chat-gate-passed
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: RestoreTrafficIfReaderJourneyFails
+    entrypoint: python3
+    args:
+      - .cloudbuild/scripts/chat_rollout.py
+      - finish
+      - --project=$PROJECT_ID
+      - --region=$_DEPLOY_REGION
+      - --service=$_SERVICE_NAME
+      - --commit=$COMMIT_SHA
   - name: "gcr.io/cloud-builders/docker"
     id: PgrolesCheck
     entrypoint: bash
@@ -314,6 +396,8 @@ images:
 options:
   substitutionOption: ALLOW_LOOSE
 substitutions:
+  _CHAT_RECOVERY_MODE: "false"
+  _CHAT_UI_URL: https://hueybooks.com
   _LABELS: gcb-trigger-id=d1de14d3-a92a-42fc-bb68-8f84ffed0c46
   _TRIGGER_ID: d1de14d3-a92a-42fc-bb68-8f84ffed0c46
   _GCR_HOSTNAME: asia.gcr.io
