@@ -25,7 +25,7 @@
         "id": "greeting_response",
         "type": "question",
         "content": {
-          "question": {"text": ""},
+          "question": {"text": "Ready to find your next book?"},
           "input_type": "choice",
           "options": [
             {"label": "Hello Huey! \ud83d\udc4b", "value": "hello"}
