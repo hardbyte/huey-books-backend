@@ -34,6 +34,7 @@ async def test_invalid_notification_logs_type_without_payload_or_logging_failure
     listener = FlowEventListener()
     handler = Mock()
     listener.register_handler("*", handler)
+    caplog.clear()
     with caplog.at_level(logging.ERROR, logger="app.services.event_listener"):
         await listener._handle_notification(
             None, 0, "flow_events", json.dumps({"private": "must-not-appear"})
