@@ -2,9 +2,7 @@
 
 The reader experience is the primary release criterion. HTTP health, migration success, API tests and mocked browser tests do not satisfy this gate.
 
-`e2e-live` drives the deployed chat UI with a real browser against its real backend. It does not intercept or fabricate chat responses. It checks greeting input, age selection, reading-level carousel, preference choices, visible book recommendations, feedback submission, optional-joke exhaustion, and conversation completion. It covers young and older readers, mobile, desktop and short viewports.
-
-Run against an explicitly selected UI:
+`e2e-live` opens the deployed chat UI in Chromium and drives greeting input, age selection, reading-level selection, picture preferences, visible book recommendations, feedback, optional-joke exhaustion and conversation completion. It covers young and older readers, mobile, desktop and short viewports. Candidate verification forwards the browser's actual API requests to the native Cloud Run candidate tag; it never fabricates responses. Every chat response must come from that candidate. Service workers are disabled so they cannot bypass request routing.
 
 ```sh
 cd e2e-live
@@ -13,24 +11,34 @@ npx playwright install chromium
 E2E_UI_URL=https://your-chat-ui.example npm test
 ```
 
-`E2E_CHAT_PATH` can select a library-specific chat link. No production library identifiers belong in the repository. Runs create synthetic anonymous conversations, including normal recommendation and CMS queries. Do not run load tests against production.
+`E2E_CHAT_PATH` can select a library-specific chat link. Keep production library identifiers, session data and incident evidence outside this public repository. Runs create synthetic anonymous conversations; this is functional verification, not a load test.
 
-## Release behavior
+## Native rollout
 
-The backend pipeline captures explicit traffic targets for both public and internal services, verifies the existing reader experience, then revalidates those targets before production changes. Deployments explicitly promote their new revisions, including when an earlier rollback left traffic pinned. After deployment, it checks that both deployment steps succeeded, the candidate commit owns both services and receives all traffic. The same real-browser journeys must then pass. A missing or failed browser result fails the release and restores the recorded targets for both services. Partial deployment failures also reach recovery. The rollback checks release ownership and reconciliation state, uses an etag to reject concurrent updates, reads back the resulting traffic, and reports a failed build even if restoration succeeds.
+Infrastructure defines a Cloud Deploy pipeline with development and production stages. Each stage coordinates the public and internal Cloud Run services in a multi-target rollout. Native automatic traffic control advances through 0%, 10%, 50% and 100%. The `can` tag identifies the candidate, and `old` identifies the prior revision during canary phases. Cloud Run requires at least three tag characters and a combined service/tag name length no greater than 46.
 
-For an already-broken production environment, an operator may explicitly set the build substitution `_CHAT_RECOVERY_MODE=true`. This allows an unsuccessful baseline browser run so a repair can deploy; it never skips candidate browser verification. The captured baseline is not known-good in this mode, so restoring it can only recover the prior state. The default is `false`. A canceled or timed-out build cannot guarantee cleanup; the independent controller described below is needed for that case.
+Cloud Build builds the backend and browser-verifier images once. Development migrations precede the development rollout. A successful development rollout is required before production migrations, billing reconciliation, database-role checks and promotion. Images are resolved to digests. Release creation freezes existing runtime settings into a private artifact bundle; Helm target parameters select the correct service definition for each child target. This preserves secrets references, resource limits, identity, Cloud SQL connections and application configuration without putting environment snapshots in the public repository.
 
-The application schema is retained. Only backward-compatible migrations belong in an automatically reversible release; use expand/contract changes. A destructive migration needs a separate reviewed recovery plan. Traffic rollback cannot repair incompatible database changes or faulty shared CMS content.
+Every phase runs the verification container on both child targets. Each verifier waits for both native candidate tags, checks revision identity and image digest, and drives the real UI against the candidate public API. It checks tag ownership again after the browser tests. At 0%, readers still use the prior release. Production advancement waits two minutes after a successful phase. A failed deployment or browser verification triggers native repair automation, which creates a rollout of the last successful release at the stable phase. The build remains failed even when recovery succeeds.
 
-The service pair is checked before either rollback begins, and each update checks ownership again. The two traffic updates are not atomic: a concurrent release or control-plane failure can prevent the second update after the first succeeds. Such a failure is reported and requires reconciliation; the controller must never overwrite newer ownership to force a matching pair.
+Internal service calls use the canonical internal endpoint. During intermediate phases, calls can cross versions; releases must remain compatible with the preceding version. The final gate runs after both services reach 100% candidate traffic. Coordination is not an atomic transaction across two services.
 
-Frontend hosting has its own real-browser gate against the built UI and real backend before publication. Keep the reader-journey contract aligned between repositories. Neither a skipped job nor an unavailable CI runner counts as a pass.
+The initial native deployment has no successful release to restore and can skip canary phases. Bootstrap with the currently healthy image, verify it, and establish a successful baseline before normal release promotion. Prove a deliberately failed UI verification and native rollback in development before production cutover.
 
-## Remaining safeguards
+## Recovery and boundaries
 
-This post-deployment backend check bounds exposure; it does not prevent the first request reaching a faulty candidate. The next deployment architecture should build a matching preview UI against tagged, zero-traffic public/internal revisions and run these journeys before promotion. Each preview database needs the actual versioned flow graph, representative CMS pools and a synthetic catalogue/library; an empty migrated database is not a representative environment.
+Cloud Deploy continues phase advancement and repair independently of the submitting build. Canceling a build is not a rollback request. Inspect its native rollout and automation runs. Manually retrying, canceling, ignoring or terminating a rollout job can abort repair automation; do not use those controls while expecting automatic recovery. If another rollout is pending, the configured repair refuses to overwrite it and requires reconciliation.
 
-Extend the deterministic preview matrix to include library scope, all age boundaries, exhausted preference pools, spelling branches, absent or malformed CMS content, back/reload/restart, and both populated and intentionally empty recommendation outcomes. Assert prompts, choices, images and book cards in the DOM, and verify no duplicate or skipped user input. Keep age/visibility constraints intact.
+Traffic rollback retains the database schema and shared CMS data. Only backward-compatible migrations belong in automatically reversible releases. Use expand/contract changes; destructive migrations require a separate reviewed recovery plan. Flow configuration changes need their own validation because a code rollback cannot repair shared content.
 
-A cloud-hosted scheduled real-browser synthetic and an independent missed-run alert are still needed for continuous protection after the build ends. Email alert delivery and a desktop task's configured schedule are not substitutes for a durable rollback controller. Persist a known-good release pair and use revision-specific failure evidence; never let a stale monitor roll back a newer release.
+Frontend hosting has a separate real-browser gate against the built UI and real backend before publication. Keep the reader-journey contracts aligned. Neither a skipped job nor an unavailable CI runner counts as a pass.
+
+These are rollout gates, not continuous synthetic monitoring after release completion. Existing production monitoring remains necessary. Extend the UI matrix to cover library scope, all age boundaries, exhausted preference pools, spelling branches, missing or malformed CMS content, back/reload/restart, and populated and intentionally empty recommendation outcomes. Preserve age and visibility constraints.
+
+Native configuration lives in the infrastructure repository. See Google's documentation for [Cloud Run canaries](https://docs.cloud.google.com/deploy/docs/deployment-strategies/canary/cloud-run), [parallel deployments](https://docs.cloud.google.com/deploy/docs/parallel), [verification](https://docs.cloud.google.com/deploy/docs/verify-deployment) and [repair automation](https://docs.cloud.google.com/deploy/docs/automation-rules).
+
+## Submission lock
+
+Cloud Build acquires a generation-conditional object in the private deployment bucket before either environment's migrations. It holds that lease until production verification succeeds. Concurrent builds fail before migrations or release submission, so they cannot queue a rollout that would suppress native recovery. The lease has no automatic expiry or stealing mechanism.
+
+A failed or canceled build leaves the lease in place. Before an operator removes it, inspect the owning build, both native target rollouts and repair automation, confirm no deployment or migration remains active, and verify the current reader experience. Remove only the observed object generation. Do not queue a manual rollout behind a failing canary while expecting automatic repair.
