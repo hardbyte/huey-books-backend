@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+LISTENER_OPERATION_TIMEOUT_SECONDS = 10
 
 
 class FlowEvent(BaseModel):
@@ -50,6 +51,7 @@ class FlowEventListener:
         self.handlers: Dict[str, list[Callable[[FlowEvent], None]]] = {}
         self.is_listening = False
         self._listen_task: Optional[asyncio.Task] = None
+        self._lifecycle_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         """Establish connection to PostgreSQL for listening to notifications."""
@@ -69,6 +71,8 @@ class FlowEventListener:
                     database=self.settings.POSTGRESQL_DATABASE,
                     host=host,
                     port=self.settings.POSTGRESQL_PORT,
+                    timeout=LISTENER_OPERATION_TIMEOUT_SECONDS,
+                    command_timeout=LISTENER_OPERATION_TIMEOUT_SECONDS,
                 )
                 logger.info("Connected to PostgreSQL for event listening via socket")
                 return
@@ -83,11 +87,18 @@ class FlowEventListener:
                 "postgresql+asyncpg://", "postgresql://"
             )
 
-            self.connection = await asyncpg.connect(connection_url)
+            self.connection = await asyncpg.connect(
+                connection_url,
+                timeout=LISTENER_OPERATION_TIMEOUT_SECONDS,
+                command_timeout=LISTENER_OPERATION_TIMEOUT_SECONDS,
+            )
             logger.info("Connected to PostgreSQL for event listening")
 
         except Exception as e:
-            logger.error(f"Failed to connect to PostgreSQL for event listening: {e}")
+            logger.warning(
+                "Failed to connect to PostgreSQL for event listening",
+                extra={"error_type": type(e).__name__},
+            )
             raise
 
     async def disconnect(self) -> None:
@@ -177,64 +188,128 @@ class FlowEventListener:
 
     async def start_listening(self) -> None:
         """Start listening for PostgreSQL notifications."""
-        if not self.connection:
-            await self.connect()
+        async with self._lifecycle_lock:
+            if self.is_listening:
+                logger.warning("Already listening for events")
+                return
 
-        if self.is_listening:
-            logger.warning("Already listening for events")
-            return
-
-        try:
-            # Listen to the flow_events channel
-            await self.connection.add_listener("flow_events", self._handle_notification)
             self.is_listening = True
-
-            logger.info("Started listening for flow events on 'flow_events' channel")
-
-            # Keep the connection alive
+            try:
+                if self.connection is None or self.connection.is_closed():
+                    await self.connect()
+                assert self.connection is not None
+                await asyncio.wait_for(
+                    self.connection.add_listener(
+                        "flow_events", self._handle_notification
+                    ),
+                    timeout=LISTENER_OPERATION_TIMEOUT_SECONDS,
+                )
+            except asyncio.CancelledError:
+                self.is_listening = False
+                raise
+            except Exception as e:
+                logger.warning(
+                    "Flow event listener startup failed; reconnecting",
+                    extra={"error_type": type(e).__name__},
+                )
+                if self.connection is not None:
+                    self.connection.terminate()
+                    self.connection = None
+            else:
+                logger.info(
+                    "Started listening for flow events on 'flow_events' channel"
+                )
             self._listen_task = asyncio.create_task(self._keep_alive())
-
-        except Exception as e:
-            logger.error(f"Failed to start listening for events: {e}")
-            raise
 
     async def stop_listening(self) -> None:
         """Stop listening for PostgreSQL notifications."""
-        if not self.is_listening:
-            return
-
-        try:
-            if self.connection:
-                await self.connection.remove_listener(
-                    "flow_events", self._handle_notification
-                )
-
-            if self._listen_task:
-                self._listen_task.cancel()
-                try:
-                    await self._listen_task
-                except asyncio.CancelledError:
-                    pass
-                self._listen_task = None
+        async with self._lifecycle_lock:
+            if not self.is_listening and self._listen_task is None:
+                return
 
             self.is_listening = False
-            logger.info("Stopped listening for flow events")
+            task = self._listen_task
+            self._listen_task = None
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
-        except Exception as e:
-            logger.error(f"Error stopping event listener: {e}")
+            if self.connection is not None and not self.connection.is_closed():
+                try:
+                    await asyncio.wait_for(
+                        self.connection.remove_listener(
+                            "flow_events", self._handle_notification
+                        ),
+                        timeout=LISTENER_OPERATION_TIMEOUT_SECONDS,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to remove flow event listener",
+                        extra={"error_type": type(e).__name__},
+                    )
+                    self.connection.terminate()
+                    self.connection = None
+
+            logger.info("Stopped listening for flow events")
 
     async def _keep_alive(self) -> None:
         """Keep the connection alive while listening."""
         try:
             while self.is_listening:
-                await asyncio.sleep(30)  # Ping every 30 seconds
-                if self.connection:
-                    await self.connection.execute("SELECT 1")
+                if self.connection is None or self.connection.is_closed():
+                    await self._reconnect()
+                    if not self.is_listening:
+                        break
+                await asyncio.sleep(30)
+                if not self.is_listening:
+                    break
+                try:
+                    if self.connection is None:
+                        raise ConnectionError("No flow event listener connection")
+                    await asyncio.wait_for(
+                        self.connection.execute("SELECT 1"),
+                        timeout=LISTENER_OPERATION_TIMEOUT_SECONDS,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Flow event listener connection lost",
+                        extra={"error_type": type(e).__name__},
+                    )
+                    await self._reconnect()
         except asyncio.CancelledError:
             logger.info("Keep-alive task cancelled")
-        except Exception as e:
-            logger.error(f"Keep-alive error: {e}")
-            self.is_listening = False
+
+    async def _reconnect(self) -> None:
+        delay = 1
+        while self.is_listening:
+            if self.connection is not None:
+                self.connection.terminate()
+                self.connection = None
+            try:
+                await self.connect()
+                assert self.connection is not None
+                # LISTEN registrations belong to the connection that created them.
+                await asyncio.wait_for(
+                    self.connection.add_listener(
+                        "flow_events", self._handle_notification
+                    ),
+                    timeout=LISTENER_OPERATION_TIMEOUT_SECONDS,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    "Flow event listener reconnection failed",
+                    extra={"error_type": type(e).__name__},
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30)
+            else:
+                logger.info("Reconnected flow event listener")
+                return
 
 
 # Global event listener instance
