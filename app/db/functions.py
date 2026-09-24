@@ -239,3 +239,33 @@ cms_content_tsvector_update = PGFunction(
       $function$
     """,
 )
+
+require_education_unit_school = PGFunction(
+    schema="public",
+    signature="require_education_unit_school()",
+    definition="""returns trigger LANGUAGE plpgsql
+    SET search_path = pg_catalog, public, pg_temp
+    AS $function$
+    DECLARE
+        target_kind text;
+    BEGIN
+        IF NEW.school_id IS NULL THEN
+            RETURN NEW;
+        END IF;
+        IF TG_ARGV[0] = 'wriveted_identifier' THEN
+            SELECT kind INTO target_kind FROM public.schools
+            WHERE wriveted_identifier = NEW.school_id;
+        ELSE
+            SELECT kind INTO target_kind FROM public.schools
+            WHERE id = NEW.school_id;
+        END IF;
+        IF target_kind IS DISTINCT FROM 'school' THEN
+            RAISE EXCEPTION
+                'Table % cannot reference school % because it is a % row, not an education unit',
+                TG_TABLE_NAME, NEW.school_id, target_kind
+                USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END;
+    $function$""",
+)

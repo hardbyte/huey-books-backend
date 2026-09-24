@@ -15,7 +15,6 @@ import uuid
 
 import pytest
 from sqlalchemy import text
-from starlette import status
 
 
 @pytest.fixture(autouse=True)

@@ -21,10 +21,51 @@ from app.schemas.organisation import (
     OrganisationList,
     WorkspaceMemberList,
 )
-from app.services import library_chat, organisation_management
+from app.schemas.organisation_setup import (
+    OrganisationSetupInput,
+    OrganisationSetupPreview,
+    OrganisationSetupResult,
+)
+from app.schemas.people import PersonBriefPage
+from app.services import library_chat, organisation_management, organisation_setup
 
 router = APIRouter(tags=["Organisation workspaces"], route_class=WorkspaceRoute)
 Actor = Annotated[User, Depends(get_current_active_user)]
+
+
+@router.get("/libraries/{library_uuid}/setup", response_model=OrganisationSetupPreview)
+async def preview_organisation_setup(
+    library_uuid: UUID, session: DBSessionDep, actor: Actor
+):
+    return await organisation_setup.preview(session, actor, library_uuid)
+
+
+@router.get("/libraries/{library_uuid}/setup/managers", response_model=PersonBriefPage)
+async def list_setup_managers(
+    library_uuid: UUID,
+    session: DBSessionDep,
+    actor: Actor,
+    q: str = Query("", max_length=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(25, ge=1, le=50),
+):
+    return await organisation_setup.eligible_managers(
+        session, actor, library_uuid, q, skip, limit
+    )
+
+
+@router.post(
+    "/libraries/{library_uuid}/setup",
+    response_model=OrganisationSetupResult,
+    status_code=201,
+)
+async def complete_organisation_setup(
+    library_uuid: UUID,
+    data: OrganisationSetupInput,
+    session: DBSessionDep,
+    actor: Actor,
+):
+    return await organisation_setup.complete(session, actor, library_uuid, data)
 
 
 @router.get("/libraries/{library_uuid}/chat-settings", response_model=LibraryChatDetail)

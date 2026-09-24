@@ -28,7 +28,9 @@ def _payload(event_type: str = "node_changed") -> str:
 async def test_repeated_notifications_do_not_grow_handler_lists():
     listener = FlowEventListener()
     calls = {"wildcard": 0, "typed": 0}
-    listener.register_handler("*", lambda e: calls.__setitem__("wildcard", calls["wildcard"] + 1))
+    listener.register_handler(
+        "*", lambda e: calls.__setitem__("wildcard", calls["wildcard"] + 1)
+    )
     listener.register_handler(
         "node_changed", lambda e: calls.__setitem__("typed", calls["typed"] + 1)
     )

@@ -36,7 +36,8 @@ def test_query_attributes_are_redacted_entirely(attribute):
 
 @pytest.mark.timeout(2)
 @pytest.mark.parametrize(
-    "suffix,expected_suffix", [("", ""), (" search?query=private", " search?[redacted]")]
+    "suffix,expected_suffix",
+    [("", ""), (" search?query=private", " search?[redacted]")],
 )
 def test_queryless_slash_rich_paths_redact_without_repeated_suffix_scans(
     suffix, expected_suffix

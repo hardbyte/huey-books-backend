@@ -31,6 +31,7 @@ from .educator import Educator
 from .event import Event, EventLevel
 from .event_outbox import EventOutbox, EventPriority, EventStatus
 from .hue import Hue
+from .idempotency import IdempotencyRecord
 from .illustrator import Illustrator
 from .labelset import LabelSet
 from .labelset_hue_association import LabelSetHue

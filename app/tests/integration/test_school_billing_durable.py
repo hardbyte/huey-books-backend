@@ -1041,5 +1041,7 @@ def test_invoice_paid_applies_even_after_a_later_subscription_update(
     refreshed = session.get(Subscription, subscription_id)
     assert refreshed.paid_at is not None
     assert refreshed.is_active is True
-    assert refreshed.expiration == datetime.utcfromtimestamp(int(period_end.timestamp()))
+    assert refreshed.expiration == datetime.utcfromtimestamp(
+        int(period_end.timestamp())
+    )
     assert test_school.state == SchoolState.ACTIVE

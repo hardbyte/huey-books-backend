@@ -112,9 +112,7 @@ def test_stripe_webhook_queues_serializable_payload_for_price_event(client):
 
     app.dependency_overrides[get_stripe_event] = lambda: event
     try:
-        with patch(
-            "app.api.commerce.queue_background_task", side_effect=fake_queue
-        ):
+        with patch("app.api.commerce.queue_background_task", side_effect=fake_queue):
             resp = client.post("/v1/stripe/webhook", json={})
     finally:
         app.dependency_overrides.pop(get_stripe_event, None)

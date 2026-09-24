@@ -204,9 +204,9 @@ class TestOptionalAuthenticationPatterns:
             # This should work because chat/start uses get_optional_authenticated_user
             # which allows anonymous access
             # Note: This may still fail due to missing flow, but it should NOT fail with 401
-            assert (
-                response.status_code != 401
-            ), "Anonymous access should be allowed for chat/start"
+            assert response.status_code != 401, (
+                "Anonymous access should be allowed for chat/start"
+            )
 
             logger.info("Anonymous access to chat/start working correctly")
 
@@ -233,9 +233,9 @@ class TestOptionalAuthenticationPatterns:
             logger.debug(f"Received response with status: {response.status_code}")
 
             # Should work with user authentication
-            assert (
-                response.status_code != 401
-            ), "User authenticated access should be allowed for chat/start"
+            assert response.status_code != 401, (
+                "User authenticated access should be allowed for chat/start"
+            )
 
             logger.info("User authenticated access to chat/start working correctly")
 
@@ -260,9 +260,9 @@ class TestRequiredAuthenticationPatterns:
             logger.debug(f"Received response with status: {response.status_code}")
 
             # Should fail with 401 because CMS endpoints require authentication
-            assert (
-                response.status_code == 401
-            ), "CMS content should require authentication"
+            assert response.status_code == 401, (
+                "CMS content should require authentication"
+            )
 
             logger.info("CMS content properly requires authentication")
 
@@ -288,9 +288,9 @@ class TestRequiredAuthenticationPatterns:
             logger.debug(f"Received response with status: {response.status_code}")
 
             # Should work with service account authentication
-            assert (
-                response.status_code != 401
-            ), "Service account should have access to CMS content"
+            assert response.status_code != 401, (
+                "Service account should have access to CMS content"
+            )
 
             logger.info("Service account access to CMS content working correctly")
 
@@ -316,9 +316,9 @@ class TestRequiredAuthenticationPatterns:
             logger.debug(f"Received response with status: {response.status_code}")
 
             # Should fail with 401
-            assert (
-                response.status_code == 401
-            ), "CMS content creation should require authentication"
+            assert response.status_code == 401, (
+                "CMS content creation should require authentication"
+            )
 
             logger.info("CMS content creation properly requires authentication")
 
@@ -421,9 +421,9 @@ class TestAuthenticationPatternConsistency:
                 )
 
                 # Should not fail with 401 (authentication required)
-                assert (
-                    response.status_code != 401
-                ), f"{endpoint} should allow anonymous access"
+                assert response.status_code != 401, (
+                    f"{endpoint} should allow anonymous access"
+                )
 
             logger.info("Chat endpoints consistently allow anonymous access")
 
@@ -453,9 +453,9 @@ class TestAuthenticationPatternConsistency:
                 )
 
                 # Should fail with 401 (authentication required)
-                assert (
-                    response.status_code == 401
-                ), f"{endpoint} should require authentication"
+                assert response.status_code == 401, (
+                    f"{endpoint} should require authentication"
+                )
 
             logger.info("CMS endpoints consistently require authentication")
 
@@ -488,9 +488,9 @@ class TestUserImpersonationPrevention:
             logger.debug(f"Received response with status: {response.status_code}")
 
             # Should be blocked with 403 Forbidden
-            assert (
-                response.status_code == 403
-            ), "Anonymous user impersonation should be forbidden"
+            assert response.status_code == 403, (
+                "Anonymous user impersonation should be forbidden"
+            )
 
             error_detail = response.json().get("detail", "")
             assert "Cannot specify a user_id for an anonymous session" in error_detail
@@ -721,9 +721,9 @@ class TestInputValidationSecurity:
                 logger.debug(f"Injection input returned status: {response.status_code}")
 
                 # Should not cause server errors (500)
-                assert (
-                    response.status_code != 500
-                ), f"Injection should not cause server error: {injection_input}"
+                assert response.status_code != 500, (
+                    f"Injection should not cause server error: {injection_input}"
+                )
 
                 # Response should not contain the dangerous input directly
                 if response.status_code in [200, 201]:

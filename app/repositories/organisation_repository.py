@@ -17,7 +17,7 @@ from app.models.organisation import (
     OrganisationMembership,
     OrganisationSubscription,
 )
-from app.models.school import School
+from app.models.school import School, SchoolKind, SchoolState
 from app.models.subscription import Subscription, SubscriptionType
 from app.models.user import User, UserAccountType
 from app.models.work import Work
@@ -137,6 +137,42 @@ class OrganisationRepository:
         if lock:
             query = query.with_for_update().execution_options(populate_existing=True)
         return await db.scalar(query)
+
+    async def create_library(
+        self,
+        db: AsyncSession,
+        *,
+        name: str,
+        country_code: str | None,
+        organisation_id: UUID,
+        collection_name: str,
+        location: dict | None = None,
+    ) -> School:
+        """The one way an organisation gains a library.
+
+        The row is a library, not an education unit: it holds a catalogue and
+        staff but can never hold students, classes or admission domains. Reader
+        access follows the organisation entitlement rather than a subscription
+        of its own, so the row starts inactive.
+        """
+        library = School(
+            name=name,
+            country_code=country_code,
+            organisation_id=organisation_id,
+            kind=SchoolKind.LIBRARY,
+            state=SchoolState.INACTIVE,
+            info={"location": dict(location or {})},
+        )
+        db.add(library)
+        await db.flush()
+        db.add(
+            Collection(
+                name=collection_name,
+                school_id=library.school_uuid,
+                is_default=True,
+            )
+        )
+        return library
 
     async def country_exists(self, db: AsyncSession, country_code: str) -> bool:
         return await db.get(Country, country_code) is not None

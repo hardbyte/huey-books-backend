@@ -100,3 +100,42 @@ cms_content_tsvector_trigger = PGTrigger(
         f"{cms_content_tsvector_update.signature}"
     ),
 )
+
+
+# Education records belong to an education unit. `schools` rows created as
+# additional libraries of an organisation carry kind='library', and these
+# triggers make that boundary structural instead of relying on every caller.
+# The argument names the schools column the referencing table points at.
+class_groups_require_education_unit_trigger = PGTrigger(
+    schema="public",
+    signature="class_groups_require_education_unit_trigger",
+    on_entity="public.class_groups",
+    is_constraint=False,
+    definition=(
+        "BEFORE INSERT OR UPDATE OF school_id ON public.class_groups"
+        " FOR EACH ROW EXECUTE FUNCTION"
+        " public.require_education_unit_school('wriveted_identifier')"
+    ),
+)
+
+students_require_education_unit_trigger = PGTrigger(
+    schema="public",
+    signature="students_require_education_unit_trigger",
+    on_entity="public.students",
+    is_constraint=False,
+    definition=(
+        "BEFORE INSERT OR UPDATE OF school_id ON public.students"
+        " FOR EACH ROW EXECUTE FUNCTION public.require_education_unit_school('id')"
+    ),
+)
+
+educators_require_education_unit_trigger = PGTrigger(
+    schema="public",
+    signature="educators_require_education_unit_trigger",
+    on_entity="public.educators",
+    is_constraint=False,
+    definition=(
+        "BEFORE INSERT OR UPDATE OF school_id ON public.educators"
+        " FOR EACH ROW EXECUTE FUNCTION public.require_education_unit_school('id')"
+    ),
+)

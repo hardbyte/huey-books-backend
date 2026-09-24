@@ -23,7 +23,9 @@ def test_enqueue_is_synchronous_not_a_coroutine():
     """Must be a plain def so BackgroundTasks runs it off the event loop."""
     assert not inspect.iscoroutinefunction(
         recommendations.enqueue_debounced_mv_refresh
-    ), "enqueue_debounced_mv_refresh must stay sync (blocking gRPC) so it runs in a threadpool"
+    ), (
+        "enqueue_debounced_mv_refresh must stay sync (blocking gRPC) so it runs in a threadpool"
+    )
 
 
 def test_enqueue_targets_v1_refresh_endpoint(monkeypatch):

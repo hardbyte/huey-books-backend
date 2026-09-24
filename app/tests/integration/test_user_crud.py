@@ -23,9 +23,9 @@ def test_user_crud_extracts_name_components(session, test_school):
         ),
         commit=False,
     )
-    assert isinstance(
-        publicuser, PublicReader
-    ), "CRUD: User account without specified type not constructing a PublicReader object"
+    assert isinstance(publicuser, PublicReader), (
+        "CRUD: User account without specified type not constructing a PublicReader object"
+    )
 
     assert publicuser.first_name == "Test"
     assert publicuser.last_name_initial == "U"
@@ -43,9 +43,9 @@ def test_user_crud_types(session, test_school, test_class_group):
         ),
         commit=True,
     )
-    assert isinstance(
-        publicuser, PublicReader
-    ), "CRUD: User account without specified type not constructing a PublicReader object"
+    assert isinstance(publicuser, PublicReader), (
+        "CRUD: User account without specified type not constructing a PublicReader object"
+    )
     retrieved_public_user = crud.user.get_by_account_email(session, test_email)
     assert retrieved_public_user is not None, "couldn't retrieve public user by email"
     assert retrieved_public_user.id == publicuser.id
@@ -61,9 +61,9 @@ def test_user_crud_types(session, test_school, test_class_group):
         ),
         commit=False,
     )
-    assert isinstance(
-        wrivetedadmin, WrivetedAdmin
-    ), "CRUD: User account with type='wriveted' not constructing a WrivetedAdmin object"
+    assert isinstance(wrivetedadmin, WrivetedAdmin), (
+        "CRUD: User account with type='wriveted' not constructing a WrivetedAdmin object"
+    )
     crud.user.remove(session, id=wrivetedadmin.id)
 
     schooladmin = crud.user.create(
@@ -76,9 +76,9 @@ def test_user_crud_types(session, test_school, test_class_group):
         ),
         commit=False,
     )
-    assert isinstance(
-        schooladmin, SchoolAdmin
-    ), "CRUD: User account with type='SCHOOL_ADMIN' not constructing a SchoolAdmin object"
+    assert isinstance(schooladmin, SchoolAdmin), (
+        "CRUD: User account with type='SCHOOL_ADMIN' not constructing a SchoolAdmin object"
+    )
     crud.user.remove(session, id=schooladmin.id)
     student = crud.user.create(
         db=session,
@@ -92,9 +92,9 @@ def test_user_crud_types(session, test_school, test_class_group):
         ),
         commit=False,
     )
-    assert isinstance(
-        student, Student
-    ), "CRUD: User account with type='student' not constructing a Student object"
+    assert isinstance(student, Student), (
+        "CRUD: User account with type='student' not constructing a Student object"
+    )
 
     assert student.name == "Test S"
     assert student.first_name == "Test"
@@ -211,9 +211,9 @@ def test_user_info_dict_merging(session):
 def test_public_reader_to_student_update(
     session, test_user_account, test_school, test_class_group
 ):
-    assert isinstance(
-        test_user_account, PublicReader
-    ), "CRUD: User account without specified type not constructing a PublicReader object"
+    assert isinstance(test_user_account, PublicReader), (
+        "CRUD: User account without specified type not constructing a PublicReader object"
+    )
 
     # Now change the user type to student
     student = crud.user.update(
@@ -228,9 +228,9 @@ def test_public_reader_to_student_update(
         db_obj=test_user_account,
     )
 
-    assert isinstance(
-        student, Student
-    ), "User account hasn't been changed to Student type"
+    assert isinstance(student, Student), (
+        "User account hasn't been changed to Student type"
+    )
 
 
 def test_student_to_public_reader_update(
@@ -249,9 +249,9 @@ def test_student_to_public_reader_update(
         db_obj=test_user_account,
     )
 
-    assert isinstance(
-        student, Student
-    ), "User account hasn't been changed to Student type"
+    assert isinstance(student, Student), (
+        "User account hasn't been changed to Student type"
+    )
 
     # Update the user type back to public reader
     user = crud.user.update(
@@ -262,9 +262,9 @@ def test_student_to_public_reader_update(
         ),
         db_obj=student,
     )
-    assert isinstance(
-        user, PublicReader
-    ), "User account hasn't been changed to Public Reader type"
+    assert isinstance(user, PublicReader), (
+        "User account hasn't been changed to Public Reader type"
+    )
 
 
 def test_user_creation_name_validation(session):

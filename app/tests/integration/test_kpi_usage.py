@@ -22,10 +22,15 @@ async def test_usage_cohort_distinct_sites_and_milestones(async_session):
     )
     start, end = datetime(2026, 8, 3), datetime(2026, 8, 17)
     school = uuid4()
-    assert (await read_usage(async_session, start, end)) == [{
-        "week": None, "sessions": 0, "reached_recommendations": 0,
-        "active_sites": 0, "unattributed_sessions": 0,
-    }]
+    assert (await read_usage(async_session, start, end)) == [
+        {
+            "week": None,
+            "sessions": 0,
+            "reached_recommendations": 0,
+            "active_sites": 0,
+            "unattributed_sessions": 0,
+        }
+    ]
     for index, (school_id, started) in enumerate(
         [
             (school, start),
@@ -54,10 +59,13 @@ async def test_usage_cohort_distinct_sites_and_milestones(async_session):
                 },
             )
         if index == 3:
-            await async_session.execute(text(
-                """INSERT INTO conversation_history VALUES
+            await async_session.execute(
+                text(
+                    """INSERT INTO conversation_history VALUES
                 (:id, 'MESSAGE', '{"input_type":"book_feedback"}', :created)"""
-            ), {"id": session_id, "created": end})
+                ),
+                {"id": session_id, "created": end},
+            )
     rows = await read_usage(async_session, start, end)
     assert rows[-1] == {
         "week": None,
@@ -69,32 +77,47 @@ async def test_usage_cohort_distinct_sites_and_milestones(async_session):
     assert [row["active_sites"] for row in rows[:-1]] == [1, 1]
     assert sum(row["sessions"] for row in rows[:-1]) == rows[-1]["sessions"]
     legacy_id = uuid4()
-    await async_session.execute(text(
-        "INSERT INTO conversation_sessions VALUES (:id, :school, :started)"
-    ), {"id": legacy_id, "school": school, "started": start})
+    await async_session.execute(
+        text("INSERT INTO conversation_sessions VALUES (:id, :school, :started)"),
+        {"id": legacy_id, "school": school, "started": start},
+    )
     for content in [
         '{"input_type":"carousel"}',
         '{"messages":[{"type":"text","content":{"text":"book_list"}}]}',
     ]:
-        await async_session.execute(text(
-            "INSERT INTO conversation_history VALUES (:id, 'MESSAGE', CAST(:content AS jsonb), :created)"
-        ), {"id": legacy_id, "content": content, "created": start})
-    assert (await read_usage(async_session, start, end))[-1]["reached_recommendations"] == 3
-    await async_session.execute(text(
-        """INSERT INTO conversation_history VALUES
+        await async_session.execute(
+            text(
+                "INSERT INTO conversation_history VALUES (:id, 'MESSAGE', CAST(:content AS jsonb), :created)"
+            ),
+            {"id": legacy_id, "content": content, "created": start},
+        )
+    assert (await read_usage(async_session, start, end))[-1][
+        "reached_recommendations"
+    ] == 3
+    await async_session.execute(
+        text(
+            """INSERT INTO conversation_history VALUES
         (:id, 'MESSAGE', '{"messages":[{"type":"book_list","content":{"books":[]}}]}', :created)"""
-    ), {"id": legacy_id, "created": start})
-    assert (await read_usage(async_session, start, end))[-1]["reached_recommendations"] == 4
-    await async_session.execute(text(
-        "ALTER TABLE conversation_sessions ADD COLUMN state jsonb DEFAULT '{}'"
-    ))
-    await async_session.execute(text(
-        "ALTER TABLE conversation_sessions ADD COLUMN library_id uuid"
-    ))
-    await async_session.execute(text(
-        "ALTER TABLE conversation_history ADD COLUMN id uuid DEFAULT gen_random_uuid()"
-    ))
-    site_rows = await read_engagement(async_session, query_parameters(school, start, end))
+        ),
+        {"id": legacy_id, "created": start},
+    )
+    assert (await read_usage(async_session, start, end))[-1][
+        "reached_recommendations"
+    ] == 4
+    await async_session.execute(
+        text("ALTER TABLE conversation_sessions ADD COLUMN state jsonb DEFAULT '{}'")
+    )
+    await async_session.execute(
+        text("ALTER TABLE conversation_sessions ADD COLUMN library_id uuid")
+    )
+    await async_session.execute(
+        text(
+            "ALTER TABLE conversation_history ADD COLUMN id uuid DEFAULT gen_random_uuid()"
+        )
+    )
+    site_rows = await read_engagement(
+        async_session, query_parameters(school, start, end)
+    )
     assert sum(row["reached"] for row in site_rows) == 3
 
 
@@ -133,13 +156,18 @@ async def test_usage_requires_auth(async_client):
 
 
 def test_view_as_cannot_read_global_usage(
-    client, test_wrivetedadmin_account_headers, test_schooladmin_account,
+    client,
+    test_wrivetedadmin_account_headers,
+    test_schooladmin_account,
 ):
     response = client.post(
         f"/v1/auth/view-as/{test_schooladmin_account.id}",
         headers=test_wrivetedadmin_account_headers,
     )
     assert response.status_code == 200
-    headers = {**test_wrivetedadmin_account_headers, "X-View-As": response.json()["context"]}
+    headers = {
+        **test_wrivetedadmin_account_headers,
+        "X-View-As": response.json()["context"],
+    }
     for path in ("/v1/kpis/usage", "/v1/kpis/delivery"):
         assert client.get(path, headers=headers).status_code == 403

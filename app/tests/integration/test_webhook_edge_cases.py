@@ -626,7 +626,7 @@ class TestRecoveryScenarios:
         """Test retrieving failed and dead-lettered events."""
         # Create events with different statuses
         for i in range(3):
-            event = await outbox_service.publish_event(
+            await outbox_service.publish_event(
                 async_session,
                 event_type=f"test_event_{i}",
                 destination="webhook_test",

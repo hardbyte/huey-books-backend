@@ -89,11 +89,15 @@ def test_send_and_accept_grants_free_access(
     assert send.json()["status"] == "sent"
 
     with session_factory() as s:
-        inv = s.execute(
-            select(SchoolInvitation).where(
-                SchoolInvitation.invited_school_id == invited_wid
+        inv = (
+            s.execute(
+                select(SchoolInvitation).where(
+                    SchoolInvitation.invited_school_id == invited_wid
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert inv is not None
         token = inv.token
 
@@ -107,21 +111,31 @@ def test_send_and_accept_grants_free_access(
     assert body["access_until"] is not None
 
     with session_factory() as s:
-        inv = s.execute(
-            select(SchoolInvitation).where(
-                SchoolInvitation.invited_school_id == invited_wid
+        inv = (
+            s.execute(
+                select(SchoolInvitation).where(
+                    SchoolInvitation.invited_school_id == invited_wid
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert inv.status == SchoolInvitationStatus.ACCEPTED
-        school = s.execute(
-            select(School).where(School.wriveted_identifier == invited_wid)
-        ).scalars().first()
+        school = (
+            s.execute(select(School).where(School.wriveted_identifier == invited_wid))
+            .scalars()
+            .first()
+        )
         assert school.state == SchoolState.ACTIVE
-        grant = s.execute(
-            select(Subscription).where(
-                Subscription.id == f"comp_invite_{invited_wid}"
+        grant = (
+            s.execute(
+                select(Subscription).where(
+                    Subscription.id == f"comp_invite_{invited_wid}"
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert grant is not None and grant.is_active
         assert grant.expiration > datetime.utcnow() + timedelta(days=80)
 
@@ -144,9 +158,7 @@ def test_staff_can_invite_any_school_without_source(
     assert resp.json()["status"] == "sent"
 
 
-def test_school_admin_cannot_use_staff_invite(
-    client, admin_of_test_school_headers
-):
+def test_school_admin_cannot_use_staff_invite(client, admin_of_test_school_headers):
     """The staff invite endpoint is superuser-only."""
     resp = client.post(
         "/v1/admin/invitations",
