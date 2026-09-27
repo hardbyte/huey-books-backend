@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from alembic.script import ScriptDirectory
+
 VERSIONS = Path(__file__).resolve().parents[3] / "alembic" / "versions"
 LEGACY_APPLICATION_IMPORTS = {
     "9e2c2d162ac7_add_country_data.py": {"app.models"},
@@ -13,6 +15,11 @@ LEGACY_APPLICATION_IMPORTS = {
         "app.db.views",
     },
 }
+
+
+def test_migration_graph_has_one_head():
+    scripts = ScriptDirectory(str(VERSIONS.parent))
+    assert len(scripts.get_heads()) == 1
 
 
 @pytest.mark.parametrize(
