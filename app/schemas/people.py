@@ -9,10 +9,15 @@ AccessSource = Literal["direct", "home", "organisation"]
 PeopleRole = Literal["manager", "reviewer", "cataloguer", "educator", "school_admin"]
 
 
-class PersonAdd(BaseModel):
+class PersonInvite(BaseModel):
+    """Someone named by email who may or may not already have an account."""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     email: EmailStr
     name: str = Field(min_length=1, max_length=200)
+
+
+class PersonAdd(PersonInvite):
     role: PeopleRole
 
 
@@ -30,10 +35,22 @@ class PersonAccess(BaseModel):
     manage_url: str | None = None
 
 
-class Person(BaseModel):
+class PersonBrief(BaseModel):
+    """Identity only. Use this wherever people are listed for selection."""
+
     user_id: UUID
     name: str
     email: str | None
+
+
+class PersonBriefPage(BaseModel):
+    data: list[PersonBrief]
+    total: int
+    skip: int
+    limit: int
+
+
+class Person(PersonBrief):
     is_active: bool
     last_login_at: datetime | None
     access: list[PersonAccess]

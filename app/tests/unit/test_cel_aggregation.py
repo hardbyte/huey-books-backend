@@ -19,7 +19,6 @@ from app.services.cel_evaluator import (
     _cel_count,
     _cel_flatten,
     _cel_max,
-    _cel_merge,
     _cel_merge_last,
     _cel_merge_max,
     _cel_merge_sum,
@@ -429,7 +428,7 @@ class TestCelContextCreation:
     def test_context_includes_variables(self):
         """Context includes provided variables."""
         variables = {"user": {"name": "Test"}, "scores": [1, 2, 3]}
-        ctx = create_cel_context(variables)
+        create_cel_context(variables)
         # Variables should be accessible in expressions
         result = evaluate_cel_expression("user.name", variables)
         assert result == "Test"
@@ -672,9 +671,7 @@ class TestTopKeys:
 
     def test_n_limits_results(self):
         """Only the top N keys are returned."""
-        context = {
-            "scores": {"a": 10, "b": 30, "c": 20, "d": 5, "e": 25}
-        }
+        context = {"scores": {"a": 10, "b": 30, "c": 20, "d": 5, "e": 25}}
         result = evaluate_cel_expression("top_keys(scores, 2)", context)
         assert result == ["b", "e"]
 
@@ -686,9 +683,7 @@ class TestTopKeys:
 
     def test_non_numeric_values_ignored(self):
         """Keys with non-numeric values are excluded from ranking."""
-        context = {
-            "mixed": {"a": 5, "b": "high", "c": 10, "d": None, "e": 3}
-        }
+        context = {"mixed": {"a": 5, "b": "high", "c": 10, "d": None, "e": 3}}
         result = evaluate_cel_expression("top_keys(mixed, 5)", context)
         assert result == ["c", "a", "e"]
 

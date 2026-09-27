@@ -82,6 +82,19 @@ Entitlements are a local projection of verified payment/policy evidence. Do not 
 - CMS content, flows and themes retain existing library visibility. Organisation sharing is explicit, not automatic membership inheritance.
 - Sessions retain immutable original attribution. Capture organisation-at-event separately for historical regional/organisation reporting; current organisation membership cannot rewrite history. Historical organisation is nullable/unknown unless supported by historical evidence, never backfilled from today's ownership. Preserve old chat JSON. Library reach and organisation reach are distinct metrics.
 
+## Interim position
+
+`schools.kind` marks whether a row is an education unit (`school`, every
+pre-existing row) or a library of an organisation (`library`). It is a
+compatibility stand-in for separate `libraries` and `education_units` identities
+and does not change the destination: library rows still live in `schools`, still
+use the school public UUID, and are still reached through `/libraries/{library_uuid}`.
+What it does buy is that the education boundary is enforced now — a library row
+cannot hold students, classes, home staff or admission identity — so multi-library
+organisations do not accumulate rows that silently double as education units before
+the migration runs. Migrating these rows into `libraries` keeps their UUIDs, as
+step 3 of the [migration plan](organisation-schema-migration.md) requires.
+
 ## Choices and open details
 
 Reject a wholesale `schools` rename: it preserves the current ownership error. Reject a school profile attached one-to-one to a library: it fails the multi-library school case. Reject polymorphic `owner_type/owner_id` for core ownership: typed FKs and exactly-one-owner checks provide stronger integrity.

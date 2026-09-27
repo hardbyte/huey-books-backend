@@ -55,16 +55,16 @@ class TestSearchViewV1MaterializedView:
         expected_columns = ["work_id", "author_ids", "series_id", "document"]
 
         for expected_col in expected_columns:
-            assert (
-                expected_col in column_names
-            ), f"Column {expected_col} should exist in search_view_v1"
+            assert expected_col in column_names, (
+                f"Column {expected_col} should exist in search_view_v1"
+            )
 
         # Verify document column is tsvector type
         document_col = next((col for col in columns if col[0] == "document"), None)
         assert document_col is not None
-        assert (
-            document_col[1] == "tsvector"
-        ), f"document column should be tsvector type, got {document_col[1]}"
+        assert document_col[1] == "tsvector", (
+            f"document column should be tsvector type, got {document_col[1]}"
+        )
 
     async def test_materialized_view_refresh_command(self, async_session: AsyncSession):
         """Test that the materialized view can be refreshed without error."""
@@ -73,7 +73,7 @@ class TestSearchViewV1MaterializedView:
         initial_result = await async_session.execute(
             text("SELECT COUNT(*) FROM search_view_v1")
         )
-        initial_count = initial_result.scalar()
+        initial_result.scalar()
 
         # Refresh the materialized view - this should not raise an error
         await async_session.execute(text("REFRESH MATERIALIZED VIEW search_view_v1"))
@@ -86,9 +86,9 @@ class TestSearchViewV1MaterializedView:
         post_refresh_count = post_refresh_result.scalar()
 
         # The count might be the same if no data changed, but the command should work
-        assert (
-            post_refresh_count >= 0
-        ), "Materialized view should have non-negative row count"
+        assert post_refresh_count >= 0, (
+            "Materialized view should have non-negative row count"
+        )
 
         logger.info(f"Materialized view has {post_refresh_count} rows after refresh")
 
@@ -219,27 +219,27 @@ class TestSearchViewV1MaterializedView:
         work_id, author_ids, series_id, document = sample_row
 
         # Verify data types
-        assert isinstance(
-            work_id, int
-        ), f"work_id should be integer, got {type(work_id)}"
-        assert isinstance(
-            author_ids, list
-        ), f"author_ids should be list, got {type(author_ids)}"
+        assert isinstance(work_id, int), (
+            f"work_id should be integer, got {type(work_id)}"
+        )
+        assert isinstance(author_ids, list), (
+            f"author_ids should be list, got {type(author_ids)}"
+        )
         # series_id can be None or int
-        assert series_id is None or isinstance(
-            series_id, int
-        ), f"series_id should be None or int, got {type(series_id)}"
+        assert series_id is None or isinstance(series_id, int), (
+            f"series_id should be None or int, got {type(series_id)}"
+        )
         # document is a tsvector, which appears as a string in Python
-        assert isinstance(
-            document, str
-        ), f"document should be string (tsvector), got {type(document)}"
+        assert isinstance(document, str), (
+            f"document should be string (tsvector), got {type(document)}"
+        )
 
         # Verify author_ids is a non-empty list of integers
         if author_ids:
             for author_id in author_ids:
-                assert isinstance(
-                    author_id, int
-                ), f"Each author_id should be integer, got {type(author_id)}"
+                assert isinstance(author_id, int), (
+                    f"Each author_id should be integer, got {type(author_id)}"
+                )
 
         logger.info(
             f"Sample row data types verified: work_id={type(work_id)}, author_ids={type(author_ids)}, series_id={type(series_id)}, document={type(document)}"
@@ -263,9 +263,9 @@ class TestSearchViewV1MaterializedView:
         )
 
         inconsistent_count = consistency_result.scalar()
-        assert (
-            inconsistent_count == 0
-        ), f"Found {inconsistent_count} work_ids in search view that don't exist in works table"
+        assert inconsistent_count == 0, (
+            f"Found {inconsistent_count} work_ids in search view that don't exist in works table"
+        )
 
         # Check that author_ids in the view correspond to real authors
         author_consistency_result = await async_session.execute(

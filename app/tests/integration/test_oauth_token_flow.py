@@ -65,7 +65,11 @@ async def test_authorization_code_happy_path(session, async_session):
     user = _make_user(session)
     code, verifier = await _new_code(async_session, user.id)
     result = await grants.exchange_authorization_code(
-        async_session, code=code, redirect_uri=REDIRECT, code_verifier=verifier, client_id=CLIENT_ID
+        async_session,
+        code=code,
+        redirect_uri=REDIRECT,
+        code_verifier=verifier,
+        client_id=CLIENT_ID,
     )
     assert result["token_type"] == "Bearer"
     claims = tokens.decode_access_token(result["access_token"])
@@ -82,7 +86,11 @@ async def test_pkce_mismatch_rejected(session, async_session):
     code, _ = await _new_code(async_session, user.id)
     with pytest.raises(OAuthError) as exc:
         await grants.exchange_authorization_code(
-            async_session, code=code, redirect_uri=REDIRECT, code_verifier="a" * 50, client_id=CLIENT_ID
+            async_session,
+            code=code,
+            redirect_uri=REDIRECT,
+            code_verifier="a" * 50,
+            client_id=CLIENT_ID,
         )
     assert exc.value.error == "invalid_grant"
 
@@ -92,11 +100,19 @@ async def test_code_is_single_use(session, async_session):
     user = _make_user(session)
     code, verifier = await _new_code(async_session, user.id)
     await grants.exchange_authorization_code(
-        async_session, code=code, redirect_uri=REDIRECT, code_verifier=verifier, client_id=CLIENT_ID
+        async_session,
+        code=code,
+        redirect_uri=REDIRECT,
+        code_verifier=verifier,
+        client_id=CLIENT_ID,
     )
     with pytest.raises(OAuthError) as exc:
         await grants.exchange_authorization_code(
-            async_session, code=code, redirect_uri=REDIRECT, code_verifier=verifier, client_id=CLIENT_ID
+            async_session,
+            code=code,
+            redirect_uri=REDIRECT,
+            code_verifier=verifier,
+            client_id=CLIENT_ID,
         )
     assert exc.value.error == "invalid_grant"
 
@@ -115,7 +131,11 @@ async def test_concurrent_exchange_only_one_wins(session, async_session):
         try:
             async with maker() as s:
                 return await grants.exchange_authorization_code(
-                    s, code=code, redirect_uri=REDIRECT, code_verifier=verifier, client_id=CLIENT_ID
+                    s,
+                    code=code,
+                    redirect_uri=REDIRECT,
+                    code_verifier=verifier,
+                    client_id=CLIENT_ID,
                 )
         finally:
             await engine.dispose()
@@ -133,7 +153,11 @@ async def test_redirect_uri_must_match(session, async_session):
     code, verifier = await _new_code(async_session, user.id)
     with pytest.raises(OAuthError) as exc:
         await grants.exchange_authorization_code(
-            async_session, code=code, redirect_uri="https://evil.example/cb", code_verifier=verifier, client_id=CLIENT_ID
+            async_session,
+            code=code,
+            redirect_uri="https://evil.example/cb",
+            code_verifier=verifier,
+            client_id=CLIENT_ID,
         )
     assert exc.value.error == "invalid_grant"
 
@@ -144,7 +168,11 @@ async def test_client_id_mismatch_rejected(session, async_session):
     code, verifier = await _new_code(async_session, user.id)
     with pytest.raises(OAuthError) as exc:
         await grants.exchange_authorization_code(
-            async_session, code=code, redirect_uri=REDIRECT, code_verifier=verifier, client_id="someone-else"
+            async_session,
+            code=code,
+            redirect_uri=REDIRECT,
+            code_verifier=verifier,
+            client_id="someone-else",
         )
     assert exc.value.error == "invalid_client"
 
@@ -155,7 +183,11 @@ async def test_non_ascii_inputs_rejected_not_500(session, async_session):
     code, _ = await _new_code(async_session, user.id)
     with pytest.raises(OAuthError) as exc:
         await grants.exchange_authorization_code(
-            async_session, code="ünīcode", redirect_uri=REDIRECT, code_verifier="ünīcode-verifier", client_id=CLIENT_ID
+            async_session,
+            code="ünīcode",
+            redirect_uri=REDIRECT,
+            code_verifier="ünīcode-verifier",
+            client_id=CLIENT_ID,
         )
     assert exc.value.error == "invalid_grant"
 
@@ -167,9 +199,15 @@ async def test_refresh_reuse_within_grace_succeeds(session, async_session):
     user = _make_user(session)
     code, verifier = await _new_code(async_session, user.id)
     first = await grants.exchange_authorization_code(
-        async_session, code=code, redirect_uri=REDIRECT, code_verifier=verifier, client_id=CLIENT_ID
+        async_session,
+        code=code,
+        redirect_uri=REDIRECT,
+        code_verifier=verifier,
+        client_id=CLIENT_ID,
     )
-    await grants.rotate_refresh_token(async_session, refresh_token=first["refresh_token"], client_id=CLIENT_ID)
+    await grants.rotate_refresh_token(
+        async_session, refresh_token=first["refresh_token"], client_id=CLIENT_ID
+    )
     # Immediately reuse the now-consumed first token: within grace -> success.
     regraced = await grants.rotate_refresh_token(
         async_session, refresh_token=first["refresh_token"], client_id=CLIENT_ID
@@ -182,7 +220,11 @@ async def test_refresh_reuse_outside_grace_revokes_family(session, async_session
     user = _make_user(session)
     code, verifier = await _new_code(async_session, user.id)
     first = await grants.exchange_authorization_code(
-        async_session, code=code, redirect_uri=REDIRECT, code_verifier=verifier, client_id=CLIENT_ID
+        async_session,
+        code=code,
+        redirect_uri=REDIRECT,
+        code_verifier=verifier,
+        client_id=CLIENT_ID,
     )
     second = await grants.rotate_refresh_token(
         async_session, refresh_token=first["refresh_token"], client_id=CLIENT_ID
@@ -191,19 +233,26 @@ async def test_refresh_reuse_outside_grace_revokes_family(session, async_session
     row = (
         await async_session.execute(
             select(OAuthRefreshToken).where(
-                OAuthRefreshToken.token_hash == tokens.hash_refresh_token(first["refresh_token"])
+                OAuthRefreshToken.token_hash
+                == tokens.hash_refresh_token(first["refresh_token"])
             )
         )
     ).scalar_one()
-    row.consumed_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(minutes=5)
+    row.consumed_at = datetime.datetime.now(datetime.UTC).replace(
+        tzinfo=None
+    ) - datetime.timedelta(minutes=5)
     await async_session.commit()
 
     with pytest.raises(OAuthError) as exc:
-        await grants.rotate_refresh_token(async_session, refresh_token=first["refresh_token"], client_id=CLIENT_ID)
+        await grants.rotate_refresh_token(
+            async_session, refresh_token=first["refresh_token"], client_id=CLIENT_ID
+        )
     assert exc.value.error == "invalid_grant"
     # Family revoked: the freshly-issued token is now dead too.
     with pytest.raises(OAuthError):
-        await grants.rotate_refresh_token(async_session, refresh_token=second["refresh_token"], client_id=CLIENT_ID)
+        await grants.rotate_refresh_token(
+            async_session, refresh_token=second["refresh_token"], client_id=CLIENT_ID
+        )
 
 
 @pytest.mark.asyncio
@@ -211,20 +260,30 @@ async def test_revoked_grant_rejects_rotation(session, async_session):
     user = _make_user(session)
     code, verifier = await _new_code(async_session, user.id)
     first = await grants.exchange_authorization_code(
-        async_session, code=code, redirect_uri=REDIRECT, code_verifier=verifier, client_id=CLIENT_ID
+        async_session,
+        code=code,
+        redirect_uri=REDIRECT,
+        code_verifier=verifier,
+        client_id=CLIENT_ID,
     )
     grant_id = tokens.decode_access_token(first["access_token"])["grant_id"]
     await grants.revoke_grant(async_session, grant_id)
     with pytest.raises(OAuthError):
-        await grants.rotate_refresh_token(async_session, refresh_token=first["refresh_token"], client_id=CLIENT_ID)
+        await grants.rotate_refresh_token(
+            async_session, refresh_token=first["refresh_token"], client_id=CLIENT_ID
+        )
 
 
 def _challenge(verifier: str) -> str:
     return tokens._b64url_no_pad(hashlib.sha256(verifier.encode()).digest())
 
 
-def test_authorize_consent_happy_path(client, test_school, admin_of_test_school_headers, monkeypatch):
-    monkeypatch.setattr(get_settings(), "OAUTH_ALLOWED_REDIRECT_URIS", ["http://localhost:9999/cb"])
+def test_authorize_consent_happy_path(
+    client, test_school, admin_of_test_school_headers, monkeypatch
+):
+    monkeypatch.setattr(
+        get_settings(), "OAUTH_ALLOWED_REDIRECT_URIS", ["http://localhost:9999/cb"]
+    )
     resp = client.post(
         "/v1/oauth/authorize",
         headers=admin_of_test_school_headers,
@@ -244,8 +303,12 @@ def test_authorize_consent_happy_path(client, test_school, admin_of_test_school_
     assert "state=xyz" in url
 
 
-def test_authorize_rejects_unknown_school(client, admin_of_test_school_headers, monkeypatch):
-    monkeypatch.setattr(get_settings(), "OAUTH_ALLOWED_REDIRECT_URIS", ["http://localhost:9999/cb"])
+def test_authorize_rejects_unknown_school(
+    client, admin_of_test_school_headers, monkeypatch
+):
+    monkeypatch.setattr(
+        get_settings(), "OAUTH_ALLOWED_REDIRECT_URIS", ["http://localhost:9999/cb"]
+    )
     resp = client.post(
         "/v1/oauth/authorize",
         headers=admin_of_test_school_headers,
@@ -260,8 +323,12 @@ def test_authorize_rejects_unknown_school(client, admin_of_test_school_headers, 
     assert resp.status_code == 404
 
 
-def test_authorize_rejects_bad_redirect_and_scope(client, test_school, admin_of_test_school_headers, monkeypatch):
-    monkeypatch.setattr(get_settings(), "OAUTH_ALLOWED_REDIRECT_URIS", ["http://localhost:9999/cb"])
+def test_authorize_rejects_bad_redirect_and_scope(
+    client, test_school, admin_of_test_school_headers, monkeypatch
+):
+    monkeypatch.setattr(
+        get_settings(), "OAUTH_ALLOWED_REDIRECT_URIS", ["http://localhost:9999/cb"]
+    )
     base = {
         "client_id": "mcp-proxy",
         "school_id": str(test_school.wriveted_identifier),
@@ -270,13 +337,21 @@ def test_authorize_rejects_bad_redirect_and_scope(client, test_school, admin_of_
     bad_redirect = client.post(
         "/v1/oauth/authorize",
         headers=admin_of_test_school_headers,
-        json={**base, "redirect_uri": "https://evil.example/cb", "scope": "catalogue:read"},
+        json={
+            **base,
+            "redirect_uri": "https://evil.example/cb",
+            "scope": "catalogue:read",
+        },
     )
     assert bad_redirect.status_code == 400
     bad_scope = client.post(
         "/v1/oauth/authorize",
         headers=admin_of_test_school_headers,
-        json={**base, "redirect_uri": "http://localhost:9999/cb", "scope": "admin:everything"},
+        json={
+            **base,
+            "redirect_uri": "http://localhost:9999/cb",
+            "scope": "admin:everything",
+        },
     )
     assert bad_scope.status_code == 400
 
@@ -291,7 +366,11 @@ def test_token_endpoint_rejects_bad_client(client, monkeypatch):
     monkeypatch.setattr(get_settings(), "OAUTH_MCP_CLIENT_SECRET", "correct-secret")
     resp = client.post(
         "/v1/oauth/token",
-        data={"grant_type": "authorization_code", "client_id": CLIENT_ID, "client_secret": "wrong"},
+        data={
+            "grant_type": "authorization_code",
+            "client_id": CLIENT_ID,
+            "client_secret": "wrong",
+        },
     )
     assert resp.status_code == 401
     assert resp.json()["error"] == "invalid_client"

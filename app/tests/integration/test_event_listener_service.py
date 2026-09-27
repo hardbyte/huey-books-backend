@@ -344,7 +344,7 @@ class TestFlowEventListenerEventDispatch:
         await isolated_event_listener.start_listening()
 
         # Create a session to trigger the event
-        session = await chat_repo.create_session(
+        await chat_repo.create_session(
             async_session,
             flow_id=test_flow.id,
             user_id=None,

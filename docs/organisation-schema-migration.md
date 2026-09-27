@@ -43,6 +43,14 @@ The compatibility workspace exposes `manage_details` and an optimistic name-only
 
 The school page and library workspace reuse the same capability-gated library detail/access controls; bookbot settings remain separate. Migration `e84b95d2c34f` adds the cataloguer role: inventory writes without membership/detail management or review authority. Existing independent/home grants remain additive. Unknown role values fail closed.
 
+`schools.kind` is the next compatibility step toward that foundation. Rows created
+as libraries of an organisation are marked `library`; every pre-existing row stays
+`school`. A CHECK and the `require_education_unit_school` trigger keep students,
+classes, home staff and admission identity off library rows, so the education
+boundary holds before `education_units` carries data. This classifies new rows only:
+it is not the legacy mapping, and it does not move any existing school. See
+[organisation setup](organisation-setup.md).
+
 An identity-table foundation does not establish legacy mapping and classification,
 writer cutover fencing, scoped-role/subtype migration, collection ownership/default
 migration, education records, or financial ownership/coverage migration. Each

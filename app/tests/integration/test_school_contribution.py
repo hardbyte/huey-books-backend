@@ -46,7 +46,9 @@ def _email_count(session) -> int:
     ).scalar()
 
 
-def _contribution_event(test_school, session_id="cs_contrib", amount_total=5000) -> dict:
+def _contribution_event(
+    test_school, session_id="cs_contrib", amount_total=5000
+) -> dict:
     return {
         "id": session_id,
         "object": "checkout.session",
@@ -402,7 +404,9 @@ def test_grant_to_stripe_subscription_conversion_retires_grant(
 
     # The grant row is still queryable after a flush (delete-orphan didn't fire).
     session.commit()
-    assert subscription_repository.get_by_id(session, _grant_id(test_school)) is not None
+    assert (
+        subscription_repository.get_by_id(session, _grant_id(test_school)) is not None
+    )
 
 
 # --- cancellation with a live comp grant ---

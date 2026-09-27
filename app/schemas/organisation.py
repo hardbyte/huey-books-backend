@@ -15,9 +15,13 @@ class StrictInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
+# Mirrors the ck_organisations_ck_organisation_kind CHECK constraint.
+OrganisationKind = Literal["school", "public_library", "other"]
+
+
 class OrganisationCreate(StrictInput):
     name: str = Field(min_length=1, max_length=200)
-    kind: Literal["school", "public_library", "other"]
+    kind: OrganisationKind
 
 
 class OrganisationEntitlements(BaseModel):

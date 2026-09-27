@@ -251,16 +251,22 @@ async def test_region_targeting(async_session):
     assert (
         await resolve_campaign(async_session, _ctx(region_state="Auckland"))
     ).name == "auckland"
-    assert await resolve_campaign(async_session, _ctx(region_state="Wellington")) is None
+    assert (
+        await resolve_campaign(async_session, _ctx(region_state="Wellington")) is None
+    )
 
 
 @pytest.mark.asyncio
 async def test_age_filter(async_session):
-    await _add(async_session, name="teens", country_codes=["NZL"], min_age=13, max_age=18)
+    await _add(
+        async_session, name="teens", country_codes=["NZL"], min_age=13, max_age=18
+    )
     assert (
         await resolve_campaign(async_session, _ctx(country_code="NZL", age=15))
     ).name == "teens"
-    assert await resolve_campaign(async_session, _ctx(country_code="NZL", age=8)) is None
+    assert (
+        await resolve_campaign(async_session, _ctx(country_code="NZL", age=8)) is None
+    )
     # Unknown age ignores the structured age constraint (permissive).
     assert (
         await resolve_campaign(async_session, _ctx(country_code="NZL"))

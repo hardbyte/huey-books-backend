@@ -244,7 +244,7 @@ class TestCMSContentAPI:
     async def test_filter_cms_content_by_type(self, async_client, auth_headers):
         """Test filtering CMS content by type."""
         # Create a joke
-        joke_id = await self.test_create_cms_content_joke(async_client, auth_headers)
+        await self.test_create_cms_content_joke(async_client, auth_headers)
 
         # Filter by JOKE type
         response = await async_client.get(

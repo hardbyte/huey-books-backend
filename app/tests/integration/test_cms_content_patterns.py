@@ -239,9 +239,9 @@ class TestCMSContentPatterns:
                 headers=backend_service_account_headers,
             )
 
-            assert (
-                response.status_code == 201
-            ), f"Failed to create content: {content_data['type']}"
+            assert response.status_code == 201, (
+                f"Failed to create content: {content_data['type']}"
+            )
             created_item = response.json()
             created_content.append(created_item)
 
@@ -299,9 +299,9 @@ class TestCMSContentPatterns:
                 [item for item in our_items if item["type"] == content_type]
             )
 
-            assert (
-                type_count == expected_min
-            ), f"Expected {expected_min} {content_type} items, got {type_count}"
+            assert type_count == expected_min, (
+                f"Expected {expected_min} {content_type} items, got {type_count}"
+            )
 
         # Cleanup
         for content in created_content:
@@ -399,9 +399,9 @@ class TestCMSContentPatterns:
             )
 
             if test_case["should_succeed"]:
-                assert (
-                    response.status_code == 201
-                ), f"Expected success for: {test_case['description']}"
+                assert response.status_code == 201, (
+                    f"Expected success for: {test_case['description']}"
+                )
                 successful_creations.append(response.json()["id"])
             else:
                 assert response.status_code in [

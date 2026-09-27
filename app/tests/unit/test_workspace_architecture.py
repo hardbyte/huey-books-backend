@@ -14,6 +14,8 @@ APP = Path(__file__).resolve().parents[2]
         "services/organisation_entitlements.py",
         "services/review_queues.py",
         "services/library_chat.py",
+        "services/organisation_setup.py",
+        "services/idempotency.py",
     ],
 )
 def test_workspace_services_do_not_construct_sql_or_depend_on_http(module):
@@ -56,7 +58,12 @@ def test_workspace_http_adapter_does_not_access_persistence(module):
 
 @pytest.mark.parametrize(
     "module",
-    ["repositories/organisation_repository.py", "repositories/library_chat.py"],
+    [
+        "repositories/organisation_repository.py",
+        "repositories/library_chat.py",
+        "repositories/organisation_setup.py",
+        "repositories/idempotency.py",
+    ],
 )
 def test_workspace_repository_does_not_own_transaction_or_http_policy(module):
     tree = ast.parse((APP / module).read_text())

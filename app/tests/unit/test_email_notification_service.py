@@ -11,7 +11,6 @@ These tests validate:
 """
 
 import json
-
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
@@ -157,9 +156,7 @@ class TestEmailNotificationService:
             "email_type": "notification",
         }
 
-        result = await service.process_outbox_email_notification(
-            json.dumps(payload)
-        )
+        result = await service.process_outbox_email_notification(json.dumps(payload))
 
         assert result is True
         service._send_email.assert_awaited_once()

@@ -219,9 +219,9 @@ class TestNotifyFlowEventTrigger:
         await asyncio.sleep(0.2)
 
         # Verify notification was received
-        assert (
-            len(received_events) == 1
-        ), f"Expected 1 event, got {len(received_events)}"
+        assert len(received_events) == 1, (
+            f"Expected 1 event, got {len(received_events)}"
+        )
 
         event = received_events[0]
         assert event["event_type"] == "session_started"
@@ -261,7 +261,7 @@ class TestNotifyFlowEventTrigger:
         received_events.clear()
 
         # Update the current node
-        updated_session = await chat_repo.update_session_state(
+        await chat_repo.update_session_state(
             async_session,
             session_id=session.id,
             state_updates={"step": "updated"},
@@ -309,7 +309,7 @@ class TestNotifyFlowEventTrigger:
         received_events.clear()
 
         # End the session
-        ended_session = await chat_repo.end_session(
+        await chat_repo.end_session(
             async_session, session_id=session.id, status=SessionStatus.COMPLETED
         )
 
@@ -349,7 +349,7 @@ class TestNotifyFlowEventTrigger:
         received_events.clear()
 
         # Update state without changing node or status (only revision changes)
-        updated_session = await chat_repo.update_session_state(
+        await chat_repo.update_session_state(
             async_session,
             session_id=session.id,
             state_updates={"data": "updated", "new_field": "value"},
@@ -541,7 +541,7 @@ class TestNotifyFlowEventTrigger:
 
         # Create session to test payload structure
         session_token = f"test-payload-{uuid.uuid4().hex[:8]}"
-        session = await chat_repo.create_session(
+        await chat_repo.create_session(
             async_session,
             flow_id=test_flow.id,
             user_id=test_user.id,

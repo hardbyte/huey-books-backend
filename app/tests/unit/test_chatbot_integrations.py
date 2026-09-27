@@ -278,9 +278,7 @@ class TestChatbotRecommendationResponse:
 
     def test_with_recommendations(self):
         resp = ChatbotRecommendationResponse(
-            recommendations=[
-                {"id": "1", "title": "Test Book", "author": "Author"}
-            ],
+            recommendations=[{"id": "1", "title": "Test Book", "author": "Author"}],
             count=1,
             user_reading_level="intermediate",
             filters_applied={"age": 10},

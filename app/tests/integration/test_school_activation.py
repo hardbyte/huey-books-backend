@@ -101,7 +101,9 @@ def test_comped_checkout_activates_school(
     mock_sub, mock_cust, mock_price, mock_prod, session, test_school
 ):
     # A 100%-off promo / trial completes with payment_status=no_payment_required.
-    _mock_stripe(mock_sub, mock_cust, mock_price, mock_prod, customer_email="c@s.example")
+    _mock_stripe(
+        mock_sub, mock_cust, mock_price, mock_prod, customer_email="c@s.example"
+    )
     _make_pending_school(session, test_school)
 
     _handle_checkout_session_completed(

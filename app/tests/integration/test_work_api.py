@@ -191,9 +191,9 @@ def test_move_edition_to_new_work_with_existing_author(
     work_data = response.json()
     assert "id" in work_data
     assert work_data["title"] == "New Test Work"
-    assert work_data["authors"][0]["id"] == str(
-        original_work.authors[0].id
-    ), "Author ID doesn't match"
+    assert work_data["authors"][0]["id"] == str(original_work.authors[0].id), (
+        "Author ID doesn't match"
+    )
 
     response = client.get(
         f"v1/edition/{test_edition.isbn}",
@@ -227,6 +227,6 @@ def test_move_edition_to_existing_work(
         headers=backend_service_account_headers,
     )
     edition_data = response.json()
-    assert edition_data["work_id"] == str(
-        new_work.id
-    ), "Edition's work id hasn't updated"
+    assert edition_data["work_id"] == str(new_work.id), (
+        "Edition's work id hasn't updated"
+    )

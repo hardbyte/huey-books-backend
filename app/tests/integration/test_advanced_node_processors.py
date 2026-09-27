@@ -986,7 +986,7 @@ class TestConditionNodeProcessor:
             "else": "regular_user",
         }
 
-        result = await condition_processor.process(
+        await condition_processor.process(
             db=async_session,
             node=create_mock_flow_node(
                 node_id="test_condition_node",
@@ -1019,7 +1019,7 @@ class TestConditionNodeProcessor:
             "else": "no_world",
         }
 
-        result = await condition_processor.process(
+        await condition_processor.process(
             db=async_session,
             node=create_mock_flow_node(
                 node_id="test_condition_node",
@@ -1049,7 +1049,7 @@ class TestConditionNodeProcessor:
             "else": "name_missing",
         }
 
-        result = await condition_processor.process(
+        await condition_processor.process(
             db=async_session,
             node=create_mock_flow_node(
                 node_id="test_condition_node",
@@ -1078,7 +1078,7 @@ class TestConditionNodeProcessor:
             "else": "light_theme_user",
         }
 
-        result = await condition_processor.process(
+        await condition_processor.process(
             db=async_session,
             node=create_mock_flow_node(
                 node_id="test_condition_node",
@@ -1107,7 +1107,7 @@ class TestConditionNodeProcessor:
             "else": "missing_variable",
         }
 
-        result = await condition_processor.process(
+        await condition_processor.process(
             db=async_session,
             node=create_mock_flow_node(
                 node_id="test_condition_node",
@@ -1136,7 +1136,7 @@ class TestConditionNodeProcessor:
             "else": "needs_improvement",
         }
 
-        result = await condition_processor.process(
+        await condition_processor.process(
             db=async_session,
             node=create_mock_flow_node(
                 node_id="test_condition_node",
@@ -1167,7 +1167,7 @@ class TestConditionNodeProcessor:
             "else": "fallback",
         }
 
-        result = await condition_processor.process(
+        await condition_processor.process(
             db=async_session,
             node=create_mock_flow_node(
                 node_id="test_condition_node",

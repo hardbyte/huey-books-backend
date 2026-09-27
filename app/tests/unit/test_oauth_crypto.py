@@ -117,14 +117,18 @@ def test_legacy_hs256_cannot_forge_oauth_typ():
 
 def test_kid_must_be_string():
     settings = get_settings()
-    tok = jwt.encode({"sub": "u"}, settings.SECRET_KEY, algorithm="HS256", headers={"kid": ["x"]})
+    tok = jwt.encode(
+        {"sub": "u"}, settings.SECRET_KEY, algorithm="HS256", headers={"kid": ["x"]}
+    )
     with pytest.raises(verify.TokenError):
         verify.verify_token(tok)
 
 
 def test_unknown_kid_rejected():
     settings = get_settings()
-    tok = jwt.encode({"sub": "u"}, settings.SECRET_KEY, algorithm="HS256", headers={"kid": "nope"})
+    tok = jwt.encode(
+        {"sub": "u"}, settings.SECRET_KEY, algorithm="HS256", headers={"kid": "nope"}
+    )
     with pytest.raises(verify.TokenError):
         verify.verify_token(tok)
 

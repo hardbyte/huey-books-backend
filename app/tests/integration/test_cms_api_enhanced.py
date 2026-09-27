@@ -7,6 +7,7 @@ Extracted from ad-hoc test_cms_api.py and improved for integration testing.
 from uuid import uuid4
 
 import pytest
+from httpx import AsyncClient
 from sqlalchemy import text
 
 
@@ -154,22 +155,22 @@ class TestCMSAPIEnhanced:
                 headers=backend_service_account_headers,
             )
 
-            assert (
-                response.status_code == 200
-            ), f"Filter failed: {filter_test['description']}"
+            assert response.status_code == 200, (
+                f"Filter failed: {filter_test['description']}"
+            )
 
             data = response.json()
             content_items = data.get("data", [])
 
             # Check count expectations
             if "expected_count" in filter_test:
-                assert (
-                    len(content_items) == filter_test["expected_count"]
-                ), f"Expected exactly {filter_test['expected_count']} items for {filter_test['description']}"
+                assert len(content_items) == filter_test["expected_count"], (
+                    f"Expected exactly {filter_test['expected_count']} items for {filter_test['description']}"
+                )
             elif "expected_min_count" in filter_test:
-                assert (
-                    len(content_items) >= filter_test["expected_min_count"]
-                ), f"Expected at least {filter_test['expected_min_count']} items for {filter_test['description']}"
+                assert len(content_items) >= filter_test["expected_min_count"], (
+                    f"Expected at least {filter_test['expected_min_count']} items for {filter_test['description']}"
+                )
 
         # Cleanup created content
         for content_id in created_content_ids:
@@ -453,7 +454,7 @@ class TestCMSAPIEnhanced:
 
     @pytest.mark.asyncio
     async def test_cms_pagination(
-        self, async_client_authenticated_as_service_account: "AsyncClient"
+        self, async_client_authenticated_as_service_account: AsyncClient
     ):
         """Test CMS API pagination functionality."""
         client = async_client_authenticated_as_service_account

@@ -22,7 +22,14 @@ Educator accounts may have no home school: library-only colleagues and offboarde
 
 Organisation list/detail responses contain only entitlement status, reason, library count and limit. There are no subscription IDs or billing controls in the library workspace. The billing-library endpoint and attachment sponsorship option have been removed.
 
-For verified migration/support assignments, an operator with database credentials can run:
+[Organisation setup](organisation-setup.md) can associate one unambiguously owned
+paid subscription while creating an organisation from an existing school. It is
+available to platform staff and that school's administrators, not to library-only
+managers. It preserves payment details and records the assignment. Libraries it
+creates carry `schools.kind = 'library'`, hold no subscription of their own and
+draw reader access from the organisation entitlement.
+
+For other verified migration/support assignments, an operator with database credentials can run:
 
 ```sh
 uv run python -m scripts.associate_organisation_subscription --organisation UUID --subscription SUBSCRIPTION_ID

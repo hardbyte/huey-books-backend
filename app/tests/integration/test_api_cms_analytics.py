@@ -64,7 +64,7 @@ async def test_node_reach_counts_distinct_sessions_in_start_cohort(async_session
             ConversationHistory(
                 session_id=sessions[index].id,
                 node_id=node_id,
-            interaction_type=InteractionType.MESSAGE,
+                interaction_type=InteractionType.MESSAGE,
                 content={},
                 created_at=created,
             )

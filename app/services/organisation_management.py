@@ -5,7 +5,6 @@ from structlog import get_logger
 
 from app.models.collection import Collection
 from app.models.organisation import Organisation
-from app.models.school import School, SchoolState
 from app.models.user import User
 from app.repositories.organisation_repository import (
     HoldingUpdate,
@@ -112,19 +111,14 @@ async def create_library(
     await require_library_capacity(session, organisation_uuid)
     if not await organisation_repository.country_exists(session, data.country_code):
         raise WorkspaceInvalid("Unknown country code")
-    library = School(
+    library = await organisation_repository.create_library(
+        session,
         name=data.name,
         country_code=data.country_code,
         organisation_id=organisation_uuid,
-        state=SchoolState.INACTIVE,
-        info={"location": {}},
+        collection_name=data.collection_name,
     )
-    session.add(library)
-    await session.flush()
     identifier = library.school_uuid
-    session.add(
-        Collection(name=data.collection_name, school_id=identifier, is_default=True)
-    )
     await session.commit()
     logger.info(
         "Library created",
