@@ -32,6 +32,14 @@ for (const scenario of [
         await route.continue({ url: url.toString() });
       });
     }
+    let releaseFonts = () => {};
+    if (scenario.height === 320) {
+      const fonts = new Promise<void>(resolve => { releaseFonts = resolve; });
+      await page.route('**/*.woff2', async route => {
+        await fonts;
+        await route.continue();
+      });
+    }
     page.on('response', response => {
       if (candidate && response.url().includes('/v1/chat/')) {
         if (new URL(response.url()).origin !== new URL(candidate).origin)
@@ -43,7 +51,7 @@ for (const scenario of [
     });
     page.on('pageerror', error => failures.push(error.message));
     await page.setViewportSize(scenario);
-    await page.goto(process.env.E2E_CHAT_PATH || '/chat/start/');
+    await page.goto(process.env.E2E_CHAT_PATH || '/chat/start/', { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Ready to find your next book?', { exact: true })).toBeVisible();
     if (candidate) {
       expect(candidateRequests).toBeGreaterThan(0);
@@ -54,9 +62,10 @@ for (const scenario of [
     await expect(schoolConfirmation.or(page.getByRole('button', { name: scenario.age, exact: true }))).toBeVisible();
     if (await schoolConfirmation.isVisible()) await rendered.answer(schoolConfirmation);
     const ageButton = page.getByRole('button', { name: scenario.age, exact: true });
+    releaseFonts();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await ageButton.scrollIntoViewIfNeeded();
-    const box = await ageButton.boundingBox();
-    expect(box!.y + box!.height).toBeLessThanOrEqual(scenario.height);
+    await expect(ageButton).toBeInViewport({ ratio: 1 });
     await rendered.answer(ageButton);
     await rendered.answer(page.getByRole('button', { name: /^Select "/ }));
     const answer = page.getByRole('region', { name: 'Your answer' });
