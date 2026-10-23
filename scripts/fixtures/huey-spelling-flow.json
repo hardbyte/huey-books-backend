@@ -34,30 +34,24 @@
       },
       {
         "id": "pick_difficulty",
-        "type": "action",
+        "type": "condition",
         "content": {
-          "actions": [
+          "conditions": [
             {
-              "type": "set_variable",
-              "variable": "temp.spelling_tag",
-              "value": "huey-spelling-easy",
-              "conditions": {"if": "user.reading_ability_key == 'SPOT' || user.reading_ability_key == 'CAT_HAT'"}
+              "if": "user.reading_ability_key == 'SPOT' || user.reading_ability_key == 'CAT_HAT'",
+              "then": "$0"
             },
             {
-              "type": "set_variable",
-              "variable": "temp.spelling_tag",
-              "value": "huey-spelling-medium",
-              "conditions": {"if": "user.reading_ability_key == 'TREEHOUSE'"}
-            },
-            {
-              "type": "set_variable",
-              "variable": "temp.spelling_tag",
-              "value": "huey-spelling-hard",
-              "conditions": {"if": "user.reading_ability_key == 'CHARLIE_CHOCOLATE' || user.reading_ability_key == 'HARRY_POTTER'"}
+              "if": "user.reading_ability_key == 'TREEHOUSE'",
+              "then": "$1"
             }
-          ]
+          ],
+          "default_path": "default"
         },
-        "position": {"x": 500, "y": 200}
+        "position": {
+          "x": 500,
+          "y": 200
+        }
       },
       {
         "id": "spelling_q_one",
@@ -74,7 +68,8 @@
           },
           "track_shown_in": "temp.shown_spelling_ids",
           "variable": "temp.spelling_answer",
-          "input_type": "choice"
+          "input_type": "choice",
+          "on_empty": "spelling_unavailable"
         },
         "position": {"x": 700, "y": 200}
       },
@@ -120,7 +115,8 @@
           },
           "track_shown_in": "temp.shown_spelling_ids",
           "variable": "temp.spelling_answer",
-          "input_type": "choice"
+          "input_type": "choice",
+          "on_empty": "spelling_unavailable"
         },
         "position": {"x": 1300, "y": 200}
       },
@@ -166,7 +162,8 @@
           },
           "track_shown_in": "temp.shown_spelling_ids",
           "variable": "temp.spelling_answer",
-          "input_type": "choice"
+          "input_type": "choice",
+          "on_empty": "spelling_unavailable"
         },
         "position": {"x": 1900, "y": 200}
       },
@@ -198,6 +195,90 @@
         "position": {"x": 2300, "y": 300}
       },
       {
+        "id": "check_hard_difficulty",
+        "type": "condition",
+        "content": {
+          "conditions": [
+            {
+              "if": "user.reading_ability_key == 'CHARLIE_CHOCOLATE' || user.reading_ability_key == 'HARRY_POTTER'",
+              "then": "$0"
+            }
+          ],
+          "default_path": "default"
+        },
+        "position": {
+          "x": 500,
+          "y": 500
+        }
+      },
+      {
+        "id": "set_difficulty_easy",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "set_variable",
+              "variable": "temp.spelling_tag",
+              "value": "huey-spelling-easy"
+            }
+          ]
+        },
+        "position": {
+          "x": 600,
+          "y": 100
+        }
+      },
+      {
+        "id": "set_difficulty_medium",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "set_variable",
+              "variable": "temp.spelling_tag",
+              "value": "huey-spelling-medium"
+            }
+          ]
+        },
+        "position": {
+          "x": 600,
+          "y": 250
+        }
+      },
+      {
+        "id": "set_difficulty_hard",
+        "type": "action",
+        "content": {
+          "actions": [
+            {
+              "type": "set_variable",
+              "variable": "temp.spelling_tag",
+              "value": "huey-spelling-hard"
+            }
+          ]
+        },
+        "position": {
+          "x": 600,
+          "y": 400
+        }
+      },
+      {
+        "id": "spelling_unavailable",
+        "type": "message",
+        "content": {
+          "messages": [
+            {
+              "type": "text",
+              "text": "There aren't any spelling questions ready right now. Let's keep going."
+            }
+          ]
+        },
+        "position": {
+          "x": 2500,
+          "y": 450
+        }
+      },
+      {
         "id": "spelling_done",
         "type": "message",
         "content": {
@@ -218,7 +299,14 @@
       {"source": "spelling_intro", "target": "check_wants_spelling", "type": "default"},
       {"source": "check_wants_spelling", "target": "pick_difficulty", "type": "$0"},
       {"source": "check_wants_spelling", "target": "spelling_skip", "type": "default"},
-      {"source": "pick_difficulty", "target": "spelling_q_one", "type": "default"},
+      {"source": "pick_difficulty", "target": "set_difficulty_easy", "type": "$0"},
+      {"source": "pick_difficulty", "target": "set_difficulty_medium", "type": "$1"},
+      {"source": "pick_difficulty", "target": "check_hard_difficulty", "type": "default"},
+      {"source": "check_hard_difficulty", "target": "set_difficulty_hard", "type": "$0"},
+      {"source": "check_hard_difficulty", "target": "spelling_unavailable", "type": "default"},
+      {"source": "set_difficulty_easy", "target": "spelling_q_one", "type": "default"},
+      {"source": "set_difficulty_medium", "target": "spelling_q_one", "type": "default"},
+      {"source": "set_difficulty_hard", "target": "spelling_q_one", "type": "default"},
       {"source": "spelling_q_one", "target": "check_spelling_one", "type": "default"},
       {"source": "check_spelling_one", "target": "correct_one", "type": "$0"},
       {"source": "check_spelling_one", "target": "wrong_one", "type": "default"},
