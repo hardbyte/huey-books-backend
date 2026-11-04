@@ -15,7 +15,7 @@ classifiers = [
 ]
 dependencies = [
     "fastapi>=0.115,<1.0",
-    "uvicorn[standard]>=0.41,<0.42",
+    "uvicorn[standard]>=0.41,<0.53",
     "alembic>=1.11,<2",
     "structlog>=24.1,<27",
     "psycopg2-binary>=2.9.6,<3",
